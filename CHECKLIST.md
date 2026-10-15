@@ -48,14 +48,15 @@ Regras:
 ## Etapa 2: herdr + lateral de Features + paleta
 
 - [x] cliente do socket do herdr (protocolo 19): uma conexão por request (o servidor fecha depois de responder). Status de agente não tem evento global, só `pane.agent_status_changed` por pane; a lateral faz polling de `agent.list` a cada 500 ms (`ponytail:`), o que já cobre a reconexão
-- [x] shell igual ao protótipo aprovado: título com modos e Fila, lateral, dicas e status; o que ainda não existe aparece apagado no lugar dele
+- [x] shell igual ao protótipo aprovado (conferido lado a lado): barra de título própria com os três pontos (fechar, minimizar, maximizar; arrastar move), modos e Fila, abas do herdr desenhadas pelo Maestro (`1 claude ◐`, `+`, indicador PREFIX), dicas e status (`hoje: US$`). IBM Plex Sans embutida. O que ainda não existe aparece apagado no lugar dele
+- [x] lateral na ordem do protótipo: repo · Auditoria · FEATURES · cards (com `US$ · ctx %` lidos do JSONL do Claude) · Nova feature · TERMINAIS · Mudanças/Arquivos (diff da branch contra a base)
 - [x] lateral: um card por agente (o seu uso real é um workspace com vários Claudes em abas), agrupado por repo, com branch, glifo de status, tempo, linha de status e filete de atenção; o clique faz `agent.focus`. Ctrl+Shift+1…9 e Ctrl+Shift+Espaço (próximo da fila)
 - [x] "Terminais" = workspaces do herdr (`$ ~ · N abas · só terminal`), clique faz `workspace.focus`
-- [ ] herdr com a lateral dele oculta dentro do Maestro: o estado da lateral é do servidor, compartilhado com o herdr do Ghostty (decisão sua)
+- [x] herdr sem o chrome dele: o Maestro usa a sessão própria `maestro` com `~/.config/maestro/herdr.toml` (seu `config.toml` + lateral oculta e barra de abas fixa na linha 0, que o Maestro esconde). A sessão `default` do Ghostty não muda
 - [x] binds de split do `ghostty/config` viram as teclas do herdr (prefixo do seu `config.toml`) escritas no PTY, para valer no cliente do Maestro
 - [ ] reconexão quando o server do herdr reinicia: a lateral retoma sozinha ("herdr: fora do ar" no status), mas o cliente herdr no PTY sai junto com o servidor e o Maestro fecha; falta reabrir o cliente em vez de fechar
 - [ ] paleta de comandos (`Ctrl+Shift+P`) com o atalho ao lado de cada item
-- [ ] tutorial da área (primeira vez)
+- [x] tutorial da área (primeira vez): os 4 passos do `TOURS.feat` do protótipo, com destaque e balão; Esc fecha; estado em `~/.config/maestro/state.toml`. O passo 4 termina em "Concluir" até a Nova feature existir
 - [x] testes sempre na sessão `MAESTRO_HERDR_SESSION=maestro-test`, nunca na `default`
 
 **Pronto quando:** um `claude` pedindo permissão muda o status na lateral em menos de 1 s, e o clique leva ao pane certo.

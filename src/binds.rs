@@ -3,7 +3,11 @@ use gpui_kit::Keystroke;
 /// Binds de split do ghostty/config traduzidos para as teclas do herdr, enviadas ao PTY:
 /// o cliente herdr do Maestro trata como se a tecla fosse digitada (o foco é o deste cliente).
 #[derive(Default)]
-pub struct Binds(Vec<(Combo, Vec<u8>)>);
+pub struct Binds {
+    binds: Vec<(Combo, Vec<u8>)>,
+    /// bytes do prefixo do herdr (Ctrl+A no seu config), para a barra mostrar "PREFIX"
+    pub prefix: Option<Vec<u8>>,
+}
 
 #[derive(Debug, PartialEq)]
 struct Combo {
@@ -74,12 +78,12 @@ impl Binds {
                 binds.push((combo, keys));
             }
         }
-        Self(binds)
+        Self { binds, prefix }
     }
 
     pub fn get(&self, k: &Keystroke) -> Option<&[u8]> {
         let m = &k.modifiers;
-        self.0
+        self.binds
             .iter()
             .find(|(c, _)| {
                 c.ctrl == m.control && c.shift == m.shift && c.alt == m.alt && c.key == k.key

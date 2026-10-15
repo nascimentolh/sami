@@ -6,6 +6,7 @@ use crate::{
     sidebar::Sidebar,
     terminal::TerminalView,
     theme::Theme,
+    tour::{self, Anchors},
 };
 
 /// Janela do protótipo: título (36) · lateral | terminal · dicas (22) · status (24).
@@ -14,6 +15,9 @@ pub struct Shell {
     pub terminal: Entity<TerminalView>,
     pub theme: Theme,
     pub font: String,
+    prefix: bool,
+    tour: Option<usize>,
+    anchors: Anchors,
 }
 
 /// Dicas do modo Features do protótipo; `false` = ainda não existe e aparece apagada.
@@ -36,16 +40,31 @@ impl Shell {
         terminal: Entity<TerminalView>,
         theme: Theme,
         font: String,
+        anchors: Anchors,
         cx: &mut Context<Self>,
     ) -> Self {
+        let sidebar_present = sidebar.is_some();
         if let Some(s) = &sidebar {
             cx.observe(s, |_, _, cx| cx.notify()).detach();
         }
+        // o terminal notifica a cada saída do PTY; o chrome só redesenha quando o modo PREFIX muda
+        cx.observe(&terminal, |this: &mut Self, t, cx| {
+            let prefix = t.read(cx).prefix_pending();
+            if prefix != this.prefix {
+                this.prefix = prefix;
+                cx.notify();
+            }
+        })
+        .detach();
         Self {
             sidebar,
             terminal,
             theme,
             font,
+            prefix: false,
+            // tutorial da área na primeira vez, como no protótipo
+            tour: (sidebar_present && !tour::seen("feat")).then_some(0),
+            anchors,
         }
     }
 
@@ -67,6 +86,31 @@ impl Shell {
         cx.stop_propagation();
     }
 
+    fn advance_tour(&mut self, cx: &mut Context<Self>) {
+        match self.tour {
+            Some(i) if i + 1 < tour::FEAT.len() => self.tour = Some(i + 1),
+            _ => return self.end_tour(cx),
+        }
+        cx.notify();
+    }
+
+    fn end_tour(&mut self, cx: &mut Context<Self>) {
+        self.tour = None;
+        tour::mark("feat");
+        cx.notify();
+    }
+
+    /// Posições dos alvos relativas à raiz (a janela sem decoração tem margem de sombra).
+    fn relative_anchors(&self, origin: Point<Pixels>) -> tour::Anchors {
+        let map = self
+            .anchors
+            .borrow()
+            .iter()
+            .map(|(k, b)| (*k, Bounds::new(b.origin - origin, b.size)))
+            .collect();
+        std::rc::Rc::new(std::cell::RefCell::new(map))
+    }
+
     fn kbd(&self, k: &str) -> Div {
         let t = &self.theme;
         div()
@@ -80,6 +124,18 @@ impl Shell {
             .bg(t.panel)
             .whitespace_nowrap()
             .child(k.to_string())
+    }
+
+    fn dot(&self, id: &'static str, action: fn(&mut Window)) -> impl IntoElement {
+        let t = &self.theme;
+        div()
+            .id(id)
+            .size(px(10.))
+            .rounded_full()
+            .bg(t.line)
+            .hover(|d| d.bg(t.muted))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, window, _| action(window))
     }
 
     fn title(&self, cx: &App) -> Div {
@@ -122,6 +178,22 @@ impl Shell {
             .bg(t.panel)
             .border_b_1()
             .border_color(t.line)
+            // decoração própria (a do protótipo): arrastar move, dois cliques maximizam
+            .on_mouse_down(MouseButton::Left, |e, window, _| {
+                if e.click_count == 2 {
+                    window.zoom_window();
+                } else {
+                    window.start_window_move();
+                }
+            })
+            .child(
+                div()
+                    .flex()
+                    .gap(px(6.))
+                    .child(self.dot("close", |w| w.remove_window()))
+                    .child(self.dot("min", |w| w.minimize_window()))
+                    .child(self.dot("max", |w| w.zoom_window())),
+            )
             .child(div().font_weight(FontWeight::SEMIBOLD).child("maestro"))
             .child(
                 div()
@@ -139,6 +211,9 @@ impl Shell {
             .child(
                 div()
                     .id("fila")
+                    .relative()
+                    .child(tour::anchor(&self.anchors, "fila"))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .flex()
                     .gap(px(6.))
                     .items_center()
@@ -194,6 +269,108 @@ impl Shell {
                     )
                     .child(self.kbd("?")),
             )
+    }
+
+    /// Abas do workspace em foco, como no `.hbar` do protótipo (a barra do próprio herdr fica escondida).
+    fn hbar(&self, cx: &App) -> Div {
+        let t = &self.theme;
+        let mut bar = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .bg(t.panel)
+            .border_b_1()
+            .border_color(rgb(0x191a21))
+            .font_family(t.mono.clone())
+            .text_size(px(12.))
+            .whitespace_nowrap()
+            .overflow_hidden();
+        let Some(sidebar) = &self.sidebar else {
+            return bar;
+        };
+        let s = sidebar.read(cx);
+        let ws = s
+            .workspaces
+            .iter()
+            .find(|w| w.focused)
+            .map(|w| w.workspace_id.clone());
+        for (i, tab) in s
+            .tabs
+            .iter()
+            .filter(|x| Some(&x.workspace_id) == ws.as_ref())
+            .enumerate()
+        {
+            let agent = s.agents.iter().find(|a| a.tab_id == tab.tab_id);
+            let id = tab.tab_id.clone();
+            let side = sidebar.clone();
+            bar = bar.child(
+                div()
+                    .id(SharedString::from(format!("tab:{}", tab.tab_id)))
+                    .flex()
+                    .items_center()
+                    .px(px(12.))
+                    .py(px(3.))
+                    .cursor_pointer()
+                    .text_color(if tab.focused { t.fg } else { t.comment })
+                    .when(tab.focused, |d| d.bg(t.win))
+                    .on_click(move |_, _, cx| side.read(cx).focus_tab(id.clone()))
+                    .child(format!(
+                        "{} {}",
+                        i + 1,
+                        if agent.is_some() { "claude" } else { "zsh" }
+                    ))
+                    .when_some(
+                        agent.filter(|a| !matches!(a.agent_status, Status::Idle | Status::Unknown)),
+                        |d, a| {
+                            let (g, _) = crate::sidebar::glyph(a.agent_status);
+                            d.child(
+                                div()
+                                    .ml(px(6.))
+                                    .text_color(self.status_color(a.agent_status))
+                                    .child(g),
+                            )
+                        },
+                    ),
+            );
+        }
+        if let Some(ws) = ws {
+            let side = sidebar.clone();
+            bar = bar.child(
+                div()
+                    .id("newtab")
+                    .px(px(12.))
+                    .py(px(3.))
+                    .cursor_pointer()
+                    .text_color(t.comment)
+                    .on_click(move |_, _, cx| side.read(cx).new_tab(ws.clone()))
+                    .child("+"),
+            );
+        }
+        bar = bar.child(div().flex_1());
+        let hint = div().px(px(10.)).py(px(3.));
+        if self.prefix {
+            bar.child(
+                hint.bg(rgb(0xf1fa8c))
+                    .text_color(rgb(0x282a36))
+                    .font_weight(FontWeight::BOLD)
+                    .child("PREFIX: v divide · - empilha · c aba · x fecha · z zoom"),
+            )
+        } else {
+            bar.child(
+                hint.text_color(t.comment)
+                    .child("Ctrl+Shift+\\ divide · Ctrl+Shift+Enter empilha"),
+            )
+        }
+    }
+
+    fn status_color(&self, s: Status) -> Hsla {
+        let t = &self.theme;
+        match s {
+            Status::Blocked => t.orange,
+            Status::Working => t.cyan,
+            Status::Done => t.ok,
+            Status::Idle | Status::Unknown => t.comment,
+        }
     }
 
     fn hints(&self) -> Div {
@@ -288,6 +465,9 @@ impl Shell {
                     );
                 }
                 bar = bar.child(cell().child(format!("{working} trabalhando")));
+                bar = bar.child(
+                    cell().child(format!("hoje: US$ {}", crate::sidebar::brl(s.today_cost()))),
+                );
                 let focused = s.agents.iter().find(|a| a.focused);
                 if let Some(b) = focused.and_then(|a| {
                     herdr::repo_root(std::path::Path::new(&a.cwd)).and_then(herdr::branch)
@@ -301,10 +481,91 @@ impl Shell {
     }
 }
 
+/// Bordas de redimensionar da janela sem decoração do sistema.
+fn resize_edges() -> impl Iterator<Item = Div> {
+    use ResizeEdge::*;
+    const E: f32 = 5.;
+    [
+        Top,
+        Bottom,
+        Left,
+        Right,
+        TopLeft,
+        TopRight,
+        BottomLeft,
+        BottomRight,
+    ]
+    .into_iter()
+    .map(|edge| {
+        let d = div().absolute();
+        let d = match edge {
+            Top => d
+                .top_0()
+                .left(px(E))
+                .right(px(E))
+                .h(px(E))
+                .cursor_ns_resize(),
+            Bottom => d
+                .bottom_0()
+                .left(px(E))
+                .right(px(E))
+                .h(px(E))
+                .cursor_ns_resize(),
+            Left => d
+                .left_0()
+                .top(px(E))
+                .bottom(px(E))
+                .w(px(E))
+                .cursor_ew_resize(),
+            Right => d
+                .right_0()
+                .top(px(E))
+                .bottom(px(E))
+                .w(px(E))
+                .cursor_ew_resize(),
+            TopLeft => d.top_0().left_0().size(px(E)).cursor_nwse_resize(),
+            BottomRight => d.bottom_0().right_0().size(px(E)).cursor_nwse_resize(),
+            TopRight => d.top_0().right_0().size(px(E)).cursor_nesw_resize(),
+            BottomLeft => d.bottom_0().left_0().size(px(E)).cursor_nesw_resize(),
+        };
+        d.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            cx.stop_propagation();
+            window.start_window_resize(edge);
+        })
+    })
+}
+
 impl Render for Shell {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme.clone();
+        let overlay = self.tour.and_then(|i| {
+            let root = self.anchors.borrow().get("root").copied()?;
+            let next = cx.listener(|this: &mut Self, _: &(), _, cx| this.advance_tour(cx));
+            let skip = cx.listener(|this: &mut Self, _: &(), _, cx| this.end_tour(cx));
+            let o = tour::overlay(
+                tour::FEAT,
+                i,
+                &self.relative_anchors(root.origin),
+                root.size,
+                &t,
+                move |w, cx| next(&(), w, cx),
+                move |w, cx| skip(&(), w, cx),
+            );
+            if o.is_none() {
+                // o alvo só tem posição depois do primeiro frame
+                cx.on_next_frame(window, |_, _, cx| cx.notify());
+            }
+            o
+        });
         div()
+            .relative()
+            .child(tour::anchor(&self.anchors, "root"))
+            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                if this.tour.is_some() && e.keystroke.key == "escape" {
+                    this.end_tour(cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_key_down(cx.listener(Self::on_key_down))
             .size_full()
             .flex()
@@ -325,10 +586,19 @@ impl Render for Shell {
                             .flex_1()
                             .min_w_0()
                             .h_full()
-                            .child(self.terminal.clone()),
+                            .flex()
+                            .flex_col()
+                            .bg(t.win)
+                            .relative()
+                            .child(tour::anchor(&self.anchors, "term"))
+                            .child(self.hbar(cx))
+                            .child(div().flex_1().min_h_0().child(self.terminal.clone())),
                     ),
             )
             .child(self.hints())
             .child(self.status(cx))
+            .children(overlay)
+            // por último, para ficar por cima do conteúdo
+            .children(resize_edges())
     }
 }

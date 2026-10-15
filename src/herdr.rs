@@ -6,13 +6,57 @@ use std::{
 };
 
 use serde::Deserialize;
+
+use crate::terminal::Launch;
 use serde_json::{Value, json};
 
-/// Sessão do herdr que o Maestro usa. `MAESTRO_HERDR_SESSION=nome` isola os testes da sessão real;
-/// `none` (ou herdr fora do PATH) roda só o `$SHELL`.
+/// Sessão do herdr que o Maestro usa: a própria `maestro`, porque a lateral e a barra de abas do herdr
+/// são estado do servidor e precisam ficar escondidas sem mexer no herdr do Ghostty (sessão `default`).
+/// `MAESTRO_HERDR_SESSION=nome` troca a sessão (testes: `maestro-test`); `none` roda só o `$SHELL`.
 pub struct Herdr {
-    session: Option<String>,
+    session: String,
     socket: PathBuf,
+}
+
+/// O que muda na config do herdr dentro do Maestro: a lateral e as abas são desenhadas pelo Maestro.
+/// A barra de abas fica sempre visível na linha 0 para o Maestro escondê-la sem depender do número de abas.
+const UI_OVERRIDES: &[(&str, &str)] = &[
+    ("sidebar_start_collapsed", "true"),
+    ("sidebar_collapsed_mode", "\"hidden\""),
+    ("hide_tab_bar_when_single_tab", "false"),
+    ("tab_bar_position", "\"top\""),
+];
+
+/// A config do usuário com os `UI_OVERRIDES` no lugar dos mesmos nomes em `[ui]`.
+pub fn maestro_config(user: &str) -> String {
+    let overrides: String = UI_OVERRIDES
+        .iter()
+        .map(|(k, v)| format!("{k} = {v}\n"))
+        .collect();
+    let mut out = String::new();
+    let mut section = String::new();
+    let mut placed = false;
+    for line in user.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            section = t.to_string();
+        }
+        let key = t.split('=').next().unwrap_or("").trim();
+        if section == "[ui]" && UI_OVERRIDES.iter().any(|(k, _)| *k == key) {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+        if t == "[ui]" && !placed {
+            out.push_str(&overrides);
+            placed = true;
+        }
+    }
+    if !placed {
+        out.push_str("\n[ui]\n");
+        out.push_str(&overrides);
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -29,6 +73,8 @@ pub enum Status {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Agent {
     pub pane_id: String,
+    #[serde(default)]
+    pub tab_id: String,
     pub agent: String,
     pub agent_status: Status,
     #[serde(default)]
@@ -45,26 +91,52 @@ pub struct Workspace {
     pub focused: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Tab {
+    pub tab_id: String,
+    pub workspace_id: String,
+    pub focused: bool,
+}
+
 impl Herdr {
     pub fn from_env() -> Option<Self> {
-        let session = std::env::var("MAESTRO_HERDR_SESSION").ok();
-        if session.as_deref() == Some("none") || !in_path("herdr") {
+        let session = std::env::var("MAESTRO_HERDR_SESSION").unwrap_or_else(|_| "maestro".into());
+        if session == "none" || !in_path("herdr") {
             return None;
         }
         let dir = PathBuf::from(std::env::var_os("HOME")?).join(".config/herdr");
-        let socket = match &session {
-            Some(name) => dir.join("sessions").join(name).join("herdr.sock"),
-            None => dir.join("herdr.sock"),
+        let socket = match session.as_str() {
+            "default" => dir.join("herdr.sock"),
+            name => dir.join("sessions").join(name).join("herdr.sock"),
         };
         Some(Self { session, socket })
     }
 
-    pub fn command(&self) -> (String, Vec<String>) {
-        let args = match &self.session {
-            Some(name) => vec!["--session".into(), name.clone()],
-            None => vec![],
+    /// O cliente herdr para o PTY, com a config do Maestro (só vale para o servidor que ele mesmo sobe).
+    pub fn launch(&self) -> Launch {
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+        let user =
+            std::fs::read_to_string(home.join(".config/herdr/config.toml")).unwrap_or_default();
+        let path = home.join(".config/maestro/herdr.toml");
+        let written = std::fs::create_dir_all(home.join(".config/maestro"))
+            .and_then(|_| std::fs::write(&path, maestro_config(&user)));
+        let mut env = Vec::new();
+        if written.is_ok() {
+            env.push((
+                "HERDR_CONFIG_PATH".into(),
+                path.to_string_lossy().into_owned(),
+            ));
+        }
+        let args = match self.session.as_str() {
+            "default" => vec![],
+            name => vec!["--session".into(), name.into()],
         };
-        ("herdr".into(), args)
+        Launch {
+            program: "herdr".into(),
+            args,
+            env,
+            hidden_top: 1,
+        }
     }
 
     /// Uma conexão por request: o servidor fecha o socket depois de responder.
@@ -89,6 +161,23 @@ impl Herdr {
     pub fn workspaces(&self) -> io::Result<Vec<Workspace>> {
         let mut result = self.call("workspace.list", json!({}))?;
         Ok(serde_json::from_value(result["workspaces"].take())?)
+    }
+
+    pub fn tabs(&self) -> io::Result<Vec<Tab>> {
+        let mut result = self.call("tab.list", json!({}))?;
+        Ok(serde_json::from_value(result["tabs"].take())?)
+    }
+
+    pub fn focus_tab(&self, id: &str) -> io::Result<()> {
+        self.call("tab.focus", json!({ "tab_id": id })).map(drop)
+    }
+
+    pub fn new_tab(&self, workspace_id: &str) -> io::Result<()> {
+        self.call(
+            "tab.create",
+            json!({ "workspace_id": workspace_id, "focus": true }),
+        )
+        .map(drop)
     }
 
     pub fn focus_workspace(&self, id: &str) -> io::Result<()> {
@@ -149,6 +238,18 @@ mod tests {
         assert_eq!(agents[0].terminal_title_stripped.as_deref(), Some("plano"));
         assert_eq!(agents[1].agent_status, Status::Unknown);
         assert_eq!(agents[1].terminal_title_stripped, None);
+    }
+
+    #[test]
+    fn config_do_maestro_sobrescreve_so_a_ui() {
+        let user = "onboarding = false\n[keys]\nprefix = \"ctrl+a\"\n[ui]\nsidebar_collapsed_mode = \"compact\"\nprompt_new_tab_name = false\n";
+        let c = maestro_config(user);
+        assert!(c.contains("prefix = \"ctrl+a\""));
+        assert!(c.contains("prompt_new_tab_name = false"));
+        assert!(c.contains("sidebar_collapsed_mode = \"hidden\""));
+        assert!(!c.contains("compact"));
+        assert_eq!(c.matches("[ui]").count(), 1);
+        assert!(maestro_config("").contains("[ui]\nsidebar_start_collapsed = true"));
     }
 
     #[test]

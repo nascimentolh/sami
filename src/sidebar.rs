@@ -1,15 +1,18 @@
 use std::{
     collections::HashMap,
-    path::Path,
-    sync::Arc,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
-    herdr::{self, Agent, Herdr, Status, Workspace},
+    changes::{self, Changes},
+    herdr::{self, Agent, Herdr, Status, Tab, Workspace},
+    session::{Sessions, Usage},
     theme::Theme,
+    tour::{self, Anchors},
 };
 
 /// Lateral "Features" do protótipo: agentes por repositório e, embaixo, os workspaces ("Terminais").
@@ -17,8 +20,13 @@ pub struct Sidebar {
     herdr: Arc<Herdr>,
     pub agents: Vec<Agent>,
     pub workspaces: Vec<Workspace>,
+    pub tabs: Vec<Tab>,
     pub offline: bool,
     since: HashMap<String, (Status, Instant)>,
+    pub usage: HashMap<String, Usage>,
+    changes: Option<Changes>,
+    sessions: Arc<Mutex<Sessions>>,
+    anchors: Anchors,
     theme: Theme,
     _poll: Task<()>,
 }
@@ -38,12 +46,14 @@ struct Row {
     k: String,
     m: String,
     m_color: Hsla,
+    m2: Option<(String, String, bool)>,
     on: bool,
     unseen: Option<Hsla>,
+    dim: bool,
 }
 
 impl Sidebar {
-    pub fn new(herdr: Arc<Herdr>, theme: Theme, cx: &mut Context<Self>) -> Self {
+    pub fn new(herdr: Arc<Herdr>, theme: Theme, anchors: Anchors, cx: &mut Context<Self>) -> Self {
         // ponytail: polling de 500 ms (status não tem evento global no protocolo 19, só por pane);
         // trocar por events.subscribe por pane se a latência ou a CPU incomodarem
         let h = herdr.clone();
@@ -52,7 +62,7 @@ impl Sidebar {
                 let h = h.clone();
                 let state = cx
                     .background_executor()
-                    .spawn(async move { h.agents().and_then(|a| Ok((a, h.workspaces()?))) })
+                    .spawn(async move { Ok((h.agents()?, h.workspaces()?, h.tabs()?)) })
                     .await;
                 // "há N min" envelhece sozinho: redesenha a cada 30 s mesmo sem mudança
                 let alive = this.update(cx, |this, cx| {
@@ -63,6 +73,40 @@ impl Sidebar {
                 if alive.is_err() {
                     break;
                 }
+                // custo/contexto e Mudanças são mais caros (JSONL e git): a cada 3 s
+                if tick % 6 == 0 {
+                    let Ok((jobs, root, sessions)) = this.read_with(cx, |this, _| {
+                        let jobs: Vec<_> = this
+                            .agents
+                            .iter()
+                            .map(|a| (a.pane_id.clone(), a.cwd.clone(), title(a)))
+                            .collect();
+                        (jobs, this.top_repo(), this.sessions.clone())
+                    }) else {
+                        break;
+                    };
+                    let (usage, changes) = cx
+                        .background_executor()
+                        .spawn(async move {
+                            let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+                            let mut s = sessions.lock().unwrap();
+                            let usage: HashMap<_, _> = jobs
+                                .into_iter()
+                                .filter_map(|(pane, cwd, title)| {
+                                    Some((pane.clone(), s.usage(&home, &pane, &cwd, &title)?))
+                                })
+                                .collect();
+                            (usage, root.and_then(|r| changes::changes(&r)))
+                        })
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.usage != usage || this.changes != changes {
+                            this.usage = usage;
+                            this.changes = changes;
+                            cx.notify();
+                        }
+                    });
+                }
                 cx.background_executor()
                     .timer(Duration::from_millis(500))
                     .await;
@@ -72,16 +116,21 @@ impl Sidebar {
             herdr,
             agents: Vec::new(),
             workspaces: Vec::new(),
+            tabs: Vec::new(),
             offline: false,
             since: HashMap::new(),
+            usage: HashMap::new(),
+            changes: None,
+            sessions: Arc::default(),
+            anchors,
             theme,
             _poll: poll,
         }
     }
 
-    fn apply(&mut self, state: std::io::Result<(Vec<Agent>, Vec<Workspace>)>) -> bool {
+    fn apply(&mut self, state: std::io::Result<(Vec<Agent>, Vec<Workspace>, Vec<Tab>)>) -> bool {
         let offline = state.is_err();
-        let (agents, workspaces) = state.unwrap_or_default();
+        let (agents, workspaces, tabs) = state.unwrap_or_default();
         let now = Instant::now();
         for a in &agents {
             let entry = self
@@ -92,10 +141,13 @@ impl Sidebar {
                 *entry = (a.agent_status, now);
             }
         }
-        let changed =
-            self.agents != agents || self.workspaces != workspaces || self.offline != offline;
+        let changed = self.agents != agents
+            || self.workspaces != workspaces
+            || self.tabs != tabs
+            || self.offline != offline;
         self.agents = agents;
         self.workspaces = workspaces;
+        self.tabs = tabs;
         self.offline = offline;
         changed
     }
@@ -126,11 +178,28 @@ impl Sidebar {
         (repos, loose)
     }
 
+    /// Repositório do agente em foco (ou o primeiro): o do cabeçalho da lateral e o de "Mudanças".
+    pub fn top_repo(&self) -> Option<PathBuf> {
+        let focused = self.agents.iter().find(|a| a.focused);
+        focused
+            .into_iter()
+            .chain(&self.agents)
+            .find_map(|a| herdr::repo_root(Path::new(&a.cwd)))
+            .map(Path::to_path_buf)
+    }
+
+    pub fn today_cost(&self) -> f64 {
+        self.usage.values().map(|u| u.today).sum()
+    }
+
     /// Ordem em que aparecem na lateral (Ctrl+Shift+1…9).
     pub fn order(&self) -> Vec<String> {
         let (repos, loose) = self.repos();
+        let top = self.top_repo().map(|p| p.to_string_lossy().into_owned());
         repos
             .iter()
+            .filter(|r| Some(&r.path) == top.as_ref())
+            .chain(repos.iter().filter(|r| Some(&r.path) != top.as_ref()))
             .flat_map(|r| r.agents.iter().map(|a| a.pane_id.clone()))
             .chain(loose.iter().map(|a| a.pane_id.clone()))
             .collect()
@@ -140,6 +209,16 @@ impl Sidebar {
     pub fn focus(&self, pane_id: String) {
         let h = self.herdr.clone();
         std::thread::spawn(move || h.focus(&pane_id));
+    }
+
+    pub fn focus_tab(&self, id: String) {
+        let h = self.herdr.clone();
+        std::thread::spawn(move || h.focus_tab(&id));
+    }
+
+    pub fn new_tab(&self, workspace_id: String) {
+        let h = self.herdr.clone();
+        std::thread::spawn(move || h.new_tab(&workspace_id));
     }
 
     fn focus_workspace(&self, id: String) {
@@ -172,6 +251,14 @@ impl Sidebar {
             Status::Idle | Status::Unknown => t.comment,
         };
         let attention = matches!(a.agent_status, Status::Blocked | Status::Done);
+        // ponytail: sem a porta (:3001) até a Etapa 3 dar uma porta por feature
+        let m2 = self.usage.get(&a.pane_id).map(|u| {
+            (
+                format!("US$ {}", brl(u.cost)),
+                format!("ctx {}%{}", u.ctx, if u.ctx >= 80 { " ⚠" } else { "" }),
+                u.ctx >= 80,
+            )
+        });
         Row {
             id: a.pane_id.clone(),
             glyph: g,
@@ -189,8 +276,10 @@ impl Sidebar {
                 (false, false) => tilde(&a.cwd),
             },
             m_color: if attention { color } else { t.muted },
+            m2,
             on: a.focused,
             unseen: attention.then_some(color),
+            dim: false,
         }
     }
 
@@ -205,8 +294,8 @@ impl Sidebar {
             .px_2()
             .py(px(6.))
             .rounded(px(6.))
-            .cursor_pointer()
-            .hover(|d| d.bg(t.raise))
+            .when(r.dim, |d| d.opacity(0.45))
+            .when(!r.dim, |d| d.cursor_pointer().hover(|d| d.bg(t.raise)))
             .when(r.on, |d| d.bg(t.accent_soft))
             .on_click(move |_, _, cx| on_click(cx))
             .when_some(r.unseen, |d, c| {
@@ -261,7 +350,138 @@ impl Sidebar {
                     .text_color(r.m_color)
                     .child(r.m),
             )
+            .when_some(r.m2, |d, (cost, ctx, warn)| {
+                d.child(
+                    div()
+                        .pl(px(24.))
+                        .flex()
+                        .font_family(t.mono.clone())
+                        .text_size(px(11.))
+                        .text_color(t.comment)
+                        .child(format!("{cost} · "))
+                        .child(div().when(warn, |d| d.text_color(t.orange)).child(ctx)),
+                )
+            })
     }
+
+    fn changes_panel(&self) -> Div {
+        let t = &self.theme;
+        let n = self.changes.as_ref().map_or(0, |c| c.files.len());
+        let tab = |label: String, on: bool| {
+            div()
+                .px(px(8.))
+                .py(px(4.))
+                .rounded_t(px(5.))
+                .text_size(px(12.))
+                .text_color(if on { t.fg } else { t.muted })
+                .when(on, |d| d.border_b_2().border_color(t.accent))
+                // ponytail: a aba Arquivos (editor) é da Etapa 4
+                .when(!on, |d| d.opacity(0.45))
+                .child(label)
+        };
+        let mut list = div().flex().flex_col().pt(px(4.)).pb(px(10.));
+        match &self.changes {
+            None => {}
+            Some(c) if c.files.is_empty() => {
+                list = list.child(none(t, "Nada mudou nesta branch.".into()));
+            }
+            Some(c) => {
+                for f in &c.files {
+                    let (dir, name) = f
+                        .path
+                        .rsplit_once('/')
+                        .map_or(("", f.path.as_str()), |(d, n)| (d, n));
+                    let dir = if dir.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{dir}/")
+                    };
+                    list = list.child(
+                        div()
+                            .flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .px(px(12.))
+                            .py(px(3.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .font_family(t.mono.clone())
+                                    .text_size(px(12.))
+                                    .child(div().text_color(t.muted).child(dir))
+                                    .child(name.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .font_family(t.mono.clone())
+                                    .text_size(px(11.))
+                                    .text_color(t.muted)
+                                    .child(format!(
+                                        "{}+{} −{}",
+                                        if f.new { "novo " } else { "" },
+                                        f.added,
+                                        f.removed
+                                    )),
+                            ),
+                    );
+                }
+                let pending = if c.uncommitted > 0 {
+                    format!(
+                        "{} arquivo{} não commitado{} · ",
+                        c.uncommitted,
+                        if c.uncommitted > 1 { "s" } else { "" },
+                        if c.uncommitted > 1 { "s" } else { "" }
+                    )
+                } else {
+                    String::new()
+                };
+                list = list.child(
+                    div()
+                        .flex()
+                        .px(px(12.))
+                        .py(px(6.))
+                        .text_size(px(12.))
+                        .text_color(t.muted)
+                        .child(format!("{pending}base "))
+                        .child(div().font_family(t.mono.clone()).child(c.base.clone())),
+                );
+            }
+        }
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .gap(px(2.))
+                    .pt(px(6.))
+                    .px(px(8.))
+                    .border_t_1()
+                    .border_color(t.line)
+                    .child(tab(format!("Mudanças {n}"), true))
+                    .child(tab("Arquivos".into(), false)),
+            )
+            .child(list)
+    }
+}
+
+fn none(t: &Theme, text: String) -> Div {
+    div()
+        .px(px(12.))
+        .py(px(6.))
+        .text_size(px(12.))
+        .text_color(t.muted)
+        .child(text)
+}
+
+/// `0.42` → `0,42`, como o protótipo escreve dinheiro
+pub fn brl(v: f64) -> String {
+    format!("{v:.2}").replace('.', ",")
 }
 
 pub fn ago(d: Duration) -> String {
@@ -330,58 +550,113 @@ impl Render for Sidebar {
         let this = cx.entity();
         let (repos, loose) = self.repos();
         let total: usize = repos.iter().map(|r| r.agents.len()).sum();
+        let top = self.top_repo().map(|p| p.to_string_lossy().into_owned());
+        let repo_head = |name: String, path: &str| {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .pt(px(10.))
+                .pb(px(6.))
+                .px(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .child(name)
+                .child(
+                    div()
+                        .truncate()
+                        .font_family(t.mono.clone())
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(t.muted)
+                        .child(tilde(path)),
+                )
+        };
 
-        let mut col = div().flex().flex_col().child(
+        let mut col = div().flex().flex_col();
+        // ordem do protótipo: repo · Auditoria · FEATURES · cards · Nova feature · TERMINAIS · Mudanças
+        if let Some(top) = repos.iter().find(|r| Some(&r.path) == top.as_ref()) {
+            col = col.child(repo_head(top.name.clone(), &top.path));
+            // ponytail: a Auditoria é a Etapa 9; até lá o card aparece apagado
+            col = col.child(feats().child(self.row(
+                Row {
+                    id: "auditoria".into(),
+                    glyph: "◇",
+                    glyph_color: t.comment,
+                    b: "Auditoria".into(),
+                    k: String::new(),
+                    m: "nunca rodou".into(),
+                    m_color: t.muted,
+                    m2: None,
+                    on: false,
+                    unseen: None,
+                    dim: true,
+                },
+                |_| {},
+            )));
+        }
+        col = col.child(
             section(&t, "Features")
                 .child(div().flex_1())
                 .child(div().font_family(t.mono.clone()).child(total.to_string())),
         );
         if self.offline {
-            col = col.child(
-                div()
-                    .p_3()
-                    .text_color(t.muted)
-                    .child("herdr fora do ar; tentando de novo"),
-            );
+            col = col.child(none(&t, "herdr fora do ar; tentando de novo".into()));
         } else if repos.is_empty() {
-            col = col.child(
-                div()
-                    .p_3()
-                    .text_color(t.muted)
-                    .child("Nenhum Claude rodando num repositório."),
-            );
+            col = col.child(none(&t, "Nenhum Claude rodando num repositório.".into()));
         }
-        for repo in &repos {
-            col = col.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .pt(px(10.))
-                    .pb(px(6.))
-                    .px(px(12.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(repo.name.clone())
-                    .child(
-                        div()
-                            .truncate()
-                            .font_family(t.mono.clone())
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(t.muted)
-                            .child(tilde(&repo.path)),
-                    ),
-            );
-            let mut list = feats();
+        let mut list = feats();
+        // o repo do cabeçalho primeiro; os outros depois, cada um com o seu cabeçalho
+        let ordered = repos
+            .iter()
+            .filter(|r| Some(&r.path) == top.as_ref())
+            .chain(repos.iter().filter(|r| Some(&r.path) != top.as_ref()));
+        for repo in ordered {
+            if Some(&repo.path) != top.as_ref() {
+                list = list.child(repo_head(repo.name.clone(), &repo.path));
+            }
             for a in &repo.agents {
                 let pane = a.pane_id.clone();
                 let this = this.clone();
                 let row = self.agent_row(a, repo.branch.as_deref());
                 list = list.child(self.row(row, move |cx| this.read(cx).focus(pane.clone())));
             }
-            col = col.child(list);
         }
-
+        col = col.child(
+            list.relative()
+                .child(tour::anchor(&self.anchors, "features")),
+        );
+        // ponytail: "Nova feature" é a Etapa 3; apagado até lá
+        col = col.child(
+            div()
+                .relative()
+                .child(tour::anchor(&self.anchors, "newf"))
+                .mx(px(6.))
+                .mt(px(2.))
+                .mb(px(8.))
+                .px(px(8.))
+                .py(px(6.))
+                .border_1()
+                .border_dashed()
+                .border_color(t.line)
+                .rounded(px(6.))
+                .flex()
+                .justify_between()
+                .items_center()
+                .text_color(t.muted)
+                .opacity(0.45)
+                .child("+ Nova feature")
+                .child(
+                    div()
+                        .font_family(t.mono.clone())
+                        .text_size(px(11.))
+                        .px(px(4.))
+                        .border_1()
+                        .border_color(t.line)
+                        .rounded(px(3.))
+                        .bg(t.panel)
+                        .child("Alt+N"),
+                ),
+        );
         col = col.child(
             div()
                 .pt(px(8.))
@@ -407,8 +682,10 @@ impl Render for Sidebar {
                 ),
                 m: "só terminal".into(),
                 m_color: t.muted,
+                m2: None,
                 on: false,
                 unseen: None,
+                dim: false,
             };
             terms = terms.child(self.row(row, move |cx| this.read(cx).focus_workspace(id.clone())));
         }
@@ -419,6 +696,9 @@ impl Render for Sidebar {
             terms = terms.child(self.row(row, move |cx| this.read(cx).focus(pane.clone())));
         }
         col = col.child(terms);
+        if top.is_some() {
+            col = col.child(self.changes_panel());
+        }
 
         div()
             .id("sidebar")
@@ -446,6 +726,7 @@ mod tests {
     fn titulo_e_tempo() {
         let a = Agent {
             pane_id: "p".into(),
+            tab_id: "t".into(),
             agent: "claude".into(),
             agent_status: Status::Idle,
             terminal_title_stripped: Some("◑ revisão".into()),

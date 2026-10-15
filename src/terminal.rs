@@ -57,6 +57,9 @@ pub struct TerminalView {
     cell: Size<Pixels>,
     scroll_rem: f32,
     last_motion: Option<GridPoint>,
+    /// linhas do topo que o app desenha mas o Maestro esconde (a barra de abas do herdr)
+    hidden_top: usize,
+    prefix_pending: bool,
     binds: Binds,
     _events: Task<()>,
 }
@@ -74,6 +77,14 @@ struct Frame {
     braille: Vec<(usize, usize, char, Hsla)>,
 }
 
+/// O que rodar no PTY no lugar do `$SHELL`.
+pub struct Launch {
+    pub program: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub hidden_top: usize,
+}
+
 pub fn hsla(c: Rgb) -> Hsla {
     rgb(((c.r as u32) << 16) | ((c.g as u32) << 8) | c.b as u32).into()
 }
@@ -81,7 +92,7 @@ pub fn hsla(c: Rgb) -> Hsla {
 impl TerminalView {
     pub fn new(
         config: GhosttyConfig,
-        command: Option<(String, Vec<String>)>,
+        launch: Option<Launch>,
         binds: Binds,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -101,12 +112,17 @@ impl TerminalView {
             listener.clone(),
         )));
 
-        let env = HashMap::from([
+        let mut env = HashMap::from([
             ("TERM".to_string(), "xterm-256color".to_string()),
             ("COLORTERM".to_string(), "truecolor".to_string()),
         ]);
+        if let Some(l) = &launch {
+            env.extend(l.env.clone());
+        }
         let options = tty::Options {
-            shell: command.map(|(program, args)| tty::Shell::new(program, args)),
+            shell: launch
+                .as_ref()
+                .map(|l| tty::Shell::new(l.program.clone(), l.args.clone())),
             working_directory: None,
             drain_on_exit: true,
             env,
@@ -145,9 +161,16 @@ impl TerminalView {
             cell: size(px(10.), px(20.)),
             scroll_rem: 0.,
             last_motion: None,
+            hidden_top: launch.as_ref().map_or(0, |l| l.hidden_top),
+            prefix_pending: false,
             binds,
             _events: events,
         }
+    }
+
+    /// O último byte enviado foi o prefixo do herdr: a barra mostra o modo PREFIX até a próxima tecla.
+    pub fn prefix_pending(&self) -> bool {
+        self.prefix_pending
     }
 
     pub fn focus_handle(&self) -> FocusHandle {
@@ -222,10 +245,12 @@ impl TerminalView {
         if let Some(bytes) = keys::to_bytes(k, app_cursor) {
             self.input(bytes);
             cx.stop_propagation();
+            cx.notify();
         }
     }
 
     fn input(&mut self, bytes: Vec<u8>) {
+        self.prefix_pending = self.binds.prefix.as_ref() == Some(&bytes);
         let mut term = self.term.lock();
         term.scroll_display(Scroll::Bottom);
         term.selection = None;
@@ -254,7 +279,7 @@ impl TerminalView {
         let x = (f32::from(position.x - self.padding.x)).max(0.) / f32::from(self.cell.width);
         let y = (f32::from(position.y - self.padding.y)).max(0.) / f32::from(self.cell.height);
         let col = (x as usize).min(self.grid.cols - 1);
-        let line = (y as usize).min(self.grid.lines - 1);
+        let line = (y as usize + self.hidden_top).min(self.grid.lines - 1);
         let side = if x.fract() < 0.5 {
             Side::Left
         } else {
@@ -406,7 +431,7 @@ impl TerminalView {
     /// `area` é o espaço do canvas, já sem o padding.
     fn fit(&mut self, area: Size<Pixels>, cell: Size<Pixels>, cx: &mut Context<Self>) {
         let cols = ((area.width / cell.width).floor() as usize).max(2);
-        let lines = ((area.height / cell.height).floor() as usize).max(1);
+        let lines = ((area.height / cell.height).floor() as usize).max(1) + self.hidden_top;
         let grid = GridSize { cols, lines };
         if grid != self.grid {
             self.grid = grid;
@@ -421,7 +446,7 @@ impl TerminalView {
         let term = self.term.lock();
         let content = term.renderable_content();
         let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR);
-        let offset = content.display_offset as i32;
+        let offset = content.display_offset as i32 - self.hidden_top as i32;
         let selection = content.selection;
         let cursor = (
             content.cursor.point.line.0 + offset,
@@ -429,7 +454,9 @@ impl TerminalView {
         );
         let default_bg = self.palette.background;
 
-        let mut rows: Vec<Vec<Segment>> = (0..self.grid.lines).map(|_| Vec::new()).collect();
+        let mut rows: Vec<Vec<Segment>> = (self.hidden_top..self.grid.lines)
+            .map(|_| Vec::new())
+            .collect();
         let mut backgrounds = Vec::new();
         let mut hollow_cursor = None;
         let mut braille = Vec::new();
@@ -753,9 +780,10 @@ impl EntityInputHandler for TerminalView {
         _: Option<Range<usize>>,
         text: &str,
         _: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.input(text.as_bytes().to_vec());
+        cx.notify();
     }
     fn replace_and_mark_text_in_range(
         &mut self,
