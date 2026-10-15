@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -11,6 +11,7 @@ use crate::{
     changes::{self, Changes},
     feature::{self, Inventory},
     herdr::{self, Agent, Herdr, Status, Tab, Workspace},
+    mr::{self, Fetch, Mr},
     session::{Sessions, Usage},
     theme::Theme,
     tour::{self, Anchors},
@@ -22,6 +23,8 @@ pub enum SidebarEvent {
     OpenReview(String),
     /// clique em "Arquivos": abre o arquivo no editor
     OpenFile(String),
+    /// o MR da feature desta worktree acabou de mergear: (worktree, iid, branch)
+    Merged(PathBuf, u64, String),
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -39,6 +42,9 @@ pub struct Sidebar {
     changes: Option<Changes>,
     /// aba Arquivos à frente e a lista dela (lida no clique da aba)
     files: Option<Vec<String>>,
+    /// MR de cada feature (pela worktree), o `mrSum` do card
+    mrs: HashMap<PathBuf, Mr>,
+    asked: HashSet<(PathBuf, u64)>,
     /// (arquivo do editor, sujo, aba do editor à frente)
     open: Option<(String, bool, bool)>,
     sessions: Arc<Mutex<Sessions>>,
@@ -62,6 +68,7 @@ struct Row {
     m: String,
     m_color: Hsla,
     m2: Option<(String, String, bool)>,
+    mr: Option<Mr>,
     on: bool,
     unseen: Option<Hsla>,
     dim: bool,
@@ -130,6 +137,45 @@ impl Sidebar {
                         }
                     });
                 }
+                // ponytail: MRs a cada 60 s (4 chamadas do glab por feature); webhook não chega aqui
+                if tick % 120 == 4 {
+                    let Ok(jobs) = this.read_with(cx, |this, _| {
+                        this.inventories
+                            .iter()
+                            .map(|i| (i.worktrees[0].path.clone(), i.branch.clone()))
+                            .collect::<Vec<_>>()
+                    }) else {
+                        break;
+                    };
+                    let mrs: HashMap<PathBuf, Mr> = cx
+                        .background_executor()
+                        .spawn(async move {
+                            jobs.into_iter()
+                                .filter_map(|(wt, b)| match mr::fetch(&wt, &b) {
+                                    Fetch::Mr(m) => Some((wt, *m)),
+                                    _ => None,
+                                })
+                                .collect()
+                        })
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        for (wt, m) in &mrs {
+                            if m.merged && this.asked.insert((wt.clone(), m.iid)) {
+                                let branch = this
+                                    .inventories
+                                    .iter()
+                                    .find(|i| i.worktrees[0].path == *wt)
+                                    .map(|i| i.branch.clone())
+                                    .unwrap_or_default();
+                                cx.emit(SidebarEvent::Merged(wt.clone(), m.iid, branch));
+                            }
+                        }
+                        if this.mrs != mrs {
+                            this.mrs = mrs;
+                            cx.notify();
+                        }
+                    });
+                }
                 cx.background_executor()
                     .timer(Duration::from_millis(500))
                     .await;
@@ -146,6 +192,8 @@ impl Sidebar {
             inventories: Vec::new(),
             changes: None,
             files: None,
+            mrs: HashMap::new(),
+            asked: HashSet::new(),
             open: None,
             sessions: Arc::default(),
             anchors,
@@ -363,6 +411,7 @@ impl Sidebar {
             },
             m_color: if attention { color } else { t.muted },
             m2,
+            mr: wt.as_ref().and_then(|w| self.mrs.get(w)).cloned(),
             on: a.focused,
             unseen: attention.then_some(color),
             dim: false,
@@ -445,7 +494,8 @@ impl Sidebar {
                         .text_size(px(11.))
                         .text_color(t.comment)
                         .child(format!("{cost} · "))
-                        .child(div().when(warn, |d| d.text_color(t.orange)).child(ctx)),
+                        .child(div().when(warn, |d| d.text_color(t.orange)).child(ctx))
+                        .when_some(r.mr, |d, m| d.children(mr_sum(t, &m))),
                 )
             })
     }
@@ -606,6 +656,36 @@ impl Sidebar {
     }
 }
 
+/// O `mrSum` do protótipo: ` · !148 CI✗ Sonar✓ 2 coment.`
+fn mr_sum(t: &Theme, m: &Mr) -> Vec<Div> {
+    let red: Hsla = rgb(0xff5555).into();
+    let mark = |label: &str, s: mr::Status| {
+        let (g, c) = match s {
+            mr::Status::Ok => ("✓", t.ok),
+            mr::Status::Fail => ("✗", red),
+            mr::Status::Running => ("⟳", rgb(0xf1fa8c).into()),
+            mr::Status::None => ("–", t.comment),
+        };
+        div().ml(px(4.)).text_color(c).child(format!("{label}{g}"))
+    };
+    let mut v = vec![div().child(format!(" · !{}", m.iid))];
+    if m.merged {
+        v.push(div().ml(px(4.)).text_color(t.ok).child("mergeado"));
+        return v;
+    }
+    v.push(mark("CI", m.pipe));
+    v.push(mark("Sonar", m.sonar));
+    if !m.comments.is_empty() {
+        v.push(
+            div()
+                .ml(px(4.))
+                .text_color(t.orange)
+                .child(format!("{} coment.", m.comments.len())),
+        );
+    }
+    v
+}
+
 fn none(t: &Theme, text: String) -> Div {
     div()
         .px(px(12.))
@@ -727,6 +807,7 @@ impl Render for Sidebar {
                     m: "nunca rodou".into(),
                     m_color: t.muted,
                     m2: None,
+                    mr: None,
                     on: false,
                     unseen: None,
                     dim: true,
@@ -825,6 +906,7 @@ impl Render for Sidebar {
                 m: "só terminal".into(),
                 m_color: t.muted,
                 m2: None,
+                mr: None,
                 on: false,
                 unseen: None,
                 dim: false,

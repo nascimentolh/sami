@@ -37,6 +37,7 @@ pub struct Shell {
     review: Option<Entity<Review>>,
     want_review: Option<Option<String>>,
     want_file: Option<String>,
+    want_merged: Option<(std::path::PathBuf, u64, String)>,
     toast_seq: usize,
     want_dialog: bool,
     left: bool,
@@ -74,6 +75,9 @@ impl Shell {
                     SidebarEvent::NewFeature => this.want_dialog = true,
                     SidebarEvent::OpenReview(p) => this.want_review = Some(Some(p.clone())),
                     SidebarEvent::OpenFile(p) => this.want_file = Some(p.clone()),
+                    SidebarEvent::Merged(wt, iid, branch) => {
+                        this.want_merged = Some((wt.clone(), *iid, branch.clone()))
+                    }
                 }
                 cx.notify();
             })
@@ -106,6 +110,7 @@ impl Shell {
             review: None,
             want_review: None,
             want_file: None,
+            want_merged: None,
             toast_seq: 0,
             want_dialog: false,
             left: true,
@@ -244,12 +249,30 @@ impl Shell {
 
     /// O `removeFeatureDlg` do protótipo, apagando o que o inventário registrou.
     fn remove_feature(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remove_feature_at(None, None, window, cx)
+    }
+
+    /// `root`: a worktree de uma feature de fundo (o MR dela mergeou); `None`, a feature em foco.
+    fn remove_feature_at(
+        &mut self,
+        root: Option<std::path::PathBuf>,
+        title: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(sidebar) = self.sidebar.clone() else {
             return;
         };
         let s = sidebar.read(cx);
-        let focused = s.agents.iter().find(|a| a.focused).cloned();
-        let wt = s.top_worktree();
+        let wt = root.or_else(|| s.top_worktree());
+        let focused = s
+            .agents
+            .iter()
+            .find(|a| {
+                wt.as_ref()
+                    .is_some_and(|w| std::path::Path::new(&a.cwd).starts_with(w))
+            })
+            .cloned();
         let herdr = s.herdr();
         let Some(inv) = wt.as_deref().and_then(feature::find_by_path) else {
             let main = wt.as_ref().is_some_and(|w| herdr::main_repo(w) == *w);
@@ -266,10 +289,15 @@ impl Shell {
         let working = focused.is_some_and(|a| a.agent_status == Status::Working);
         let warn = if p.uncommitted > 0 {
             format!(
-                "{} arquivo{} não commitado{} vai ser apagado junto com a worktree.",
+                "{} arquivo{} não commitado{} {} junto com a worktree.",
                 p.uncommitted,
                 if p.uncommitted > 1 { "s" } else { "" },
-                if p.uncommitted > 1 { "s" } else { "" }
+                if p.uncommitted > 1 { "s" } else { "" },
+                if p.uncommitted > 1 {
+                    "vão ser apagados"
+                } else {
+                    "vai ser apagado"
+                }
             )
         } else if working {
             "O Claude ainda está trabalhando nela e vai ser encerrado.".into()
@@ -286,7 +314,7 @@ impl Shell {
             crate::sidebar::tilde(&inv.worktrees[0].path.to_string_lossy())
         );
         let theme = self.theme.clone();
-        let title = format!("Remover a feature {}?", inv.branch);
+        let title = title.unwrap_or_else(|| format!("Remover a feature {}?", inv.branch));
         let danger = p.uncommitted > 0 || working;
         let c =
             cx.new(|cx| Confirm::new(theme, title, text, "Remover worktree", danger, window, cx));
@@ -493,45 +521,26 @@ impl Shell {
                 }
                     review::Event::Send(text) => {
                         let root = r.read(cx).root.clone();
-                        let Some(s) = this.sidebar.clone() else {
-                            return;
-                        };
-                        let s = s.read(cx);
-                        let pane = s
-                            .agents
-                            .iter()
-                            .find(|a| std::path::Path::new(&a.cwd).starts_with(&root))
-                            .map(|a| a.pane_id.clone());
-                        let Some(pane) = pane else {
-                            return this.toast(
-                                "Nenhum Claude rodando nesta worktree para receber a revisão"
-                                    .into(),
-                                cx,
-                            );
-                        };
-                        let herdr = s.herdr();
-                        let text = text.clone();
-                        let branch = branch.clone();
-                        cx.spawn(async move |this, cx| {
-                            let r = cx
-                                .background_executor()
-                                .spawn(async move {
-                                    herdr.call(
-                                        "agent.prompt",
-                                        serde_json::json!({ "target": pane, "text": text }),
-                                    )
-                                })
-                                .await;
-                            let _ = this.update(cx, |this, cx| match r {
-                                Ok(_) => {
-                                    this.toast(format!("Revisão enviada ao Claude de {branch}"), cx)
-                                }
-                                Err(e) => {
-                                    this.toast(format!("O Claude não recebeu a revisão: {e}"), cx)
-                                }
-                            });
-                        })
-                        .detach();
+                        this.ask_claude(
+                            &root,
+                            text.clone(),
+                            format!("Revisão enviada ao Claude de {branch}"),
+                            cx,
+                        )
+                    }
+                    review::Event::Ask(text, ok) => {
+                        let root = r.read(cx).root.clone();
+                        this.ask_claude(&root, text.clone(), ok.clone(), cx)
+                    }
+                    review::Event::Conclude => {
+                        let root = r.read(cx).root.clone();
+                        this.remove_feature_at(Some(root), None, window, cx)
+                    }
+                    review::Event::MrOpened => {
+                        if this.tour.is_none() && !tour::seen("mrtab") {
+                            this.tour = Some((tour::MRTAB, "mrtab", 0));
+                            cx.notify();
+                        }
                     }
                 },
             )
@@ -549,6 +558,36 @@ impl Shell {
             window.focus(&f, cx);
         }
         cx.notify();
+    }
+
+    /// `agent.prompt` no Claude da worktree; o toast diz se chegou.
+    fn ask_claude(
+        &mut self,
+        root: &std::path::Path,
+        text: String,
+        ok: String,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(pane), Some(s)) = (self.claude_pane(root, cx), self.sidebar.clone()) else {
+            return self.toast("Nenhum Claude rodando nesta worktree".into(), cx);
+        };
+        let herdr = s.read(cx).herdr();
+        cx.spawn(async move |this, cx| {
+            let r = cx
+                .background_executor()
+                .spawn(async move {
+                    herdr.call(
+                        "agent.prompt",
+                        serde_json::json!({ "target": pane, "text": text }),
+                    )
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| match r {
+                Ok(_) => this.toast(ok, cx),
+                Err(e) => this.toast(format!("O Claude não recebeu: {e}"), cx),
+            });
+        })
+        .detach();
     }
 
     /// O pane do Claude que roda na worktree `root`.
@@ -633,7 +672,10 @@ impl Shell {
             ),
             Cmd::Feature(p) => focus(Some(p), cx),
             Cmd::Tutorial => {
-                self.tour = Some(if self.review.is_some() {
+                let on_mr = self.review.as_ref().is_some_and(|r| r.read(cx).on_mr());
+                self.tour = Some(if on_mr {
+                    (tour::MRTAB, "mrtab", 0)
+                } else if self.review.is_some() {
                     (tour::REVIEW, "review", 0)
                 } else {
                     (tour::FEAT, "feat", 0)
@@ -655,6 +697,15 @@ impl Shell {
                 }
                 if let Some(r) = &self.review {
                     r.update(cx, |r, cx| r.open_file(p, window, cx));
+                }
+                return cx.notify();
+            }
+            Cmd::OpenMr => {
+                if self.review.is_none() {
+                    self.toggle_review(None, window, cx);
+                }
+                if let Some(r) = &self.review {
+                    r.update(cx, |r, cx| r.open_mr(cx));
                 }
                 return cx.notify();
             }
@@ -1233,6 +1284,12 @@ impl Render for Shell {
             && let Some(s) = &self.sidebar
         {
             s.update(cx, |s, cx| s.set_open(None, cx));
+        }
+        if self.confirm.is_none()
+            && let Some((wt, iid, branch)) = self.want_merged.take()
+        {
+            let title = format!("!{iid} foi mergeado. Remover a worktree {branch}?");
+            self.remove_feature_at(Some(wt), Some(title), window, cx);
         }
         if let Some(p) = self.want_file.take() {
             self.run(Cmd::OpenFile(p), window, cx);

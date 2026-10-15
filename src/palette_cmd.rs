@@ -28,6 +28,7 @@ pub enum Cmd {
     Save,
     Affected,
     SendReview,
+    OpenMr,
 }
 
 #[derive(Clone)]
@@ -56,7 +57,7 @@ pub fn commands() -> Vec<Item> {
         c("Feature: Nova…", "Alt+N", Some(NewFeature)),
         c("Feature: Rodar testes afetados", "", Some(Affected)),
         c("Feature: Comparar tentativas", "", Some(Compare)),
-        c("Feature: Ver MR da feature", "", None),
+        c("Feature: Ver MR da feature", "", Some(OpenMr)),
         c("Vault: Grafo de notas", "", None),
         c("Vault: Nota do repo", "", None),
         c("Vault: Daily de hoje", "", None),

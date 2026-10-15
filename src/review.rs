@@ -7,9 +7,17 @@ use crate::{
     editor::{self, FileEditor},
     feature,
     form::{FieldEvent, TextField, button},
+    mr_tab::{self, MrTab},
     theme::Theme,
     tour::{self, Anchors},
 };
+
+#[derive(Clone, Copy, PartialEq)]
+enum Tab {
+    Review,
+    Mr,
+    File,
+}
 
 /// Como desfazer o que o painel acabou de fazer (o "Desfazer" do toast).
 #[derive(Clone)]
@@ -25,6 +33,12 @@ pub enum Event {
     Toast(String, Option<Redo>),
     /// comando de testes para rodar num split do herdr
     RunTests(String),
+    /// (texto para o Claude desta worktree, toast quando chegar)
+    Ask(String, String),
+    /// "Remover worktree" do MR mergeado
+    Conclude,
+    /// a aba MR abriu (o tutorial dela)
+    MrOpened,
 }
 
 struct Draft {
@@ -55,9 +69,11 @@ pub struct Review {
     turn: Option<usize>,
     turn_open: bool,
     scroll_to: Option<String>,
-    /// a aba do arquivo do protótipo (`S.file`) e se ela está à frente (`S.rtab==='file'`)
+    /// a aba do arquivo do protótipo (`S.file`)
     editor: Option<Entity<FileEditor>>,
-    on_file: bool,
+    mr: Option<Entity<MrTab>>,
+    /// `S.rtab` do protótipo
+    tab: Tab,
     focus: FocusHandle,
     theme: Theme,
     anchors: Anchors,
@@ -141,7 +157,8 @@ impl Review {
             turn_open: false,
             scroll_to: None,
             editor: None,
-            on_file: false,
+            mr: None,
+            tab: Tab::Review,
             focus: cx.focus_handle(),
             theme,
             anchors,
@@ -150,21 +167,48 @@ impl Review {
     }
 
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match (&self.editor, self.on_file) {
+        match (&self.editor, self.tab == Tab::File) {
             (Some(e), true) => e.read(cx).focus_handle(cx),
             _ => self.focus.clone(),
         }
     }
 
     pub fn show_file(&mut self, path: String, cx: &mut Context<Self>) {
-        self.on_file = false;
+        self.tab = Tab::Review;
         self.scroll_to = Some(path);
+        cx.notify();
+    }
+
+    pub fn on_mr(&self) -> bool {
+        self.tab == Tab::Mr
+    }
+
+    /// A aba MR (o `S.rtab='mr'` do protótipo); o MR é lido só a partir daqui.
+    pub fn open_mr(&mut self, cx: &mut Context<Self>) {
+        self.tab = Tab::Mr;
+        if self.mr.is_none() {
+            let (root, branch, theme, anchors) = (
+                self.root.clone(),
+                self.branch.clone(),
+                self.theme.clone(),
+                self.anchors.clone(),
+            );
+            let m = cx.new(|cx| MrTab::new(root, branch, theme, anchors, cx));
+            cx.subscribe(&m, |_, _, e: &mr_tab::Event, cx| match e {
+                mr_tab::Event::Ask(t, ok) => cx.emit(Event::Ask(t.clone(), ok.clone())),
+                mr_tab::Event::Conclude => cx.emit(Event::Conclude),
+                mr_tab::Event::Toast(m) => cx.emit(Event::Toast(m.clone(), None)),
+            })
+            .detach();
+            self.mr = Some(m);
+        }
+        cx.emit(Event::MrOpened);
         cx.notify();
     }
 
     /// O `openFile` do protótipo: o arquivo vira a aba ao lado de Revisar.
     pub fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.on_file = true;
+        self.tab = Tab::File;
         if self
             .editor
             .as_ref()
@@ -189,19 +233,19 @@ impl Review {
     /// O arquivo da aba do editor e se tem edição não salva.
     pub fn current_file(&self, cx: &App) -> Option<(String, bool, bool)> {
         let e = self.editor.as_ref()?.read(cx);
-        Some((e.path.clone(), e.dirty(cx), self.on_file))
+        Some((e.path.clone(), e.dirty(cx), self.tab == Tab::File))
     }
 
     /// Linha e coluna para a barra de status, com o arquivo à frente.
     pub fn cursor(&self, cx: &App) -> Option<(usize, usize)> {
         self.editor
             .as_ref()
-            .filter(|_| self.on_file)
+            .filter(|_| self.tab == Tab::File)
             .map(|e| e.read(cx).cursor(cx))
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        match self.editor.as_ref().filter(|_| self.on_file) {
+        match self.editor.as_ref().filter(|_| self.tab == Tab::File) {
             Some(e) => e.update(cx, |e, cx| e.save(cx)),
             None => cx.emit(Event::Toast("Nada a salvar".into(), None)),
         }
@@ -209,7 +253,7 @@ impl Review {
 
     /// O `sendSel` do protótipo: a seleção do editor ou a linha marcada no diff.
     pub fn selection_ref(&self, cx: &App) -> Option<String> {
-        match self.editor.as_ref().filter(|_| self.on_file) {
+        match self.editor.as_ref().filter(|_| self.tab == Tab::File) {
             Some(e) => Some(e.read(cx).selection_ref(cx)),
             None => self.selected.as_ref().map(|(p, n)| format!("@{p}:{n}")),
         }
@@ -425,7 +469,7 @@ impl Review {
     }
 
     fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.on_file {
+        if self.tab != Tab::Review {
             return;
         }
         let k = &e.keystroke;
@@ -843,16 +887,20 @@ impl Render for Review {
                 let name = e.path.rsplit('/').next().unwrap_or_default().to_string();
                 (name, e.dirty(cx))
             };
-            tab("rt-file", &name, self.on_file)
+            tab("rt-file", &name, self.tab == Tab::File)
                 .cursor_pointer()
                 .when(dirty, |x| x.child(div().text_color(t.accent).child("●")))
                 .on_click(cx.listener(|this, _, w, cx| {
-                    this.on_file = true;
+                    this.tab = Tab::File;
                     let f = this.focus_handle(cx);
                     w.focus(&f, cx);
                     cx.notify();
                 }))
         });
+        let mr_label = match self.mr.as_ref().and_then(|m| m.read(cx).fetch.clone()) {
+            Some(crate::mr::Fetch::Mr(m)) => format!("MR !{}", m.iid),
+            _ => "MR".into(),
+        };
         let tabs = div()
             .flex()
             .items_center()
@@ -862,16 +910,19 @@ impl Render for Review {
             .border_b_1()
             .border_color(t.line)
             .child(
-                tab("rt-review", "Revisar", !self.on_file)
+                tab("rt-review", "Revisar", self.tab == Tab::Review)
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, w, cx| {
-                        this.on_file = false;
+                        this.tab = Tab::Review;
                         w.focus(&this.focus, cx);
                         cx.notify();
                     })),
             )
-            // ponytail: a aba MR é da Etapa 5
-            .child(tab("rt-mr", "MR", false).opacity(0.45))
+            .child(
+                tab("rt-mr", &mr_label, self.tab == Tab::Mr)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| this.open_mr(cx))),
+            )
             .children(file_tab)
             .child(div().flex_1())
             .child(
@@ -883,7 +934,21 @@ impl Render for Review {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Close)))
                     .child("×"),
             );
-        if let Some(e) = self.editor.clone().filter(|_| self.on_file) {
+        let mr_body = self.mr.clone().filter(|_| self.tab == Tab::Mr);
+        if let Some(m) = mr_body {
+            return div()
+                .track_focus(&self.focus)
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(t.win)
+                .text_color(t.fg)
+                .font_family(t.sans)
+                .text_size(px(13.))
+                .child(tabs)
+                .child(m);
+        }
+        if let Some(e) = self.editor.clone().filter(|_| self.tab == Tab::File) {
             return div()
                 .track_focus(&self.focus)
                 .size_full()

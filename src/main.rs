@@ -13,9 +13,12 @@ mod herdr;
 mod jira;
 mod keys;
 mod mouse;
+mod mr;
+mod mr_tab;
 mod new_feature;
 mod palette;
 mod palette_cmd;
+mod preflight;
 mod review;
 mod session;
 mod shell;
@@ -40,8 +43,13 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("checkpoint") {
         let mut stdin = String::new();
         let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin);
-        if let Err(e) = feature::checkpoint(args.get(2).map_or("", String::as_str), &stdin) {
-            eprintln!("maestro checkpoint: {e}");
+        match feature::checkpoint(args.get(2).map_or("", String::as_str), &stdin) {
+            Ok(Some(reason)) => println!(
+                "{}",
+                serde_json::json!({ "decision": "block", "reason": reason })
+            ),
+            Ok(None) => {}
+            Err(e) => eprintln!("maestro checkpoint: {e}"),
         }
         return;
     }

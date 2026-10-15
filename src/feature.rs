@@ -398,6 +398,7 @@ pub fn conclude(herdr: &Herdr, inv: &Inventory) -> Result<Vec<String>, String> {
     }
     let _ = std::fs::remove_file(data_dir().join(format!("{}.json", inv.id)));
     let _ = std::fs::remove_file(turns_file(&inv.id));
+    let _ = std::fs::remove_file(preflight_file(&inv.id));
     Ok(done)
 }
 
@@ -474,6 +475,11 @@ fn turns_file(id: &str) -> PathBuf {
     data_dir().join(format!("{id}.turns"))
 }
 
+/// A árvore dos arquivos que passaram no pré-voo (ou tiveram override).
+pub fn preflight_file(id: &str) -> PathBuf {
+    data_dir().join(format!("{id}.preflight"))
+}
+
 pub fn turns(id: &str) -> Vec<Turn> {
     std::fs::read_to_string(turns_file(id))
         .unwrap_or_default()
@@ -490,29 +496,35 @@ pub fn turns(id: &str) -> Vec<Turn> {
 }
 
 /// O hook `UserPromptSubmit` da worktree chama isto (`maestro checkpoint <id>`) com o JSON do Claude no stdin.
-pub fn checkpoint(id: &str, stdin: &str) -> Result<(), String> {
+/// O hook UserPromptSubmit: grava o turno e, num `/mr` sem pré-voo, devolve o motivo do bloqueio.
+pub fn checkpoint(id: &str, stdin: &str) -> Result<Option<String>, String> {
     let inv = inventories()
         .into_iter()
         .find(|i| i.id == id)
         .ok_or("feature desconhecida")?;
     let root = &inv.worktrees[0].path;
     let sha = snapshot(root)?;
+    let prompt = serde_json::from_str::<serde_json::Value>(stdin)
+        .ok()
+        .and_then(|v| v["prompt"].as_str().map(|p| p.replace(['\n', '\t'], " ")))
+        .unwrap_or_default();
+    // bloqueado não vira turno: o Claude nem recebe o prompt
+    if let Some(reason) = crate::preflight::gate(id, root, &sha, &prompt) {
+        return Ok(Some(reason));
+    }
     let n = turns(id).len() + 1;
     git_err(
         root,
         &["update-ref", &format!("refs/maestro/{id}/t{n}"), &sha],
     )?;
-    let prompt = serde_json::from_str::<serde_json::Value>(stdin)
-        .ok()
-        .and_then(|v| v["prompt"].as_str().map(|p| p.replace(['\n', '\t'], " ")))
-        .unwrap_or_default();
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(turns_file(id))
         .map_err(|e| e.to_string())?;
-    writeln!(f, "{n}\t{sha}\t{prompt}").map_err(|e| e.to_string())
+    writeln!(f, "{n}\t{sha}\t{prompt}").map_err(|e| e.to_string())?;
+    Ok(None)
 }
 
 /// Hook só nesta worktree (`.claude/settings.local.json`, fora do git pelo `info/exclude`): o settings global fica intacto.

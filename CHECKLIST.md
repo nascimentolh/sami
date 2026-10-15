@@ -93,18 +93,20 @@ Regras:
 
 ## Etapa 5: Pré-voo e ciclo de vida do MR
 
-- [ ] **pré-voo**, com resultado por item:
-  - branch atualizada com a base
-  - testes afetados verdes
-  - lint e typecheck do repo
-  - Sonar local (MCP do Sonar); em repo com vitest, também `ctbz-check sonar-vitest`
-  - nenhum segredo no diff
-  - nenhum arquivo proibido (`.env`, build, `node_modules`)
-- [ ] o `/mr` só roda com o pré-voo verde; um item vermelho exige override explícito, registrado na descrição do MR
-- [ ] aba MR da feature: pipeline, quality gate do Sonar e comentários (API do GitLab com o token do glab)
-- [ ] botões que chamam a skill certa: `/pipe <job>` e `/comentario`
-- [ ] merge detectado → oferece a conclusão da etapa 3
-- [ ] tutorial da área
+- [x] **pré-voo** (card "Pré-voo" na aba MR, antes do `/mr`; o protótipo não tem esta tela, então segue os `.card2` dele), com resultado por item. ✓ passou, ✗ barra, – não deu para checar (não barra e nunca aparece como ✓):
+  - branch atualizada com a base (`git fetch` + commits atrás de `origin/<base>`)
+  - testes afetados verdes (o mesmo comando do botão da Etapa 4)
+  - lint e typecheck (`npm run lint/typecheck/tsc` do `package.json`; `cargo clippy` em repo Rust). `ponytail:` sem `.maestro.toml` até algum repo precisar de outro comando
+  - Sonar local: `claude -p --model haiku` com o MCP `analyze_code_snippet` em até 10 arquivos mudados (~US$ 0,02); com vitest e `ctbz-check` no PATH, também `ctbz-check sonar-vitest`
+  - nenhum segredo nas linhas novas (tokens do GitLab/GitHub/Slack/AWS/Google, chave privada, `password = "…"` literal), olhando o que o `/mr` commitaria (worktree inteira, não commitados e arquivos novos). `ponytail:` gitleaks quando estiver instalado
+  - nenhum arquivo proibido (`.env*` menos `.env.example`, `node_modules`, `dist`, `build`, `target`, `coverage`, `.next`)
+- [x] o `/mr` só roda com o pré-voo verde: o botão manda o `/mr` sozinho quando tudo passa; com item vermelho há "Abrir mesmo assim", que manda `/mr Registre na descrição do MR que o pré-voo passou com override em: …`. O `/mr` digitado no terminal também passa pelo pré-voo: o hook `UserPromptSubmit` da worktree bloqueia (`decision: block`) se os arquivos atuais não são os que passaram (árvore da foto gravada em `<id>.preflight`); qualquer erro do hook deixa passar
+- [x] aba MR da feature (o `renderMRTab` do protótipo): cabeçalho com "Abrir no GitLab", pipeline (job que falhou), quality gate do Sonar (o job `sonar`/`sonar-merge-request`, que roda com `sonar.qualitygate.wait=true`; sem ele, "sem Sonar neste pipeline") e comentários de revisores (discussões abertas de outras pessoas). Tudo pelo `glab api` com o login do glab, só leitura, a cada 20 s com a aba aberta. Remoto que não é GitLab e glab sem login têm estado vazio próprio. O card da lateral ganhou o `mrSum` (`· !42 CI✗ Sonar✓ 1 coment.`)
+- [x] botões que chamam a skill certa: "Diagnosticar com /pipe" (`/pipe <link do job>`), "Mandar N pro Claude (/comentario)" (`/comentario !iid`), "Pedir ao Claude para cobrir" e "Abrir MR draft com /mr"
+- [x] merge detectado (a lateral relê os MRs a cada 60 s) → "!N foi mergeado. Remover a worktree X?" com o aviso da conclusão da Etapa 3, para a feature do MR mesmo em segundo plano, uma vez por MR. O "Histórico do vault atualizado" do protótipo fica para a Etapa 7
+- [x] tutorial da área: o passo do `TOURS.mrtab` no primeiro card da aba
+
+Conferido com um `glab` falso no PATH do app de teste (CI vermelho, sem MR, mergeado), sem tocar no GitLab: o token `glpat-…` montado num arquivo novo e um `.env.local` barram o pré-voo, e o `/mr` só sai pelo override; o hook bloqueia `/mr` sem pré-voo e volta a bloquear depois de qualquer edição.
 
 **Pronto quando:** um MR de teste com um token falso no diff é barrado no pré-voo, e um CI vermelho aparece na aba MR com "Diagnosticar com /pipe".
 

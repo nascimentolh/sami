@@ -26,6 +26,7 @@ pub enum Part {
     T(&'static str),
     B(&'static str),
     K(&'static str),
+    M(&'static str),
 }
 use Part::*;
 
@@ -117,6 +118,21 @@ pub const REVIEW: &[Step] = &[
     },
 ];
 
+/// O `TOURS.mrtab` do protótipo.
+pub const MRTAB: &[Step] = &[Step {
+    target: "mrcard",
+    text: &[
+        T(
+            "O MR da feature: pipeline, Sonar e comentários. Cada problema tem um botão que chama a skill certa (",
+        ),
+        M("/pipe"),
+        T(","),
+        M("/comentario"),
+        T(")."),
+    ],
+    wait: false,
+}];
+
 fn state_path() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config/maestro/state.toml")
 }
@@ -190,6 +206,7 @@ pub fn overlay(
                     .bg(t.panel)
                     .child(s.to_string()),
             ),
+            M(s) => words.child(div().font_family(t.mono.clone()).child(s.to_string())),
         };
     }
     let btn = |id: &'static str, label: &'static str, pri: bool| {
@@ -288,7 +305,7 @@ pub fn overlay(
                                         d.child(
                                             btn(
                                                 "tour-next",
-                                                if last { "Concluir" } else { "Próximo" },
+                                                if last { "Entendi" } else { "Próximo" },
                                                 true,
                                             )
                                             .on_click(move |_, w, cx| on_next(w, cx)),
