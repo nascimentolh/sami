@@ -411,6 +411,13 @@ pub fn snapshot(root: &Path) -> Result<String, String> {
             .arg(root)
             .args(args)
             .env("GIT_INDEX_FILE", &index)
+            // a foto não precisa (nem deve) levar a identidade de quem usa; sem isto falha em máquina sem user.name
+            .envs([
+                ("GIT_AUTHOR_NAME", "Maestro"),
+                ("GIT_AUTHOR_EMAIL", "maestro@localhost"),
+                ("GIT_COMMITTER_NAME", "Maestro"),
+                ("GIT_COMMITTER_EMAIL", "maestro@localhost"),
+            ])
             .output()
             .map_err(|e| e.to_string())?;
         if o.status.success() {
