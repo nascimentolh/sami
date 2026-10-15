@@ -5,6 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
+alacritty_terminal = "=0.26.0"
+futures = "0.3"
 gpui-kit = "=0.7.0"
 
 [profile.dev.package."*"]

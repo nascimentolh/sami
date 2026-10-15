@@ -27,10 +27,11 @@ Regras:
 
 ## Etapa 1: Terminal (o maior risco)
 
-- [ ] PTY (`portable-pty`) rodando `$SHELL` com o env do usuário
-- [ ] `alacritty_terminal` + renderer de grid no GPUI: 16, 256 e truecolor; bold, italic e underline; cursor block
-- [ ] input: teclas e modificadores, bracketed paste, mouse reporting, scrollback, seleção e cópia
-- [ ] resize propaga para o PTY (SIGWINCH)
+- [x] PTY rodando `$SHELL` com o env do usuário (o `tty` + `EventLoop` do próprio `alacritty_terminal`; sem `portable-pty`)
+- [x] `alacritty_terminal` + renderer de grid no GPUI: 16, 256 e truecolor; bold, italic e underline; cursor block (verificado com screenshot: starship, eza com ícones, ligaduras)
+- [ ] input: teclas e modificadores (básico feito: texto, Enter, setas, Ctrl+letra, Alt), bracketed paste, mouse reporting, scrollback, seleção e cópia
+- [ ] acentos e teclas mortas no layout `us intl` (ç, ã, é, aspas)
+- [x] resize propaga para o PTY (SIGWINCH): a grade se ajusta ao tamanho da janela
 - [ ] parser do `~/.config/ghostty/config` com teste: `font-family`, `font-size`, `font-feature`, `palette`, `background`, `foreground`, `selection-*`, `cursor-*`, `window-padding-*`, `background-opacity`, `unfocused-split-opacity` e `keybind`
 - [ ] ligaduras e glifos da Nerd Font
 - [ ] regra de atalhos: com o foco no terminal, Ctrl+tecla vai para o PTY; Ctrl+Shift+tecla é do Maestro
