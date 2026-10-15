@@ -1,4 +1,6 @@
-use gpui_kit::{Hsla, rgb};
+use std::sync::Arc;
+
+use gpui_kit::{App, Hsla, rgb, rgba};
 
 use crate::{palette::Palette, terminal::hsla};
 
@@ -41,5 +43,24 @@ impl Theme {
             sans: "IBM Plex Sans",
             mono,
         }
+    }
+}
+
+impl Theme {
+    /// O `.ed` do protótipo no editor do gpui-component, que pinta pelo tema global dele.
+    pub fn apply_to_editor(&self, cx: &mut App) {
+        let th = gpui_kit::component::Theme::global_mut(cx);
+        th.foreground = self.fg;
+        th.caret = self.fg;
+        th.muted_foreground = self.comment;
+        th.selection = rgba(0x44475ae6).into();
+        let mut hl = (*th.highlight_theme).clone();
+        hl.style.editor_background = Some(self.win);
+        hl.style.editor_foreground = Some(self.fg);
+        hl.style.editor_gutter_background = Some(self.win);
+        hl.style.editor_line_number = Some(self.comment);
+        hl.style.editor_active_line_number = Some(self.comment);
+        hl.style.editor_active_line = None;
+        th.highlight_theme = Arc::new(hl);
     }
 }

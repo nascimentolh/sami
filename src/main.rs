@@ -5,6 +5,7 @@ mod cleanup;
 mod compare;
 mod confirm;
 mod diff;
+mod editor;
 mod feature;
 mod form;
 mod ghostty;
@@ -82,6 +83,7 @@ fn main() {
         };
         gpui_kit::open_window(options, cx, |window, cx| {
             let theme = Theme::new(&config.palette, config.font_family.clone());
+            theme.apply_to_editor(cx);
             let theme_name = if config.palette == palette::Palette::default() {
                 "Dracula · "
             } else {

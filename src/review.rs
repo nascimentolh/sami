@@ -3,7 +3,8 @@ use std::{collections::HashSet, path::PathBuf, time::Duration};
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
-    diff::{self, FileDiff, Kind, Tok},
+    diff::{self, FileDiff, Kind},
+    editor::{self, FileEditor},
     feature,
     form::{FieldEvent, TextField, button},
     theme::Theme,
@@ -54,6 +55,9 @@ pub struct Review {
     turn: Option<usize>,
     turn_open: bool,
     scroll_to: Option<String>,
+    /// a aba do arquivo do protótipo (`S.file`) e se ela está à frente (`S.rtab==='file'`)
+    editor: Option<Entity<FileEditor>>,
+    on_file: bool,
     focus: FocusHandle,
     theme: Theme,
     anchors: Anchors,
@@ -136,6 +140,8 @@ impl Review {
             turn: None,
             turn_open: false,
             scroll_to: None,
+            editor: None,
+            on_file: false,
             focus: cx.focus_handle(),
             theme,
             anchors,
@@ -143,13 +149,83 @@ impl Review {
         }
     }
 
-    pub fn focus_handle(&self) -> FocusHandle {
-        self.focus.clone()
+    pub fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match (&self.editor, self.on_file) {
+            (Some(e), true) => e.read(cx).focus_handle(cx),
+            _ => self.focus.clone(),
+        }
     }
 
     pub fn show_file(&mut self, path: String, cx: &mut Context<Self>) {
+        self.on_file = false;
         self.scroll_to = Some(path);
         cx.notify();
+    }
+
+    /// O `openFile` do protótipo: o arquivo vira a aba ao lado de Revisar.
+    pub fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_file = true;
+        if self
+            .editor
+            .as_ref()
+            .is_some_and(|e| e.read(cx).path == path)
+        {
+            let f = self.focus_handle(cx);
+            window.focus(&f, cx);
+            return cx.notify();
+        }
+        let (root, theme) = (self.root.clone(), self.theme.clone());
+        let e = cx.new(|cx| FileEditor::new(root, path, theme, window, cx));
+        cx.subscribe(&e, |this, _, e: &editor::Event, cx| match e {
+            editor::Event::Changed => cx.notify(),
+            editor::Event::Toast(m) => cx.emit(Event::Toast(m.clone(), None)),
+            editor::Event::ShowDiff(p) => this.show_file(p.clone(), cx),
+        })
+        .detach();
+        self.editor = Some(e);
+        cx.notify();
+    }
+
+    /// O arquivo da aba do editor e se tem edição não salva.
+    pub fn current_file(&self, cx: &App) -> Option<(String, bool, bool)> {
+        let e = self.editor.as_ref()?.read(cx);
+        Some((e.path.clone(), e.dirty(cx), self.on_file))
+    }
+
+    /// Linha e coluna para a barra de status, com o arquivo à frente.
+    pub fn cursor(&self, cx: &App) -> Option<(usize, usize)> {
+        self.editor
+            .as_ref()
+            .filter(|_| self.on_file)
+            .map(|e| e.read(cx).cursor(cx))
+    }
+
+    pub fn save(&mut self, cx: &mut Context<Self>) {
+        match self.editor.as_ref().filter(|_| self.on_file) {
+            Some(e) => e.update(cx, |e, cx| e.save(cx)),
+            None => cx.emit(Event::Toast("Nada a salvar".into(), None)),
+        }
+    }
+
+    /// O `sendSel` do protótipo: a seleção do editor ou a linha marcada no diff.
+    pub fn selection_ref(&self, cx: &App) -> Option<String> {
+        match self.editor.as_ref().filter(|_| self.on_file) {
+            Some(e) => Some(e.read(cx).selection_ref(cx)),
+            None => self.selected.as_ref().map(|(p, n)| format!("@{p}:{n}")),
+        }
+    }
+
+    pub fn run_tests(&mut self, cx: &mut Context<Self>) {
+        let files: Vec<String> = self
+            .files
+            .iter()
+            .flatten()
+            .map(|f| f.path.clone())
+            .collect();
+        match diff::affected_tests(&self.root, &files).filter(|_| !files.is_empty()) {
+            Some(cmd) => cx.emit(Event::RunTests(cmd)),
+            None => cx.emit(Event::Toast("Nenhum teste afetado para rodar".into(), None)),
+        }
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -309,7 +385,7 @@ impl Review {
     }
 
     /// O `sendToClaude` do protótipo: comentários e edições num prompt só.
-    fn send(&mut self, cx: &mut Context<Self>) {
+    pub fn send(&mut self, cx: &mut Context<Self>) {
         let pend = self.pending();
         if pend.is_empty() && self.edited.is_empty() {
             return;
@@ -349,6 +425,9 @@ impl Review {
     }
 
     fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.on_file {
+            return;
+        }
         let k = &e.keystroke;
         match k.key.as_str() {
             "c" if !k.modifiers.modified() => self.new_draft(window, cx),
@@ -435,26 +514,10 @@ impl Review {
             })
     }
 
-    fn color(&self, tok: Tok) -> Hsla {
-        match tok {
-            Tok::Comment => self.theme.comment,
-            Tok::Str => rgb(0xf1fa8c).into(),
-            Tok::Keyword => rgb(0xff79c6).into(),
-            Tok::Number => self.theme.accent,
-        }
-    }
-
     fn code(&self, text: &str) -> StyledText {
         let hl: Vec<_> = diff::highlight(text)
             .into_iter()
-            .map(|(r, tok)| {
-                let style = HighlightStyle {
-                    color: Some(self.color(tok)),
-                    font_style: (tok == Tok::Comment).then_some(FontStyle::Italic),
-                    ..Default::default()
-                };
-                (r, style)
-            })
+            .map(|(r, tok)| (r, editor::style(&self.theme, tok)))
             .collect();
         StyledText::new(text.to_string()).with_highlights(hl)
     }
@@ -592,13 +655,12 @@ impl Review {
                     )
                 })
                 .child(div().flex_1())
-                // ponytail: o editor de arquivo vem no fim desta etapa
-                .child(div().opacity(0.45).child(button(
-                    t,
-                    ("open", fi),
-                    "Abrir no editor",
-                    false,
-                ))),
+                .when(self.root.join(&f.path).is_file(), |x| {
+                    let path = f.path.clone();
+                    x.child(button(t, ("open", fi), "Abrir no editor", false).on_click(
+                        cx.listener(move |this, _, w, cx| this.open_file(path.clone(), w, cx)),
+                    ))
+                }),
         );
         for (hi, h) in f.hunks.iter().enumerate() {
             let ok = self.accepted.contains(&(f.path.clone(), h.header.clone()));
@@ -761,9 +823,11 @@ impl Review {
 impl Render for Review {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme.clone();
-        let tab = |label: &str, on: bool| {
+        let tab = |id: &'static str, label: &str, on: bool| {
             div()
+                .id(id)
                 .flex()
+                .gap(px(6.))
                 .items_center()
                 .h_full()
                 .px(px(12.))
@@ -771,9 +835,67 @@ impl Render for Review {
                 .border_color(t.line)
                 .text_color(if on { t.fg } else { t.muted })
                 .when(on, |x| x.bg(t.win).border_b_2().border_color(t.accent))
-                .when(!on, |x| x.opacity(0.45))
                 .child(label.to_string())
         };
+        let file_tab = self.editor.clone().map(|e| {
+            let (name, dirty) = {
+                let e = e.read(cx);
+                let name = e.path.rsplit('/').next().unwrap_or_default().to_string();
+                (name, e.dirty(cx))
+            };
+            tab("rt-file", &name, self.on_file)
+                .cursor_pointer()
+                .when(dirty, |x| x.child(div().text_color(t.accent).child("●")))
+                .on_click(cx.listener(|this, _, w, cx| {
+                    this.on_file = true;
+                    let f = this.focus_handle(cx);
+                    w.focus(&f, cx);
+                    cx.notify();
+                }))
+        });
+        let tabs = div()
+            .flex()
+            .items_center()
+            .h(px(32.))
+            .flex_none()
+            .bg(t.panel)
+            .border_b_1()
+            .border_color(t.line)
+            .child(
+                tab("rt-review", "Revisar", !self.on_file)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        this.on_file = false;
+                        w.focus(&this.focus, cx);
+                        cx.notify();
+                    })),
+            )
+            // ponytail: a aba MR é da Etapa 5
+            .child(tab("rt-mr", "MR", false).opacity(0.45))
+            .children(file_tab)
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("r-close")
+                    .px(px(10.))
+                    .text_color(t.muted)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Close)))
+                    .child("×"),
+            );
+        if let Some(e) = self.editor.clone().filter(|_| self.on_file) {
+            return div()
+                .track_focus(&self.focus)
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(t.win)
+                .text_color(t.fg)
+                .font_family(t.sans)
+                .text_size(px(13.))
+                .child(tabs)
+                .child(div().flex_1().min_h_0().child(e));
+        }
         let n = self.files.as_ref().map_or(0, Vec::len);
         let mut body = div()
             .id("diff")
@@ -843,29 +965,7 @@ impl Render for Review {
             .text_color(t.fg)
             .font_family(t.sans)
             .text_size(px(13.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .h(px(32.))
-                    .flex_none()
-                    .bg(t.panel)
-                    .border_b_1()
-                    .border_color(t.line)
-                    .child(tab("Revisar", true))
-                    // ponytail: a aba MR é da Etapa 5
-                    .child(tab("MR", false))
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .id("r-close")
-                            .px(px(10.))
-                            .text_color(t.muted)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Close)))
-                            .child("×"),
-                    ),
-            )
+            .child(tabs)
             .child(
                 div()
                     .flex()

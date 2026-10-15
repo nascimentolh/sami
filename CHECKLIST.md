@@ -85,8 +85,8 @@ Regras:
 - [x] comentários por linha (`C` ou o `+`) + suas edições → "Enviar ao Claude" (`agent.prompt`) num prompt só, no formato do protótipo. Conferido com `pane.read` no pane do agente
 - [x] checkpoints por turno: hook `UserPromptSubmit` só na worktree (`.claude/settings.local.json`, fora do git pelo `info/exclude`; o settings global fica intacto) chama `maestro checkpoint <id>`, que grava uma foto de todos os arquivos em `refs/maestro/<id>/t<n>` sem tocar no índice; seletor de turno no painel; "⏪ Voltar para antes do turno N" com Desfazer. Conferido byte a byte (arquivo novo, apagado e sem newline final)
 - [x] testes afetados num split do herdr embaixo do Claude: `jest --findRelatedTests`, `vitest related` ou `cargo test` com os arquivos mudados (`ponytail:` sem o ripwire por enquanto; entra quando a lista de arquivos ficar grande)
-- [ ] editor de arquivo simples (gpui-component) e `Ctrl+Shift+L` (seleção → `@arquivo:linhas` no Claude)
-- [ ] arquivo alterado pelo Claude recarrega; com edição local, banner de conflito
+- [x] editor de arquivo (o `EditorState` do gpui-component com o realce `hl()` do protótipo): "Abrir no editor" no diff, aba "Arquivos" da lateral e `Ctrl+Shift+O` abrem o arquivo numa aba ao lado de Revisar (● quando sujo), `Ctrl+S` salva, Ln/Col na barra de status. `Ctrl+Shift+L` digita `@arquivo:a-b` (seleção do editor) ou `@arquivo:n` (linha marcada no diff) no Claude da feature, sem Enter. Desvio: o número da linha do cursor fica claro (o gpui-component pinta assim)
+- [x] arquivo alterado por fora recarrega sozinho sem edição sua; com edição, banner "Claude alterou este arquivo enquanto você editava" com Ver diff · Manter meu · Aceitar dele (o protótipo não tem; segue o desenho §2.1). Conferido num repo descartável
 - [x] tutorial da área: os 3 passos do `TOURS.review` do protótipo na primeira vez que o painel abre
 
 **Pronto quando:** você comenta 2 linhas e edita 1 e o prompt chega no pane certo (conferir com `herdr agent read`), e "voltar turno" restaura os arquivos byte a byte.

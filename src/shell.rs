@@ -36,6 +36,7 @@ pub struct Shell {
     toasts: Vec<(usize, String, Option<Redo>)>,
     review: Option<Entity<Review>>,
     want_review: Option<Option<String>>,
+    want_file: Option<String>,
     toast_seq: usize,
     want_dialog: bool,
     left: bool,
@@ -50,8 +51,8 @@ const HINTS: &[(&str, &str, bool)] = &[
     ("Ctrl+Shift+Enter", "empilhar", true),
     ("Ctrl+Shift+←→", "trocar pane", true),
     ("Ctrl+A", "herdr", true),
-    ("Ctrl+Shift+L", "seleção → Claude", false),
-    ("Alt+N", "nova feature", false),
+    ("Ctrl+Shift+L", "seleção → Claude", true),
+    ("Alt+N", "nova feature", true),
     ("?", "atalhos", false),
 ];
 
@@ -72,6 +73,7 @@ impl Shell {
                 match e {
                     SidebarEvent::NewFeature => this.want_dialog = true,
                     SidebarEvent::OpenReview(p) => this.want_review = Some(Some(p.clone())),
+                    SidebarEvent::OpenFile(p) => this.want_file = Some(p.clone()),
                 }
                 cx.notify();
             })
@@ -103,6 +105,7 @@ impl Shell {
             toasts: Vec::new(),
             review: None,
             want_review: None,
+            want_file: None,
             toast_seq: 0,
             want_dialog: false,
             left: true,
@@ -119,6 +122,8 @@ impl Shell {
             match k.key.as_str() {
                 "p" => return self.toggle_palette(window, cx),
                 "e" => return self.toggle_review(None, window, cx),
+                "l" => return self.run(Cmd::SendSelection, window, cx),
+                "o" => return self.run(Cmd::OpenFileMenu, window, cx),
                 "b" => return self.run(Cmd::ToggleLeft, window, cx),
                 _ => {}
             }
@@ -446,6 +451,15 @@ impl Shell {
             let theme = self.theme.clone();
             let anchors = self.anchors.clone();
             let r = cx.new(|cx| Review::new(root.clone(), branch.clone(), theme, anchors, cx));
+            cx.observe(&r, |this, r, cx| {
+                // o arquivo aberto (e se está sujo) aparece marcado na aba Arquivos da lateral
+                let open = r.read(cx).current_file(cx);
+                if let Some(s) = &this.sidebar {
+                    s.update(cx, |s, cx| s.set_open(open, cx));
+                }
+                cx.notify();
+            })
+            .detach();
             cx.subscribe_in(
                 &r,
                 window,
@@ -531,9 +545,74 @@ impl Shell {
             r.update(cx, |r, cx| r.show_file(p, cx));
         }
         if let Some(r) = &self.review {
-            window.focus(&r.read(cx).focus_handle(), cx);
+            let f = r.read(cx).focus_handle(cx);
+            window.focus(&f, cx);
         }
         cx.notify();
+    }
+
+    /// O pane do Claude que roda na worktree `root`.
+    fn claude_pane(&self, root: &std::path::Path, cx: &App) -> Option<String> {
+        let s = self.sidebar.as_ref()?.read(cx);
+        s.agents
+            .iter()
+            .find(|a| std::path::Path::new(&a.cwd).starts_with(root))
+            .map(|a| a.pane_id.clone())
+    }
+
+    /// O `sendSel` do protótipo: `@arquivo:linhas` digitado no Claude da feature, sem Enter.
+    fn send_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(r) = self.review.clone() else {
+            return self.toast("Selecione linhas no editor ou no diff".into(), cx);
+        };
+        let (root, sel) = {
+            let r = r.read(cx);
+            (r.root.clone(), r.selection_ref(cx))
+        };
+        let Some(sel) = sel else {
+            return self.toast("Selecione linhas no editor ou no diff".into(), cx);
+        };
+        let (Some(pane), Some(s)) = (self.claude_pane(&root, cx), self.sidebar.clone()) else {
+            return self.toast(
+                "Este terminal não tem Claude; escolha uma feature".into(),
+                cx,
+            );
+        };
+        let s = s.read(cx);
+        let herdr = s.herdr();
+        s.focus(pane.clone());
+        std::thread::spawn(move || {
+            herdr.call(
+                "pane.send_text",
+                serde_json::json!({ "pane_id": pane, "text": format!("{sel} ") }),
+            )
+        });
+        window.focus(&self.terminal.read(cx).focus_handle(), cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// "Arquivo: Abrir…": os arquivos da worktree em foco, na mesma paleta.
+    fn open_file_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self
+            .sidebar
+            .as_ref()
+            .and_then(|s| s.read(cx).top_worktree())
+        else {
+            return self.toast(
+                "Abra um terminal num repositório para abrir arquivos".into(),
+                cx,
+            );
+        };
+        let items = crate::changes::files(&root)
+            .into_iter()
+            .map(|p| palette_cmd::Item {
+                title: p.clone(),
+                key: String::new(),
+                cmd: Some(Cmd::OpenFile(p)),
+            })
+            .collect();
+        self.open_palette(items, "Nome do arquivo…", window, cx);
     }
 
     fn run(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
@@ -568,6 +647,35 @@ impl Shell {
             Cmd::RemoveFeature => return self.remove_feature(window, cx),
             Cmd::Compare => return self.open_compare(window, cx),
             Cmd::Review => return self.toggle_review(None, window, cx),
+            Cmd::SendSelection => return self.send_selection(window, cx),
+            Cmd::OpenFileMenu => return self.open_file_menu(window, cx),
+            Cmd::OpenFile(p) => {
+                if self.review.is_none() {
+                    self.toggle_review(None, window, cx);
+                }
+                if let Some(r) = &self.review {
+                    r.update(cx, |r, cx| r.open_file(p, window, cx));
+                }
+                return cx.notify();
+            }
+            Cmd::Save => {
+                if let Some(r) = &self.review {
+                    r.update(cx, |r, cx| r.save(cx));
+                }
+                return;
+            }
+            Cmd::Affected | Cmd::SendReview => {
+                if self.review.is_none() {
+                    self.toggle_review(None, window, cx);
+                }
+                if let Some(r) = &self.review {
+                    r.update(cx, |r, cx| match cmd {
+                        Cmd::Affected => r.run_tests(cx),
+                        _ => r.send(cx),
+                    });
+                }
+                return;
+            }
             Cmd::AddRepoMenu => {
                 let wt = self
                     .sidebar
@@ -825,9 +933,12 @@ impl Shell {
                     .text_color(t.muted)
                     .child(
                         div()
+                            .id("files")
                             .flex()
                             .gap(px(6.))
-                            .opacity(0.45)
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, w, cx| this.open_file_menu(w, cx)))
                             .child(self.kbd("Ctrl+Shift+O"))
                             .child("arquivo"),
                     )
@@ -1051,7 +1162,9 @@ impl Shell {
                 }
             }
         }
+        let cursor = self.review.as_ref().and_then(|r| r.read(cx).cursor(cx));
         bar.child(div().flex_1())
+            .children(cursor.map(|(l, c)| cell().child(format!("Ln {l}, Col {c}"))))
             .child(cell().border_r_0().child(format!("ghostty: {}", self.font)))
     }
 }
@@ -1115,6 +1228,14 @@ impl Render for Shell {
         let t = self.theme.clone();
         if std::mem::take(&mut self.want_dialog) {
             self.open_new_feature(window, cx);
+        }
+        if self.review.is_none()
+            && let Some(s) = &self.sidebar
+        {
+            s.update(cx, |s, cx| s.set_open(None, cx));
+        }
+        if let Some(p) = self.want_file.take() {
+            self.run(Cmd::OpenFile(p), window, cx);
         }
         if let Some(p) = self.want_review.take() {
             self.toggle_review(p, window, cx);

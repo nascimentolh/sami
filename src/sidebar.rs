@@ -20,6 +20,8 @@ pub enum SidebarEvent {
     NewFeature,
     /// clique num arquivo de "Mudanças": abre a revisão nele
     OpenReview(String),
+    /// clique em "Arquivos": abre o arquivo no editor
+    OpenFile(String),
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -35,6 +37,10 @@ pub struct Sidebar {
     pub usage: HashMap<String, Usage>,
     pub inventories: Vec<Inventory>,
     changes: Option<Changes>,
+    /// aba Arquivos à frente e a lista dela (lida no clique da aba)
+    files: Option<Vec<String>>,
+    /// (arquivo do editor, sujo, aba do editor à frente)
+    open: Option<(String, bool, bool)>,
     sessions: Arc<Mutex<Sessions>>,
     anchors: Anchors,
     theme: Theme,
@@ -139,6 +145,8 @@ impl Sidebar {
             usage: HashMap::new(),
             inventories: Vec::new(),
             changes: None,
+            files: None,
+            open: None,
             sessions: Arc::default(),
             anchors,
             theme,
@@ -204,6 +212,13 @@ impl Sidebar {
             .chain(&self.agents)
             .find_map(|a| herdr::repo_root(Path::new(&a.cwd)))
             .map(Path::to_path_buf)
+    }
+
+    pub fn set_open(&mut self, open: Option<(String, bool, bool)>, cx: &mut Context<Self>) {
+        if self.open != open {
+            self.open = open;
+            cx.notify();
+        }
     }
 
     /// Repositório principal dessa worktree: o do cabeçalho e o da "Nova feature".
@@ -438,61 +453,86 @@ impl Sidebar {
     fn changes_panel(&self, cx: &mut Context<Self>) -> Div {
         let t = &self.theme;
         let n = self.changes.as_ref().map_or(0, |c| c.files.len());
-        let tab = |label: String, on: bool| {
+        let on_files = self.files.is_some();
+        let tab = |id: &'static str, label: String, on: bool| {
             div()
+                .id(id)
+                .cursor_pointer()
                 .px(px(8.))
                 .py(px(4.))
                 .rounded_t(px(5.))
                 .text_size(px(12.))
                 .text_color(if on { t.fg } else { t.muted })
                 .when(on, |d| d.border_b_2().border_color(t.accent))
-                // ponytail: a aba Arquivos (editor) é da Etapa 4
-                .when(!on, |d| d.opacity(0.45))
                 .child(label)
         };
         let mut list = div().flex().flex_col().pt(px(4.)).pb(px(10.));
-        match &self.changes {
-            None => {}
-            Some(c) if c.files.is_empty() => {
+        let row = |id: String, dir: &str, name: &str| {
+            let dir = if dir.is_empty() {
+                String::new()
+            } else {
+                format!("{dir}/")
+            };
+            div()
+                .id(SharedString::from(id))
+                .cursor_pointer()
+                .hover(|d| d.bg(t.raise))
+                .flex()
+                .gap(px(6.))
+                .items_center()
+                .px(px(12.))
+                .py(px(3.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .font_family(t.mono.clone())
+                        .text_size(px(12.))
+                        .child(div().text_color(t.muted).child(dir))
+                        .child(name.to_string()),
+                )
+        };
+        let split = |p: &str| -> (String, String) {
+            p.rsplit_once('/')
+                .map_or((String::new(), p.to_string()), |(d, n)| {
+                    (d.into(), n.into())
+                })
+        };
+        match (&self.files, &self.changes) {
+            (Some(files), _) => {
+                // ponytail: os 300 primeiros; árvore ou busca (Ctrl+Shift+O) para repo grande
+                for p in files.iter().take(300) {
+                    let (dir, name) = split(p);
+                    let open = self.open.as_ref().filter(|o| o.0 == *p);
+                    let path = p.clone();
+                    list = list.child(
+                        row(format!("fl:{p}"), &dir, &name)
+                            .when(open.is_some_and(|o| o.2), |d| d.bg(t.accent_soft))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(SidebarEvent::OpenFile(path.clone()))
+                            }))
+                            .when(open.is_some_and(|o| o.1), |d| {
+                                d.child(div().text_size(px(11.)).text_color(t.muted).child("●"))
+                            }),
+                    );
+                }
+            }
+            (None, None) => {}
+            (None, Some(c)) if c.files.is_empty() => {
                 list = list.child(none(t, "Nada mudou nesta branch.".into()));
             }
-            Some(c) => {
+            (None, Some(c)) => {
                 for f in &c.files {
-                    let (dir, name) = f
-                        .path
-                        .rsplit_once('/')
-                        .map_or(("", f.path.as_str()), |(d, n)| (d, n));
-                    let dir = if dir.is_empty() {
-                        String::new()
-                    } else {
-                        format!("{dir}/")
-                    };
+                    let (dir, name) = split(&f.path);
                     let path = f.path.clone();
                     list = list.child(
-                        div()
-                            .id(SharedString::from(format!("ch:{}", f.path)))
-                            .cursor_pointer()
-                            .hover(|d| d.bg(t.raise))
+                        row(format!("ch:{}", f.path), &dir, &name)
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(SidebarEvent::OpenReview(path.clone()))
                             }))
-                            .flex()
-                            .gap(px(6.))
-                            .items_center()
-                            .px(px(12.))
-                            .py(px(3.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .font_family(t.mono.clone())
-                                    .text_size(px(12.))
-                                    .child(div().text_color(t.muted).child(dir))
-                                    .child(name.to_string()),
-                            )
                             .child(
                                 div()
                                     .flex_none()
@@ -541,8 +581,26 @@ impl Sidebar {
                     .px(px(8.))
                     .border_t_1()
                     .border_color(t.line)
-                    .child(tab(format!("Mudanças {n}"), true))
-                    .child(tab("Arquivos".into(), false)),
+                    .child(
+                        tab("lt-ch", format!("Mudanças {n}"), !on_files).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.files = None;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        tab("lt-files", "Arquivos".into(), on_files).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.files = Some(
+                                    this.top_worktree()
+                                        .map(|r| changes::files(&r))
+                                        .unwrap_or_default(),
+                                );
+                                cx.notify();
+                            },
+                        )),
+                    ),
             )
             .child(list)
     }

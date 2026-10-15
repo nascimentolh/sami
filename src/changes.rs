@@ -16,6 +16,16 @@ pub struct Changes {
     pub uncommitted: usize,
 }
 
+/// A aba "Arquivos": o que o git conhece na worktree, sem os ignorados.
+pub fn files(root: &Path) -> Vec<String> {
+    git(
+        root,
+        &["ls-files", "--cached", "--others", "--exclude-standard"],
+    )
+    .map(|o| o.lines().map(String::from).collect())
+    .unwrap_or_default()
+}
+
 fn git(root: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")

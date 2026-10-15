@@ -22,6 +22,12 @@ pub enum Cmd {
     ToggleLeft,
     Features,
     Feature(String),
+    SendSelection,
+    OpenFileMenu,
+    OpenFile(String),
+    Save,
+    Affected,
+    SendReview,
 }
 
 #[derive(Clone)]
@@ -48,7 +54,7 @@ pub fn commands() -> Vec<Item> {
         ),
         c("Fila: Ver tudo que espera por você", "", None),
         c("Feature: Nova…", "Alt+N", Some(NewFeature)),
-        c("Feature: Rodar testes afetados", "", None),
+        c("Feature: Rodar testes afetados", "", Some(Affected)),
         c("Feature: Comparar tentativas", "", Some(Compare)),
         c("Feature: Ver MR da feature", "", None),
         c("Vault: Grafo de notas", "", None),
@@ -63,11 +69,15 @@ pub fn commands() -> Vec<Item> {
         c("Feature: Adicionar repo…", "", Some(AddRepoMenu)),
         c("Feature: Ir para a que precisa de você", "", Some(Blocked)),
         c("Feature: Revisar mudanças", "Ctrl+Shift+E", Some(Review)),
-        c("Feature: Enviar comentários ao Claude", "Ctrl+⏎", None),
+        c(
+            "Feature: Enviar comentários ao Claude",
+            "Ctrl+⏎",
+            Some(SendReview),
+        ),
         c(
             "Claude: Enviar seleção para o terminal",
             "Ctrl+Shift+L",
-            None,
+            Some(SendSelection),
         ),
         c(
             "Terminal: Dividir lado a lado",
@@ -87,8 +97,8 @@ pub fn commands() -> Vec<Item> {
         ),
         c("Terminal: Abrir terminal da home", "", None),
         c("Claude: Interromper", "Esc / Ctrl+C", Some(Interrupt)),
-        c("Arquivo: Abrir…", "Ctrl+Shift+O", None),
-        c("Arquivo: Salvar", "Ctrl+S", None),
+        c("Arquivo: Abrir…", "Ctrl+Shift+O", Some(OpenFileMenu)),
+        c("Arquivo: Salvar", "Ctrl+S", Some(Save)),
         c(
             "Layout: Mostrar/ocultar lateral",
             "Ctrl+Shift+B",
@@ -322,7 +332,8 @@ impl Render for CommandPalette {
                     .child("Nada encontrado"),
             );
         }
-        for (i, it) in self.items.iter().enumerate() {
+        // ponytail: desenha só os 200 primeiros (a lista de arquivos de um repo grande); lista virtual se fizer falta
+        for (i, it) in self.items.iter().enumerate().take(200) {
             let ready = it.cmd.is_some();
             list = list.child(
                 div()
