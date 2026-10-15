@@ -118,6 +118,36 @@ pub const REVIEW: &[Step] = &[
     },
 ];
 
+/// O `TOURS.vault` do protótipo.
+pub const VAULT: &[Step] = &[
+    Step {
+        target: "vgraph",
+        text: &[
+            T("O"),
+            B("Grafo"),
+            T(
+                "mostra todas as notas e [[links]] do seu vault, como no Obsidian, mais as features e MRs ativos ligados aos repos.",
+            ),
+        ],
+        wait: false,
+    },
+    Step {
+        target: "vtoday",
+        text: &[
+            B("Hoje"),
+            T("é a daily: a fila do dia, que o Maestro marca com [x] quando a tarefa termina."),
+        ],
+        wait: false,
+    },
+    Step {
+        target: "vcard",
+        text: &[T(
+            "A nota, editável, com os links dela e onde ela é mencionada. A nota do repo entra no contexto de toda feature.",
+        )],
+        wait: false,
+    },
+];
+
 /// O `TOURS.mrtab` do protótipo.
 pub const MRTAB: &[Step] = &[Step {
     target: "mrcard",

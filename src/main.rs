@@ -9,6 +9,7 @@ mod editor;
 mod feature;
 mod form;
 mod ghostty;
+mod graph;
 mod herdr;
 mod jira;
 mod keys;
@@ -29,6 +30,7 @@ mod terminal;
 mod theme;
 mod tour;
 mod vault;
+mod vault_view;
 
 use std::sync::Arc;
 

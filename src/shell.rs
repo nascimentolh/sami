@@ -18,6 +18,7 @@ use crate::{
     terminal::TerminalView,
     theme::Theme,
     tour::{self, Anchors},
+    vault_view::{self, VaultView},
 };
 
 /// Janela do protótipo: título (36) · lateral | terminal · dicas (22) · status (24).
@@ -46,6 +47,9 @@ pub struct Shell {
     /// as permissões que aprendem: sugestões esperando o diálogo
     learn: Vec<crate::perms::Suggestion>,
     choice: Option<Entity<Choice>>,
+    /// o modo Vault do título (Features · MRs · Vault)
+    vault: Option<Entity<VaultView>>,
+    in_vault: bool,
     mascot: Option<(Note, usize, bool)>,
     mascot_seq: usize,
     mascot_frame: u64,
@@ -55,6 +59,15 @@ pub struct Shell {
     want_dialog: bool,
     left: bool,
 }
+
+/// As dicas do modo Vault (`HINTS.vault` do protótipo).
+const VAULT_HINTS: &[(&str, &str, bool)] = &[
+    ("clique", "abrir nota", true),
+    ("[[link]]", "navegar", true),
+    ("◎ Grafo", "visão geral", true),
+    ("Hoje", "daily", true),
+    ("?", "atalhos", false),
+];
 
 /// Dicas do modo Features do protótipo; `false` = ainda não existe e aparece apagada.
 const HINTS: &[(&str, &str, bool)] = &[
@@ -155,6 +168,8 @@ impl Shell {
             mq: Vec::new(),
             learn: Vec::new(),
             choice: None,
+            vault: None,
+            in_vault: false,
             mascot: None,
             mascot_seq: 0,
             mascot_frame: 0,
@@ -629,6 +644,36 @@ impl Shell {
         cx.notify();
     }
 
+    fn vault_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<VaultView> {
+        if let Some(v) = &self.vault {
+            return v.clone();
+        }
+        let (sidebar, theme, anchors) = (
+            self.sidebar.clone(),
+            self.theme.clone(),
+            self.anchors.clone(),
+        );
+        let v = cx.new(|cx| VaultView::new(sidebar, theme, anchors, cx));
+        cx.subscribe_in(
+            &v,
+            window,
+            |this, _, e: &vault_view::Event, window, cx| match e {
+                vault_view::Event::Toast(m, redo) => this.toast_undo(m.clone(), redo.clone(), cx),
+                vault_view::Event::Focus(p) => {
+                    this.in_vault = false;
+                    if let Some(s) = &this.sidebar {
+                        s.read(cx).focus(p.clone());
+                    }
+                    window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+        self.vault = Some(v.clone());
+        v
+    }
+
     /// O `learnPerm` do protótipo: sempre permitir, só para você ou para o time.
     fn ask_learn(
         &mut self,
@@ -955,7 +1000,23 @@ impl Shell {
             Cmd::Herdr(a) => self.terminal.update(cx, |t, _| t.herdr_action(a)),
             Cmd::Interrupt => self.terminal.update(cx, |t, _| t.send(b"\x1b")),
             Cmd::ToggleLeft => self.left = !self.left,
-            Cmd::Features => {}
+            Cmd::Features => self.in_vault = false,
+            Cmd::Vault(to) => {
+                let repo = self
+                    .sidebar
+                    .as_ref()
+                    .and_then(|s| s.read(cx).top_repo())
+                    .and_then(|r| r.file_name().map(|n| n.to_string_lossy().into_owned()));
+                let v = self.vault_view(window, cx);
+                v.update(cx, |v, cx| v.go(&to, repo, cx));
+                self.in_vault = true;
+                let f = v.read(cx).focus_handle();
+                window.focus(&f, cx);
+                if self.tour.is_none() && !tour::seen("vault") {
+                    self.tour = Some((tour::VAULT, "vault", 0));
+                }
+                return cx.notify();
+            }
             Cmd::NewFeature => return self.open_new_feature(window, cx),
             Cmd::RemoveFeature => return self.remove_feature(window, cx),
             Cmd::Compare => return self.open_compare(window, cx),
@@ -1162,8 +1223,6 @@ impl Shell {
                 .rounded(px(5.))
                 .text_color(if on { t.fg } else { t.muted })
                 .when(on, |d| d.bg(t.raise))
-                // ponytail: MRs e Vault são as Etapas 5 e 6; até lá ficam visíveis e apagados
-                .when(!on, |d| d.opacity(0.45))
                 .child(label.to_string())
                 .when_some(count, |d, c| {
                     d.child(
@@ -1207,13 +1266,28 @@ impl Shell {
                     .flex()
                     .gap(px(2.))
                     .ml(px(8.))
-                    .child(mode(
-                        "Features",
-                        true,
-                        (blocked > 0).then(|| format!("{blocked} !")),
-                    ))
-                    .child(mode("MRs", false, None))
-                    .child(mode("Vault", false, None)),
+                    .child(
+                        mode(
+                            "Features",
+                            !self.in_vault,
+                            (blocked > 0).then(|| format!("{blocked} !")),
+                        )
+                        .id("m-feat")
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Features, w, cx))),
+                    )
+                    // ponytail: MRs é a Etapa 8; até lá fica visível e apagado
+                    .child(mode("MRs", false, None).opacity(0.45))
+                    .child(
+                        mode("Vault", self.in_vault, None)
+                            .id("m-vault")
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, w, cx| {
+                                this.run(Cmd::Vault(crate::palette_cmd::VaultGo::Open), w, cx)
+                            })),
+                    ),
             )
             .child(
                 div()
@@ -1393,7 +1467,7 @@ impl Shell {
             .border_color(t.line)
             .overflow_hidden()
             .whitespace_nowrap();
-        for (k, label, ready) in HINTS {
+        for (k, label, ready) in if self.in_vault { VAULT_HINTS } else { HINTS } {
             bar = bar.child(
                 div()
                     .flex()
@@ -1633,21 +1707,26 @@ impl Render for Shell {
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .children(self.sidebar.clone().filter(|_| self.left))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .flex()
-                            .flex_col()
-                            .bg(t.win)
-                            .relative()
-                            .child(tour::anchor(&self.anchors, "term"))
-                            .child(self.hbar(cx))
-                            .child(div().flex_1().min_h_0().child(self.terminal.clone())),
-                    )
-                    .children(self.review.clone().map(|r| {
+                    .when_some(self.vault.clone().filter(|_| self.in_vault), |d, v| {
+                        d.child(v)
+                    })
+                    .children(self.sidebar.clone().filter(|_| self.left && !self.in_vault))
+                    .when(!self.in_vault, |d| {
+                        d.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .flex()
+                                .flex_col()
+                                .bg(t.win)
+                                .relative()
+                                .child(tour::anchor(&self.anchors, "term"))
+                                .child(self.hbar(cx))
+                                .child(div().flex_1().min_h_0().child(self.terminal.clone())),
+                        )
+                    })
+                    .children(self.review.clone().filter(|_| !self.in_vault).map(|r| {
                         div()
                             .w(relative(0.46))
                             .max_w(px(640.))

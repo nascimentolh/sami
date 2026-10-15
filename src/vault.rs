@@ -96,12 +96,11 @@ pub fn backlinks<'a>(notes: &'a [Note], name: &str) -> Vec<&'a Note> {
 }
 
 pub fn today() -> String {
-    let out = std::process::Command::new("date")
+    std::process::Command::new("date")
         .arg("+%Y-%m-%d")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    out
+        .unwrap_or_default()
 }
 
 /// O que a feature recebe no `--append-system-prompt`: `repos/<repo>.md` e as notas que ela linka.

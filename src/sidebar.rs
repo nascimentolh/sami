@@ -400,6 +400,10 @@ impl Sidebar {
         }
     }
 
+    pub fn feature_refs(&self) -> Vec<crate::vault_view::FeatureRef> {
+        crate::vault_view::features_from(&self.inventories, &self.agents, &self.mrs)
+    }
+
     /// Repositório principal dessa worktree: o do cabeçalho e o da "Nova feature".
     pub fn top_repo(&self) -> Option<PathBuf> {
         self.top_worktree().map(|w| herdr::main_repo(&w))

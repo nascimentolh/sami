@@ -123,12 +123,14 @@ Nota: os hooks rodam o binário do próprio Maestro; o build de debug (1 GB) lev
 
 ## Etapa 7: Vault
 
-- [ ] parser do `~/vault`: frontmatter, `[[links]]` e backlinks, atualizado por `notify`
-- [ ] modo Vault: árvore, nota renderizada e editável, "Links desta nota", "Mencionado em", Hoje (daily) e Atividade
-- [ ] toda feature recebe `repos/<repo>.md` e o que ele linka (`--append-system-prompt`)
-- [ ] escritas permitidas pelo `vault/CLAUDE.md` (Histórico, `decisions/` de gotcha, `[x]` na daily), registradas na Atividade com desfazer
-- [ ] grafo (estilo Obsidian)
-- [ ] tutorial da área
+- [x] parser do `~/vault` (ou `MAESTRO_VAULT`): notas por pasta menos `templates/`, frontmatter, `[[links]]` (com `|apelido` e `#seção`) e backlinks. `ponytail:` relido quando muda alguma data de arquivo (a cada 2 s), sem o crate `notify`
+- [x] modo Vault (o `renderVaultTree`/`renderVaultMain` do protótipo, no título Features · MRs · Vault e na paleta): busca, Grafo, Hoje, Atividade, notas por pasta com `←N` menções; a nota renderizada (frontmatter numa linha, títulos, listas, `código` em mono, **negrito**, `[[links]]` clicáveis, quebrados em laranja), "Editar" → "Salvar no vault", "No contexto das features" (nota de repo), "Links desta nota" e "Mencionado em". Hoje marca `[x]` com um clique e o "Gerar resumo do dia" só grava com "Salvar na daily"; sem daily do dia, "Criar daily de hoje" a partir do template
+- [x] toda feature nova recebe `repos/<repo>.md` e as notas que ela linka: o Maestro grava `<id>.context.md` e o `claude` da feature abre com `--append-system-prompt "$(cat …)"`
+- [x] escritas permitidas pelo `vault/CLAUDE.md`: MR aberto → linha no Histórico de `repos/<repo>.md` (criada do template se faltar) no formato que já está lá (`- data: MR !N \`branch\` — título (aberto)`); mergeado → tira o "(aberto)" e marca `[x]` na tarefa da daily que cita a branch, o `!N` ou a chave do Jira. Uma vez cada (`<id>.hist`). Toda escrita vai para a Atividade (`vault-activity.log`) e para o toast com Desfazer. `decisions/` de gotcha fica com o Claude, que já segue o contrato
+- [x] grafo (o `mountGraph` do protótipo): notas, links, quebrados tracejados, features `⎇` e MRs `!N` ligados ao repo; cor por pasta, tamanho pelo número de links, anel na nota atual; hover destaca vizinhos, arrastar nó e fundo, roda = zoom, clique abre a nota ou foca a feature; busca, "só <repo> (2 saltos)", links quebrados, features e MRs; a primeira abertura já vem calculada e enquadrada. `ponytail:` O(n²) por passo, Barnes-Hut a partir de ~500 notas
+- [x] tutorial da área: os 3 passos do `TOURS.vault` na primeira vez no modo Vault
+
+Conferido numa cópia do vault (`MAESTRO_VAULT`): a feature nova de um repo `bots-api` abriu o Claude com `--append-system-prompt` e a nota dele; o MR aberto escreveu a linha com "(aberto)", o merge tirou o "(aberto)" e marcou a tarefa da daily que citava o `!77`.
 
 **Pronto quando:** uma feature nova traz a nota do repo no contexto, e um merge escreve a linha certa no Histórico.
 

@@ -4,6 +4,15 @@ use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::theme::Theme;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum VaultGo {
+    Graph,
+    RepoNote,
+    Today,
+    Log,
+    Open,
+}
+
 /// O que a paleta pede para o Shell fazer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cmd {
@@ -30,6 +39,7 @@ pub enum Cmd {
     SendReview,
     OpenMr,
     AttentionMenu,
+    Vault(VaultGo),
     Go(crate::sidebar::Go),
 }
 
@@ -67,11 +77,11 @@ pub fn commands() -> Vec<Item> {
         c("Feature: Rodar testes afetados", "", Some(Affected)),
         c("Feature: Comparar tentativas", "", Some(Compare)),
         c("Feature: Ver MR da feature", "", Some(OpenMr)),
-        c("Vault: Grafo de notas", "", None),
-        c("Vault: Nota do repo", "", None),
-        c("Vault: Daily de hoje", "", None),
-        c("Vault: Atividade", "", None),
-        c("Ir para: Vault", "", None),
+        c("Vault: Grafo de notas", "", Some(Vault(VaultGo::Graph))),
+        c("Vault: Nota do repo", "", Some(Vault(VaultGo::RepoNote))),
+        c("Vault: Daily de hoje", "", Some(Vault(VaultGo::Today))),
+        c("Vault: Atividade", "", Some(Vault(VaultGo::Log))),
+        c("Ir para: Vault", "", Some(Vault(VaultGo::Open))),
         c("Ajuda: Rever tutorial desta tela", "", Some(Tutorial)),
         c("Feature: Remover a atual…", "", Some(RemoveFeature)),
         // não está no protótipo; o desenho (5.4) pede o comando
