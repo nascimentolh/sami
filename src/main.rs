@@ -34,6 +34,16 @@ use terminal::TerminalView;
 use theme::Theme;
 
 fn main() {
+    // `maestro checkpoint <id>`: o hook UserPromptSubmit da worktree, sem abrir janela
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("checkpoint") {
+        let mut stdin = String::new();
+        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin);
+        if let Err(e) = feature::checkpoint(args.get(2).map_or("", String::as_str), &stdin) {
+            eprintln!("maestro checkpoint: {e}");
+        }
+        return;
+    }
     // aberto de dentro de um pane do herdr, o herdr do Maestro se recusaria a rodar ("nested herdr")
     for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with("HERDR_")) {
         // SAFETY: ainda não há outras threads

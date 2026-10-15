@@ -161,6 +161,11 @@ pub fn worktree(root: &Path) -> Option<(String, Vec<FileDiff>)> {
     Some((base.into(), files))
 }
 
+/// O que mudou entre duas fotos (um turno do Claude).
+pub fn between(root: &Path, a: &str, b: &str) -> Vec<FileDiff> {
+    parse(&git(root, &["diff", "--no-color", "--no-ext-diff", a, b]).unwrap_or_default())
+}
+
 /// `git apply` (ou `-R`) de um patch na worktree; erro com a mensagem do git.
 pub fn apply(root: &Path, patch: &str, reverse: bool) -> Result<(), String> {
     use std::io::Write;

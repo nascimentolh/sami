@@ -4,16 +4,23 @@ use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
     diff::{self, FileDiff, Kind, Tok},
+    feature,
     form::{FieldEvent, TextField, button},
     theme::Theme,
 };
+
+/// Como desfazer o que o painel acabou de fazer (o "Desfazer" do toast).
+#[derive(Clone)]
+pub enum Redo {
+    Patch(PathBuf, String),
+    Restore(PathBuf, String),
+}
 
 pub enum Event {
     Close,
     /// texto pronto para o Claude desta worktree
     Send(String),
-    /// mensagem e, se houver, o patch que refaz o que foi desfeito
-    Toast(String, Option<(PathBuf, String)>),
+    Toast(String, Option<Redo>),
 }
 
 struct Draft {
@@ -39,6 +46,10 @@ pub struct Review {
     editing: Option<(String, u32, Entity<TextField>)>,
     edited: Vec<String>,
     scroll: ScrollHandle,
+    feature_id: Option<String>,
+    turns: Vec<feature::Turn>,
+    turn: Option<usize>,
+    turn_open: bool,
     scroll_to: Option<String>,
     focus: FocusHandle,
     theme: Theme,
@@ -54,12 +65,36 @@ impl Review {
             let root = root.clone();
             async move |this, cx| loop {
                 let r = root.clone();
-                let d = cx
+                let Ok((id, turn)) = this.read_with(cx, |t, _| (t.feature_id.clone(), t.turn))
+                else {
+                    break;
+                };
+                let (d, turns) = cx
                     .background_executor()
-                    .spawn(async move { diff::worktree(&r) })
+                    .spawn(async move {
+                        let turns = id.as_deref().map(feature::turns).unwrap_or_default();
+                        // um turno: da foto dele até a do próximo (ou até agora)
+                        let files = match turn.and_then(|n| turns.iter().position(|t| t.n == n)) {
+                            Some(i) => {
+                                let next = turns
+                                    .get(i + 1)
+                                    .map(|t| t.sha.clone())
+                                    .or_else(|| feature::snapshot(&r).ok());
+                                next.map(|b| {
+                                    (String::from("main"), diff::between(&r, &turns[i].sha, &b))
+                                })
+                            }
+                            None => diff::worktree(&r),
+                        };
+                        (files, turns)
+                    })
                     .await;
                 if this
                     .update(cx, |this, cx| {
+                        if this.turns != turns {
+                            this.turns = turns;
+                            cx.notify();
+                        }
                         let (base, files) = d.unwrap_or_default();
                         if this.files.as_ref() != Some(&files) {
                             this.base = base;
@@ -75,6 +110,7 @@ impl Review {
             }
         });
         Self {
+            feature_id: feature::find_by_path(&root).map(|i| i.id),
             root,
             branch,
             base: "main".into(),
@@ -86,6 +122,9 @@ impl Review {
             editing: None,
             edited: Vec::new(),
             scroll: ScrollHandle::new(),
+            turns: Vec::new(),
+            turn: None,
+            turn_open: false,
             scroll_to: None,
             focus: cx.focus_handle(),
             theme,
@@ -110,6 +149,25 @@ impl Review {
         cx.notify();
     }
 
+    /// O `rewindTo` do protótipo: os arquivos voltam para a foto de antes do turno; o toast desfaz.
+    fn rewind(&mut self, n: usize, cx: &mut Context<Self>) {
+        let Some(t) = self.turns.iter().find(|t| t.n == n).cloned() else {
+            return;
+        };
+        let now = feature::snapshot(&self.root);
+        match (now, feature::restore(&self.root, &t.sha)) {
+            (Ok(now), Ok(())) => cx.emit(Event::Toast(
+                format!("Arquivos de volta para antes do turno {n}"),
+                Some(Redo::Restore(self.root.clone(), now)),
+            )),
+            (_, Err(e)) | (Err(e), _) => {
+                cx.emit(Event::Toast(format!("Não deu para voltar: {e}"), None))
+            }
+        }
+        self.turn = None;
+        self.refresh(cx);
+    }
+
     fn undo_hunk(&mut self, fi: usize, hi: usize, cx: &mut Context<Self>) {
         let Some(f) = self.files.as_ref().and_then(|f| f.get(fi)) else {
             return;
@@ -119,7 +177,7 @@ impl Review {
         match diff::apply(&self.root, &patch, true) {
             Ok(()) => cx.emit(Event::Toast(
                 format!("Bloco de {path} desfeito"),
-                Some((self.root.clone(), patch)),
+                Some(Redo::Patch(self.root.clone(), patch)),
             )),
             Err(e) => cx.emit(Event::Toast(format!("Não deu para desfazer: {e}"), None)),
         }
@@ -288,6 +346,82 @@ impl Review {
             _ => return,
         }
         cx.stop_propagation();
+    }
+
+    fn turn_select(&self, n: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = &self.theme;
+        let label = |turn: Option<&feature::Turn>| match turn {
+            None => format!(
+                "Todos os turnos · {n} arquivo{}",
+                if n == 1 { "" } else { "s" }
+            ),
+            Some(x) => {
+                let p: String = x.prompt.chars().take(40).collect();
+                format!(
+                    "Turno {}: {p}{}",
+                    x.n,
+                    if x.prompt.chars().count() > 40 {
+                        "…"
+                    } else {
+                        ""
+                    }
+                )
+            }
+        };
+        let current = label(self.turn.and_then(|n| self.turns.iter().find(|t| t.n == n)));
+        let mut opts: Vec<(Option<usize>, String)> = vec![(None, label(None))];
+        opts.extend(self.turns.iter().map(|x| (Some(x.n), label(Some(x)))));
+        div()
+            .relative()
+            .child(
+                div()
+                    .id("turn-sel")
+                    .px(px(6.))
+                    .py(px(2.))
+                    .bg(t.win)
+                    .border_1()
+                    .border_color(t.line)
+                    .rounded(px(5.))
+                    .text_size(px(12.))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.turn_open = !this.turn_open;
+                        cx.notify();
+                    }))
+                    .child(format!("{current}  ▾")),
+            )
+            .when(self.turn_open, |d| {
+                let mut list = div()
+                    .absolute()
+                    .top(px(26.))
+                    .left_0()
+                    .min_w(px(260.))
+                    .py(px(4.))
+                    .bg(t.raise)
+                    .border_1()
+                    .border_color(t.line)
+                    .rounded(px(5.))
+                    .shadow_lg()
+                    .text_size(px(12.));
+                for (i, (v, l)) in opts.into_iter().enumerate() {
+                    list = list.child(
+                        div()
+                            .id(("turn", i))
+                            .px(px(8.))
+                            .py(px(4.))
+                            .cursor_pointer()
+                            .hover(|x| x.bg(t.accent_soft))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.turn = v;
+                                this.turn_open = false;
+                                this.files = None;
+                                cx.notify();
+                            }))
+                            .child(l),
+                    );
+                }
+                d.child(deferred(list))
+            })
     }
 
     fn color(&self, tok: Tok) -> Hsla {
@@ -730,17 +864,13 @@ impl Render for Review {
                     .bg(t.panel)
                     .border_b_1()
                     .border_color(t.line)
-                    .child(
-                        div()
-                            .px(px(6.))
-                            .py(px(2.))
-                            .bg(t.win)
-                            .border_1()
-                            .border_color(t.line)
-                            .rounded(px(5.))
-                            .text_size(px(12.))
-                            .child(format!("Todos os turnos · {n} arquivo{}  ▾", if n == 1 { "" } else { "s" })),
-                    )
+                    .child(self.turn_select(n, cx))
+                    .when_some(self.turn, |x, tn| {
+                        x.child(
+                            button(&t, "rew", &format!("⏪ Voltar para antes do turno {tn}"), false)
+                                .on_click(cx.listener(move |this, _, _, cx| this.rewind(tn, cx))),
+                        )
+                    })
                     .child(div().flex_1())
                     .child(div().opacity(0.45).child(button(&t, "aff", "▶ Testes afetados", false)))
                     .when(n > 0, |x| {

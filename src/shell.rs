@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
@@ -12,15 +10,12 @@ use crate::{
     keys,
     new_feature::{self, NewFeature},
     palette_cmd::{self, Cmd, CommandPalette},
-    review::{self, Review},
+    review::{self, Redo, Review},
     sidebar::{Sidebar, SidebarEvent},
     terminal::TerminalView,
     theme::Theme,
     tour::{self, Anchors},
 };
-
-/// (worktree, patch) que refaz um bloco desfeito.
-type Redo = (PathBuf, String);
 
 /// Janela do protótipo: título (36) · lateral | terminal · dicas (22) · status (24).
 pub struct Shell {
@@ -223,7 +218,7 @@ impl Shell {
     }
 
     /// Toast com "Desfazer" (6 s, como no protótipo) quando vem o patch que refaz.
-    fn toast_undo(&mut self, msg: String, redo: Option<(PathBuf, String)>, cx: &mut Context<Self>) {
+    fn toast_undo(&mut self, msg: String, redo: Option<Redo>, cx: &mut Context<Self>) {
         self.toast_seq += 1;
         let id = self.toast_seq;
         let ms = if redo.is_some() { 6000 } else { 2800 };
@@ -1221,7 +1216,7 @@ impl Render for Shell {
                     .gap(px(8.));
                 for (id, m, redo) in &self.toasts {
                     let mut toast = confirm::toast(&t, m).flex().gap(px(12.)).items_center();
-                    if let Some((root, patch)) = redo.clone() {
+                    if let Some(redo) = redo.clone() {
                         let id = *id;
                         toast = toast.child(
                             div()
@@ -1231,7 +1226,13 @@ impl Render for Shell {
                                 .cursor_pointer()
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.toasts.retain(|(i, _, _)| *i != id);
-                                    if let Err(e) = crate::diff::apply(&root, &patch, false) {
+                                    let r = match &redo {
+                                        Redo::Patch(root, patch) => {
+                                            crate::diff::apply(root, patch, false)
+                                        }
+                                        Redo::Restore(root, sha) => feature::restore(root, sha),
+                                    };
+                                    if let Err(e) = r {
                                         this.toast(format!("Não deu para refazer: {e}"), cx);
                                     }
                                     cx.notify();

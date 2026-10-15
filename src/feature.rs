@@ -302,6 +302,7 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Inventory, Stri
     inv.workspace_id = ws_id.clone();
     save(&inv).map_err(|e| e.to_string())?;
 
+    let _ = install_hook(&req.repo, &path, &inv.id);
     let cmd = start_command(req, setup_command(&req.repo).as_deref());
     if let (Some(pane), false) = (&pane, cmd.is_empty()) {
         let _ = herdr.call(
@@ -396,7 +397,147 @@ pub fn conclude(herdr: &Herdr, inv: &Inventory) -> Result<Vec<String>, String> {
         }
     }
     let _ = std::fs::remove_file(data_dir().join(format!("{}.json", inv.id)));
+    let _ = std::fs::remove_file(turns_file(&inv.id));
     Ok(done)
+}
+
+/// Foto de todos os arquivos da worktree (inclusive os novos) num commit solto, sem tocar no índice nem na branch.
+pub fn snapshot(root: &Path) -> Result<String, String> {
+    let index = std::env::temp_dir().join(format!("maestro-idx-{}", std::process::id()));
+    let _ = std::fs::remove_file(&index);
+    let run = |args: &[&str]| -> Result<String, String> {
+        let o = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .env("GIT_INDEX_FILE", &index)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if o.status.success() {
+            Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
+        }
+    };
+    run(&["read-tree", "HEAD"])?;
+    run(&["add", "-A"])?;
+    let tree = run(&["write-tree"])?;
+    let sha = run(&[
+        "commit-tree",
+        &tree,
+        "-p",
+        "HEAD",
+        "-m",
+        "maestro checkpoint",
+    ])?;
+    let _ = std::fs::remove_file(&index);
+    Ok(sha)
+}
+
+/// Volta a worktree para uma foto, byte a byte: apaga o que surgiu depois e restaura o resto. O índice fica.
+pub fn restore(root: &Path, sha: &str) -> Result<(), String> {
+    let now = snapshot(root)?;
+    for f in git(root, &["diff", "--name-only", "--diff-filter=A", sha, &now])
+        .unwrap_or_default()
+        .lines()
+    {
+        let _ = std::fs::remove_file(root.join(f));
+    }
+    git_err(
+        root,
+        &[
+            "restore",
+            &format!("--source={sha}"),
+            "--worktree",
+            "--",
+            ".",
+        ],
+    )
+}
+
+/// Um turno do Claude: a foto de antes do prompt N.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Turn {
+    pub n: usize,
+    pub sha: String,
+    pub prompt: String,
+}
+
+fn turns_file(id: &str) -> PathBuf {
+    data_dir().join(format!("{id}.turns"))
+}
+
+pub fn turns(id: &str) -> Vec<Turn> {
+    std::fs::read_to_string(turns_file(id))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            Some(Turn {
+                n: it.next()?.parse().ok()?,
+                sha: it.next()?.into(),
+                prompt: it.next().unwrap_or("").into(),
+            })
+        })
+        .collect()
+}
+
+/// O hook `UserPromptSubmit` da worktree chama isto (`maestro checkpoint <id>`) com o JSON do Claude no stdin.
+pub fn checkpoint(id: &str, stdin: &str) -> Result<(), String> {
+    let inv = inventories()
+        .into_iter()
+        .find(|i| i.id == id)
+        .ok_or("feature desconhecida")?;
+    let root = &inv.worktrees[0].path;
+    let sha = snapshot(root)?;
+    let n = turns(id).len() + 1;
+    git_err(
+        root,
+        &["update-ref", &format!("refs/maestro/{id}/t{n}"), &sha],
+    )?;
+    let prompt = serde_json::from_str::<serde_json::Value>(stdin)
+        .ok()
+        .and_then(|v| v["prompt"].as_str().map(|p| p.replace(['\n', '\t'], " ")))
+        .unwrap_or_default();
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(turns_file(id))
+        .map_err(|e| e.to_string())?;
+    writeln!(f, "{n}\t{sha}\t{prompt}").map_err(|e| e.to_string())
+}
+
+/// Hook só nesta worktree (`.claude/settings.local.json`, fora do git pelo `info/exclude`): o settings global fica intacto.
+pub fn install_hook(repo: &Path, worktree: &Path, id: &str) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = worktree.join(".claude");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let cmd = format!("{} checkpoint {id}", sh_quote(&exe.to_string_lossy()));
+    let settings = json!({ "hooks": { "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": cmd } ] } ] } });
+    std::fs::write(
+        dir.join("settings.local.json"),
+        serde_json::to_string_pretty(&settings).unwrap(),
+    )
+    .map_err(|e| e.to_string())?;
+    let exclude = repo.join(".git/info/exclude");
+    let text = std::fs::read_to_string(&exclude).unwrap_or_default();
+    if !text.lines().any(|l| l == ".claude/settings.local.json") {
+        let _ = std::fs::create_dir_all(exclude.parent().unwrap());
+        std::fs::write(
+            &exclude,
+            format!(
+                "{text}{}.claude/settings.local.json\n",
+                if text.ends_with('\n') || text.is_empty() {
+                    ""
+                } else {
+                    "\n"
+                }
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Tentativa descartada no melhor de N: conclui e apaga a branch mesmo sem merge (foi você que escolheu).
@@ -818,6 +959,52 @@ mod tests {
         assert_eq!((state(&app), state(&k8s)), before);
         assert!(!root.join("app.wt").exists() && !root.join("k8s-configmap.wt").exists());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn foto_e_volta_byte_a_byte() {
+        let dir = std::env::temp_dir().join(format!("maestro-snap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        run(&["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        run(&["add", "."]);
+        run(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "i",
+        ]);
+        std::fs::write(dir.join("a.txt"), "2 sem newline").unwrap();
+        std::fs::write(dir.join("novo.txt"), "n\n").unwrap();
+        let status =
+            || String::from_utf8_lossy(&run(&["status", "--porcelain"]).stdout).into_owned();
+        let before = status();
+        let sha = snapshot(&dir).unwrap();
+        assert_eq!(status(), before, "a foto não mexe no índice");
+        std::fs::write(dir.join("a.txt"), "3\n").unwrap();
+        std::fs::remove_file(dir.join("b.txt")).unwrap();
+        std::fs::write(dir.join("depois.txt"), "d\n").unwrap();
+        std::fs::remove_file(dir.join("novo.txt")).unwrap();
+        restore(&dir, &sha).unwrap();
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"2 sem newline");
+        assert_eq!(std::fs::read(dir.join("b.txt")).unwrap(), b"b\n");
+        assert_eq!(std::fs::read(dir.join("novo.txt")).unwrap(), b"n\n");
+        assert!(!dir.join("depois.txt").exists());
+        assert_eq!(status(), before);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
