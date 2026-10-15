@@ -1,0 +1,1703 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}</style>
+</head>
+<body>
+<title>Maestro IDE</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* layout: janela de app desktop; lateral Features | terminal herdr (centro, protagonista) | painel de revisão sob demanda.
+   Um mundo só: o app inteiro herda a paleta Dracula do ~/.config/ghostty/config. */
+:root{
+  --page:#16171d; --win:#282a36; --panel:#21222c; --raise:#313342; --line:#3b3d50; --fg:#f8f8f2; --muted:#9a9dbb; --comment:#6272a4;
+  --accent:#bd93f9; --accent-soft:rgba(189,147,249,.16); --ok:#50fa7b; --cyan:#8be9fd; --orange:#ffb86c; --pink:#ff79c6; --yellow:#f1fa8c; --bad:#ff5555;
+  --add:rgba(80,250,123,.10); --del:rgba(255,85,85,.12); --draft:#f1fa8c; --draft-soft:rgba(241,250,140,.07);
+  --term-bg:rgba(40,42,54,.95);
+  --sans:"IBM Plex Sans",system-ui,sans-serif; --mono:"JetBrainsMono Nerd Font","JetBrainsMono NF","JetBrains Mono",ui-monospace,monospace;
+  --shadow:0 18px 50px rgba(0,0,0,.5); color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--page);color:var(--fg);font:13px/1.45 var(--sans);box-sizing:border-box;
+  padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+*{box-sizing:border-box}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+kbd{font:11px var(--mono);padding:0 4px;border:1px solid var(--line);border-radius:3px;color:var(--muted);background:var(--panel);white-space:nowrap}
+.mono{font-family:var(--mono)}
+.muted{color:var(--muted)}
+
+.app{height:100%;max-width:1480px;margin:0 auto;display:grid;grid-template-rows:36px 1fr 22px 24px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow);position:relative}
+.title{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel);min-width:0}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:var(--line)}
+.brand{font-weight:600;letter-spacing:.02em}
+.modes{display:flex;gap:2px;margin-left:8px}
+.modes button{padding:3px 10px;border-radius:5px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.modes button[aria-pressed="true"]{background:var(--raise);color:var(--fg)}
+.modes .count{font:11px var(--mono);color:var(--orange)}
+.title .sp{flex:1}
+.title .hint{color:var(--muted);display:flex;gap:10px;align-items:center;white-space:nowrap}
+.title .hint button{display:flex;gap:6px;align-items:center}
+.tag{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px dashed var(--line);padding:1px 6px;border-radius:3px;white-space:nowrap}
+
+.main{--lw:250px;--rw:0px;display:grid;min-height:0;position:relative;grid-template-columns:var(--lw) minmax(0,1fr) var(--rw);grid-template-areas:"left center right"}
+.main[data-right="on"]{--rw:min(46%,640px)}
+.main[data-left="off"]{--lw:0px}
+#left{grid-area:left;border-right:1px solid var(--line);background:var(--panel);overflow:auto;min-width:0;display:flex;flex-direction:column}
+.main[data-left="off"] #left{display:none}
+#center{grid-area:center;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--win)}
+#right{grid-area:right;border-left:1px solid var(--line);background:var(--win);display:flex;flex-direction:column;min-height:0;min-width:0}
+.main[data-right="off"] #right{display:none}
+
+.phead{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 10px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);flex:none}
+.phead .sp{flex:1}
+.phead button{text-transform:none;letter-spacing:0;font-size:12px}
+
+/* features */
+.repo{display:flex;align-items:center;gap:8px;padding:10px 12px 6px;font-weight:500}
+.repo .mono{font-size:12px;color:var(--muted);font-weight:400}
+.feats{display:grid;padding:2px 6px 6px;gap:2px}
+.feat{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:2px 8px;padding:6px 8px;border-radius:6px;text-align:left;align-items:center;position:relative}
+.feat:hover{background:var(--raise)}
+.feat.on{background:var(--accent-soft)}
+.feat .g{font:12px var(--mono);text-align:center}
+.feat .b{font:12.5px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.feat .k{font-size:11px;color:var(--muted)}
+.feat .m{grid-column:2/4;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.feat .m.blocked{color:var(--orange)}.feat .m.done{color:var(--ok)}
+.feat.unseen::after{content:"";position:absolute;left:2px;top:8px;bottom:8px;width:2px;border-radius:2px;background:currentColor;animation:pulse 1.2s infinite}
+.feat.unseen.blocked{color:var(--orange)}.feat.unseen.done{color:var(--ok)}
+.feat.unseen .b{color:var(--fg)}
+.st-blocked{color:var(--orange)}.st-working{color:var(--cyan)}.st-done{color:var(--ok)}.st-idle{color:var(--comment)}
+.st-working.spin{display:inline-block;animation:spin 1.4s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.newf{margin:2px 6px 8px;padding:6px 8px;border:1px dashed var(--line);border-radius:6px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+.newf:hover{color:var(--fg);border-color:var(--accent)}
+.ltabs{display:flex;gap:2px;padding:6px 8px 0;border-top:1px solid var(--line)}
+.ltabs button{padding:4px 8px;border-radius:5px 5px 0 0;color:var(--muted);font-size:12px}
+.ltabs button[aria-pressed="true"]{color:var(--fg);box-shadow:inset 0 -2px 0 var(--accent)}
+.flist{padding:4px 0 10px}
+.flist button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;width:100%;text-align:left;padding:3px 12px;align-items:center}
+.flist button:hover{background:var(--raise)}
+.flist button.on{background:var(--accent-soft)}
+.flist .nm{font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.flist .nm .dir{color:var(--muted)}
+.flist .st{font:11px var(--mono);color:var(--muted)}
+.flist .st.d{color:var(--draft)}
+.flist .none{padding:6px 12px;color:var(--muted);font-size:12px}
+
+/* terminal (herdr dentro, visual Ghostty) */
+/* valores do ~/.config/ghostty/config + defaults do Ghostty: cursor block, unfocused-split-opacity 0.7 */
+.term{flex:1;display:flex;flex-direction:column;min-height:0;background:var(--term-bg);font:13px/1.32 var(--mono);font-feature-settings:"calt" 1,"liga" 1;color:#f8f8f2}
+.term ::selection{background:#44475a;color:#ffffff}
+.hbar{display:flex;align-items:center;gap:0;background:#21222c;border-bottom:1px solid #191a21;font-size:12px;flex:none;overflow-x:auto;white-space:nowrap}
+.hbar button{padding:3px 12px;color:var(--comment)}
+.hbar button.on{color:#f8f8f2;background:#282a36}
+.hbar .sp{flex:1}
+.hbar .r{padding:3px 10px;color:var(--comment)}
+.hbar .r.pre{color:#282a36;background:var(--yellow);font-weight:700}
+.panes{flex:1;display:grid;min-height:0;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.panes.v{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.panes.h{grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+.pane{display:flex;flex-direction:column;min-height:0;min-width:0;position:relative}
+.panes.v .pane+.pane{border-left:1px solid #44475a}
+.panes.h .pane+.pane{border-top:1px solid #44475a}
+.pane.unf::after{content:"";position:absolute;inset:0;background:rgba(40,42,54,.3);pointer-events:none}
+.tbody{flex:1;overflow:auto;padding:8px;white-space:pre-wrap;word-break:break-word}
+.tbody b{font-weight:700}
+.w{color:#ffffff}.cy{color:#8be9fd}.mg{color:#ff79c6}.rd{color:#ff5555}.gr{color:#50fa7b}.or{color:#ff8700}.bl{color:#bd93f9}.yl{color:#f1fa8c}.cm{color:#6272a4}
+.pass{background:#50fa7b;color:#282a36;font-weight:700}
+.live{display:block}
+.sin{background:transparent;border:0;outline:none;color:#f8f8f2;font:inherit;width:70%;caret-color:#f8f8f2;caret-shape:block;padding:0}
+.tbody .u{background:rgba(68,71,90,.55);padding:2px 6px;margin:6px 0;border-left:2px solid var(--comment)}
+.tbody .dot{color:var(--ok)}
+.tbody .dotw{color:var(--fg)}
+.tbody .out{color:var(--comment)}
+.tbody .dim{color:var(--comment)}
+.tbody .okc{color:var(--ok)}
+.tbody .warn{color:var(--orange)}
+.tbody .think{color:var(--orange)}
+.tbody .ps{color:var(--ok)}
+.cc{border:1px solid var(--orange);border-radius:4px;padding:6px 10px;color:var(--orange);margin-bottom:8px;display:grid}
+.cc .w{color:var(--fg)}
+.perm{border:1px solid var(--orange);border-radius:4px;padding:8px 12px;margin:8px 0;display:grid;gap:2px}
+.perm .h{color:var(--orange);font-weight:700}
+.perm .cmd{padding-left:2px;color:var(--fg)}
+.perm .out{color:var(--comment)}
+.perm button{text-align:left;padding:1px 0;color:var(--muted);font:inherit}
+.perm button.on{color:var(--accent)}
+.perm button:hover{color:var(--fg)}
+.tin{margin:0 8px 4px;border:1px solid var(--comment);border-radius:4px;display:flex;gap:8px;align-items:center;padding:4px 10px;flex:none}
+.tin:focus-within{border-color:var(--muted)}
+.tin span{color:var(--fg)}
+.tin input{flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--fg);font:inherit;caret-color:var(--fg);caret-shape:block}
+.fsep{padding:8px 14px 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.tfoot{display:flex;justify-content:space-between;gap:12px;padding:0 10px 6px;color:var(--comment);font-size:11.5px;flex:none;white-space:nowrap;overflow:hidden}
+
+/* painel direito: revisão / editor */
+.rtabs{display:flex;align-items:center;height:32px;border-bottom:1px solid var(--line);background:var(--panel);flex:none;overflow-x:auto}
+.rtabs button.t{display:flex;align-items:center;gap:6px;padding:0 12px;height:100%;color:var(--muted);white-space:nowrap;border-right:1px solid var(--line)}
+.rtabs button.t[aria-pressed="true"]{color:var(--fg);background:var(--win);box-shadow:inset 0 -2px 0 var(--accent)}
+.rtabs .sp{flex:1}
+.rtabs .x{padding:0 10px;color:var(--muted)}
+.ed{flex:1;display:flex;min-height:0;font:13px/20px var(--mono)}
+.gut{width:44px;flex:none;text-align:right;padding:10px 10px 10px 0;color:var(--comment);overflow:hidden;user-select:none;white-space:pre}
+.edwrap{position:relative;flex:1;min-width:0}
+.edwrap pre,.edwrap textarea{position:absolute;inset:0;margin:0;padding:10px 12px 10px 4px;font:inherit;white-space:pre;overflow:auto;tab-size:2;border:0}
+.edwrap pre{pointer-events:none;color:var(--fg)}
+.edwrap textarea{background:transparent;color:transparent;caret-color:var(--fg);resize:none;outline:none}
+.edwrap textarea::selection{background:rgba(68,71,90,.9);color:transparent}
+.k{color:var(--pink)}.s{color:var(--yellow)}.c{color:var(--comment);font-style:italic}.n{color:var(--accent)}
+.empty{margin:auto;max-width:46ch;text-align:center;color:var(--muted);display:grid;gap:10px;padding:24px}
+.empty h3{margin:0;color:var(--fg);font-weight:500;font-size:15px}
+.btn{padding:3px 10px;border-radius:5px;border:1px solid var(--line);background:var(--raise);white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#282a36;font-weight:500}
+.btn.danger{color:var(--bad)}
+.btn:disabled{opacity:.45;cursor:default}
+
+/* diff (usado na revisão local e nos MRs) */
+.diff{flex:1;overflow:auto;font:12.5px/20px var(--mono);padding-bottom:40px}
+.fh{position:sticky;top:0;z-index:2;display:flex;gap:10px;align-items:center;padding:6px 12px;background:var(--panel);border-bottom:1px solid var(--line);border-top:1px solid var(--line);font-family:var(--sans)}
+.fh .p{font-family:var(--mono)}
+.fh .sp{flex:1}
+.fh .plus{color:var(--ok)}.fh .minus{color:var(--bad)}
+.hh{color:var(--comment);background:rgba(98,114,164,.12);padding:0 12px}
+.dl{display:grid;grid-template-columns:40px 40px 18px minmax(0,1fr);cursor:pointer;position:relative}
+.dl:hover{background:rgba(68,71,90,.45)}
+.dl.add{background:var(--add)}.dl.del{background:var(--del)}
+.dl.sel{box-shadow:inset 3px 0 0 var(--accent)}
+.dl .o,.dl .nn{text-align:right;padding-right:8px;color:var(--comment);user-select:none}
+.dl .sg{color:var(--muted);user-select:none}
+.dl .cd{white-space:pre;overflow:hidden;text-overflow:ellipsis;padding-right:8px}
+.dl .cm{position:absolute;left:62px;top:2px;width:16px;height:16px;border-radius:3px;background:var(--accent);color:#282a36;font:12px/16px var(--sans);text-align:center;opacity:0}
+.dl:hover .cm,.dl.sel .cm{opacity:1}
+.thr{margin:6px 12px 6px 94px;max-width:720px;border:1px solid var(--line);border-radius:6px;background:var(--raise);font:13px/1.5 var(--sans)}
+.thr.resolved{opacity:.7}
+.thr .th{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;flex-wrap:wrap}
+.thr .th b{color:var(--fg);font-weight:500}
+.thr .th .sp{flex:1}
+.thr .bd{padding:8px 10px;display:grid;gap:8px}
+.thr .bd p{margin:0}
+.thr .rp{border-left:2px solid var(--line);padding-left:8px}
+.thr code{font:12px var(--mono);background:var(--panel);padding:0 3px;border-radius:3px}
+.thr.draft{border:1.5px dashed var(--draft);background:var(--draft-soft)}
+.thr.draft .th .lbl{color:var(--draft);font-weight:600;letter-spacing:.06em;font-size:11px}
+.thr.sent{border:1px solid var(--line);opacity:.7}
+.thr.err{border:1.5px solid var(--bad)}
+.thr.err .em{color:var(--bad);font-size:12px}
+.thr.posting{opacity:.6}
+.thr textarea{width:100%;min-height:64px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:13px/1.5 var(--sans);padding:6px 8px;resize:vertical}
+.acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.sev{font:11px var(--mono);padding:0 6px;border-radius:3px;border:1px solid currentColor}
+.sev.blocker,.sev.major{color:var(--bad)}.sev.minor{color:var(--orange)}.sev.nit{color:var(--muted)}
+.pubbar{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);background:var(--panel);flex:none}
+.pubbar .sp{flex:1}
+.pubbar .cnt{color:var(--draft);font-weight:500}
+
+/* inbox / mr */
+.ibar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 12px;border-bottom:1px solid var(--line);flex:none}
+.seg{display:flex;gap:2px;flex-wrap:wrap}
+.seg button{padding:3px 10px;border-radius:5px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--fg)}
+.seg .count{font:11px var(--mono);margin-left:4px}
+.ibar input{background:var(--raise);border:1px solid var(--line);border-radius:5px;padding:3px 8px;color:var(--fg);font:inherit;width:200px;max-width:100%}
+.ibar .sp{flex:1}
+.list{flex:1;overflow:auto}
+.row{display:grid;grid-template-columns:14px minmax(150px,220px) minmax(0,1fr) 120px 70px 110px;gap:12px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.row:hover{background:var(--raise)}
+.row.on{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+.row .proj{font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .who{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.unread{display:block;width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.ci{font:12px var(--mono);white-space:nowrap}
+.ci.success{color:var(--ok)}.ci.running{color:var(--yellow)}.ci.failed{color:var(--bad)}.ci.none{color:var(--muted)}
+.pill{font:11px var(--mono);padding:1px 7px;border-radius:10px;border:1px solid var(--line);color:var(--muted);justify-self:start;white-space:nowrap}
+.pill.new{color:var(--accent);border-color:var(--accent)}
+.pill.inc{color:var(--orange);border-color:var(--orange)}
+.mrh{padding:10px 14px 0;border-bottom:1px solid var(--line);display:grid;gap:8px;flex:none}
+.mrh .l1{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline}
+.mrh h2{margin:0;font-size:15px;font-weight:600}
+.mrh .l2{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding-bottom:6px}
+.mrh .sp{flex:1}
+
+/* status */
+.hints{display:flex;gap:14px;align-items:center;padding:0 12px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line);overflow:hidden;white-space:nowrap}
+.status{display:flex;align-items:center;font-size:12px;background:var(--panel);border-top:1px solid var(--line);overflow:hidden;white-space:nowrap}
+.status > *{padding:0 10px;border-right:1px solid var(--line);height:100%;display:flex;align-items:center;gap:6px}
+.status .sp{flex:1;border:0}
+.status .att{color:var(--orange)}
+.status .drafts{color:var(--draft)}
+@keyframes pulse{50%{opacity:.25}}
+
+/* overlays */
+.scrim{position:absolute;inset:0;background:rgba(10,10,16,.5);z-index:20;display:flex;justify-content:center;align-items:flex-start;padding:60px 16px 16px}
+.pal{width:560px;max-width:100%;background:var(--raise);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);overflow:hidden}
+.pal input{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--fg);font:14px var(--sans);padding:10px 12px;outline:none}
+.pal ul{list-style:none;margin:0;padding:4px 0;max-height:340px;overflow:auto}
+.pal li{display:flex;gap:10px;padding:6px 12px;cursor:pointer;align-items:center}
+.pal li .sp{flex:1}
+.pal li.on{background:var(--accent-soft)}
+.pal .none{padding:10px 12px;color:var(--muted)}
+.dlg{width:480px;max-width:100%;background:var(--raise);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:16px;display:grid;gap:12px}
+.dlg h3{margin:0;font-size:15px;font-weight:600}
+.dlg p{margin:0;color:var(--muted)}
+.dlg .acts{justify-content:flex-end}
+.dlg .fld{display:grid;gap:4px}
+.dlg .fld > span{font-size:12px;color:var(--muted)}
+.dlg input[type=text],.dlg textarea,.dlg select{background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:13px var(--mono);padding:6px 8px;width:100%}
+.dlg textarea{font-family:var(--sans);min-height:64px;resize:vertical}
+.dlg .row2{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:10px}
+.dlg .prev{font:12px var(--mono);color:var(--muted);background:var(--win);border-radius:5px;padding:6px 8px;overflow-x:auto;white-space:nowrap}
+.dlg .err{color:var(--bad);font-size:12px}
+label{display:flex;gap:8px;align-items:baseline;cursor:pointer}
+label.off{opacity:.5;cursor:default}
+.help{width:780px;max-width:100%;max-height:calc(100% - 20px);overflow:auto;background:var(--raise);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px 20px;display:grid;gap:14px}
+.help h3{margin:0;font-size:15px}
+.help h4{margin:0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.help table{border-collapse:collapse;width:100%;font-size:12.5px}
+.help td{padding:4px 8px 4px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.help td:first-child{white-space:nowrap;width:1%;padding-right:16px}
+.help .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}
+.help p{margin:0;color:var(--muted)}
+
+.drawer{position:absolute;top:36px;right:0;bottom:46px;width:440px;max-width:100%;background:var(--raise);border-left:1px solid var(--line);box-shadow:var(--shadow);z-index:15;display:flex;flex-direction:column}
+.drawer .dh{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.drawer .dh b{font-weight:600}
+.drawer .dh .sp{flex:1}
+.drawer .db{flex:1;overflow:auto;padding:12px 14px;display:grid;gap:12px;align-content:start}
+.drawer .df{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;align-items:center}
+.steps{display:grid;gap:4px;font:12.5px/1.5 var(--mono)}
+.steps .ok{color:var(--ok)}.steps .run{color:var(--yellow)}.steps .sub{color:var(--muted);padding-left:18px}
+fieldset{border:1px solid var(--line);border-radius:6px;padding:8px 12px;margin:0;display:grid;gap:6px}
+legend{color:var(--muted);font-size:12px;padding:0 4px}
+.find{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;padding:8px 10px;border:1px solid var(--line);border-radius:6px}
+.find.offd{opacity:.55}
+.find .loc{font:12px var(--mono);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.find .warnl{color:var(--orange);font-size:12px}
+.find p{margin:0;grid-column:2}
+
+/* mascote (sprites de claude-mascot/overlay/poses.py) */
+.mascot{position:absolute;right:22px;bottom:58px;z-index:25;display:flex;align-items:flex-end;gap:10px;cursor:pointer;animation:walkin .9s steps(6) both}
+.mascot.out{animation:walkout .7s steps(5) both}
+.mascot .card{background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-width:260px;box-shadow:var(--shadow);display:grid;gap:2px;margin-bottom:34px}
+.mascot .card b{font:12.5px var(--mono)}
+.mascot .card span{font-size:12px;color:var(--muted)}
+.mascot .card .go{color:var(--accent);font-size:11.5px}
+.mascot .body{position:relative;animation:hop .5s ease-in-out infinite alternate}
+.mascot .sym{position:absolute;right:-6px;top:-22px;font:700 16px var(--mono);width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:#fff}
+.mascot .sym.ask{background:#6B4FD8}.mascot .sym.done{background:#2BA84A}
+.mascot .shadow{width:56px;height:6px;margin:2px auto 0;border-radius:50%;background:rgba(0,0,0,.35)}
+@keyframes walkin{from{transform:translateX(160px);opacity:0}to{transform:none;opacity:1}}
+@keyframes walkout{to{transform:translateX(180px);opacity:0}}
+@keyframes hop{from{transform:translateY(0)}to{transform:translateY(-8px)}}
+
+.toasts{position:absolute;left:50%;transform:translateX(-50%);bottom:56px;display:grid;gap:8px;z-index:30;max-width:calc(100% - 28px)}
+.toast{background:var(--fg);color:var(--win);padding:8px 12px;border-radius:6px;display:flex;gap:12px;align-items:center;box-shadow:var(--shadow);font-size:12.5px}
+.toast button{color:var(--win);text-decoration:underline;font-weight:600}
+
+.feat .m2{grid-column:2/4;font:11px var(--mono);color:var(--comment);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.feat .m2 .w8{color:var(--orange)}.feat .m2 .ok{color:var(--ok)}.feat .m2 .bad{color:var(--bad)}.feat .m2 .run{color:var(--yellow)}
+.feat .grp{font-size:10px;color:var(--accent);border:1px solid var(--accent);border-radius:3px;padding:0 4px;margin-left:4px}
+.rtool{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+.rtool select{background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:12px var(--sans);padding:2px 6px;max-width:260px}
+.rtool .sp{flex:1}
+.hh{display:flex;align-items:center;gap:8px}
+.hh .hunkacts{margin-left:auto;display:flex;gap:4px;font-family:var(--sans)}
+.hh .hunkacts button{font-size:11.5px;padding:0 6px;border:1px solid var(--line);border-radius:4px;background:var(--raise);color:var(--fg)}
+.hh .hunkacts button:hover{border-color:var(--muted)}
+.hh.okh{color:var(--ok)}
+.dl.acc{opacity:.55}
+.dl .cd[contenteditable]{outline:none;cursor:text}
+.dl .cd[contenteditable]:focus{background:rgba(189,147,249,.10);text-overflow:clip;overflow:auto}
+.badge{font:11px var(--mono);padding:0 6px;border-radius:3px;border:1px solid var(--accent);color:var(--accent)}
+.card2{border:1px solid var(--line);border-radius:6px;background:var(--raise);padding:10px 12px;display:grid;gap:6px}
+.card2 h4{margin:0;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;display:flex;gap:8px;align-items:center}
+.card2 h4 .sp{flex:1}
+.card2 p{margin:0}
+.okc2{color:var(--ok)}.badc2{color:var(--bad)}.runc2{color:var(--yellow)}
+.vmd{font:13px/1.55 var(--sans)}
+.vmd h1{font-size:15px;margin:0 0 4px}.vmd h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 0 2px;font-weight:500}
+.vmd ul{margin:0;padding-left:18px}.vmd p{margin:0 0 4px}
+.vmd code{font:12px var(--mono);background:var(--panel);padding:0 3px;border-radius:3px}
+.vmd .fm{font:11.5px var(--mono);color:var(--comment)}
+.wl{color:var(--accent);cursor:pointer;text-decoration:underline dotted}
+.wl.broken{color:var(--orange)}
+.vlog{display:grid;gap:4px;font-size:12px}
+.vlog div{display:flex;gap:8px;align-items:center}
+.vlog .t{font:11px var(--mono);color:var(--comment)}
+.cmp{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.cmp .col{border:1px solid var(--line);border-radius:6px;padding:10px;display:grid;gap:4px;align-content:start}
+.cmp .col b{font:12.5px var(--mono)}
+.cmp dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0;font-size:12px}.cmp dt{color:var(--muted)}.cmp dd{margin:0}
+.jira{font-size:12px;color:var(--ok)}
+.pal li .pr{font:10px var(--mono);padding:0 5px;border-radius:3px;border:1px solid currentColor}
+.pr0{color:var(--orange)}.pr1{color:var(--bad)}.pr2{color:var(--ok)}.pr3{color:var(--accent)}.pr4{color:var(--muted)}
+.qbtn{display:flex;gap:6px;align-items:center;padding:2px 8px;border-radius:5px;border:1px solid var(--line)}
+.qbtn b{color:var(--orange);font:11px var(--mono)}
+.tour-spot{position:absolute;z-index:40;border-radius:6px;box-shadow:0 0 0 9999px rgba(8,8,14,.62);outline:2px solid var(--accent);pointer-events:none;transition:all .2s}
+.tour-pop{position:absolute;z-index:41;width:300px;max-width:calc(100% - 24px);background:var(--raise);border:1px solid var(--accent);border-radius:8px;box-shadow:var(--shadow);padding:12px;display:grid;gap:8px}
+.tour-pop p{margin:0}
+.tour-pop .acts{justify-content:space-between}
+.tour-pop .n{font:11px var(--mono);color:var(--muted)}
+.tour-pop .wait{color:var(--accent);font-size:12px}
+
+@media (max-width:760px){
+  .main,.main[data-right="on"]{grid-template-columns:minmax(0,1fr);grid-template-areas:"center"}
+  #left{position:absolute;inset:0 25% 0 0;z-index:6;box-shadow:var(--shadow)}
+  #right{position:absolute;inset:0;z-index:7}
+  .title .hint .lg,.tag{display:none}
+  .row{grid-template-columns:10px minmax(0,1fr) auto;grid-template-areas:"u p ci" "u t st"}
+  .row .uw{grid-area:u}.row .proj{grid-area:p}.row .t{grid-area:t}.row .who{display:none}.row .ci{grid-area:ci}.row .pill{grid-area:st;justify-self:end}
+  .thr{margin-left:12px}
+  .drawer{width:100%}
+  .dl .o{display:none}.dl{grid-template-columns:36px 16px minmax(0,1fr)}.dl .cm{left:22px}
+  .mascot .card{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="app" id="app">
+  <header class="title">
+    <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+    <span class="brand">maestro</span>
+    <nav class="modes" aria-label="Modo">
+      <button id="mFeat" aria-pressed="true">Features<span class="count" id="attCount"></span></button>
+      <button id="mMrs" aria-pressed="false">MRs<span class="count" id="mrCount" style="color:var(--accent)"></span></button>
+      <button id="mVault" aria-pressed="false">Vault</button>
+    </nav>
+    <button class="qbtn" id="qBtn" title="Fila de atenção (Ctrl+Shift+Espaço = próximo)">Fila <b id="qCount"></b></button>
+    <span class="sp"></span>
+    <span class="tag">protótipo · dados de exemplo</span>
+    <span class="hint">
+      <button id="hFile" class="lg"><kbd>Ctrl+Shift+O</kbd> arquivo</button>
+      <button id="hCmd"><kbd>Ctrl+Shift+P</kbd><span class="lg">comandos</span></button>
+      <button id="hHelp" aria-label="Atalhos"><kbd>?</kbd></button>
+    </span>
+  </header>
+  <div class="main" id="main" data-left="on" data-right="off">
+    <aside id="left" aria-label="Features"></aside>
+    <section id="center" aria-label="Terminal"></section>
+    <aside id="right" aria-label="Revisão e editor"></aside>
+  </div>
+  <div class="hints" id="hints"></div>
+  <footer class="status" id="status"></footer>
+  <div id="overlay"></div>
+  <div id="mascotSlot"></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const md = s => esc(s).replace(/`([^`]+)`/g,'<code>$1</code>');
+const KW = 'import|from|export|class|constructor|private|readonly|async|await|return|if|throw|new|const|let|for|of|function|interface|type|this|void|try|catch|true|false|null|unknown|Infinity';
+const HL = new RegExp(`(\\/\\/.*$|^#.*$)|(\`[^\`]*\`|'[^']*'|"[^"]*")|\\b(${KW})\\b|\\b(\\d+)\\b`,'gm');
+const hl = src => esc(src).replace(HL,(m,c,s,k,n)=> c?`<span class="c">${c}</span>`: s?`<span class="s">${s}</span>`: k?`<span class="k">${k}</span>`:`<span class="n">${n}</span>`);
+
+/* ---------- mascote: poses reais do claude-reminder ---------- */
+const POSES={
+front:`...............
+...............
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..OKKKOOOKKKO..
+.OOKKKOOOKKKOO.
+.OOOOOOOOOOOOO.
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..O.O.....O.O..
+..O.O.....O.O..`,
+blink:`...............
+...............
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+.OOKKKOOOKKKOO.
+.OOOOOOOOOOOOO.
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..O.O.....O.O..
+..O.O.....O.O..`,
+happy:`...............
+...............
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..OOKOOOOOKOO..
+.OOKKKOOOKKKOO.
+.OOOOOOOOOOOOO.
+..OOOOOOOOOOO..
+..OOOOOOOOOOO..
+..O.O.....O.O..
+..O.O.....O.O..`};
+const INK={O:'#D97757',K:'#191919'};
+function sprite(p,c){ let r=''; POSES[p].split('\n').forEach((row,y)=>[...row].forEach((ch,x)=>{ if(INK[ch]) r+=`<rect x="${x*c}" y="${y*c}" width="${c}" height="${c}" fill="${INK[ch]}"/>`; })); return `<svg width="${15*c}" height="${12*c}" viewBox="0 0 ${15*c} ${12*c}" shape-rendering="crispEdges" aria-hidden="true">${r}</svg>`; }
+
+/* ---------- dados de exemplo ---------- */
+const files = {
+  'src/app.ts': `import express from 'express'
+import { webhooks } from './webhooks'
+
+export const app = express()
+app.use(express.json())
+app.use(webhooks)
+`,
+  'src/health.ts': `import { Router } from 'express'
+
+export const health = Router()
+
+health.get('/health', async (_req, res) => {
+  const db = await ping()
+  res.status(db ? 200 : 503).json({ ok: db })
+})
+`,
+  'src/slack.ts': `export class SlackClient {
+  private timeout = Number(process.env.SLACK_TIMEOUT_MS ?? 10000)
+
+  async post(channel: string, text: string) {
+    return fetch(this.url, { signal: AbortSignal.timeout(this.timeout) })
+  }
+}
+`,
+  'CLAUDE.md': `# bots-api
+
+- Testes: npm test
+- Nunca logar payload inteiro (tem CPF)
+`,
+  'package.json': `{
+  "name": "bots-api",
+  "scripts": { "test": "jest", "build": "tsc -p ." }
+}
+`
+};
+const F = {}; for (const p in files) F[p] = { text: files[p], saved: files[p] };
+
+const D_HEALTH=[
+  {path:'src/health.ts', isNew:true, hunks:[{h:'@@ -0,0 +1,8 @@', l:[['+',0,1,"import { Router } from 'express'"],['+',0,2,''],['+',0,3,'export const health = Router()'],['+',0,4,''],['+',0,5,"health.get('/health', async (_req, res) => {"],['+',0,6,'  const db = await ping()'],['+',0,7,'  res.status(db ? 200 : 503).json({ ok: db })'],['+',0,8,'})']]}]},
+  {path:'src/app.ts', hunks:[{h:'@@ -1,6 +1,8 @@', l:[[' ',1,1,"import express from 'express'"],[' ',2,2,"import { webhooks } from './webhooks'"],['+',0,3,"import { health } from './health'"],[' ',3,4,''],[' ',4,5,'export const app = express()'],[' ',5,6,'app.use(express.json())'],['+',0,7,'app.use(health)'],[' ',6,8,'app.use(webhooks)']]}]},
+];
+const D_SLACK=[{path:'src/slack.ts', hunks:[{h:'@@ -1,4 +1,4 @@', l:[[' ',1,1,'export class SlackClient {'],['-',2,0,'  private timeout = 3000'],['+',0,2,'  private timeout = Number(process.env.SLACK_TIMEOUT_MS ?? 10000)'],[' ',3,3,''],[' ',4,4,'  async post(channel: string, text: string) {']]}]}];
+const D_DEPS=[{path:'package.json', hunks:[{h:'@@ -8,6 +8,6 @@', l:[[' ',8,8,'  "devDependencies": {'],['-',9,0,'    "jest": "^29.7.0",'],['+',0,9,'    "jest": "^30.1.0",'],['-',10,0,'    "typescript": "^5.4.5"'],['+',0,10,'    "typescript": "^5.9.2"'],[' ',11,11,'  }']]}]}];
+
+const ROOT='~/repos-ctbz/bots-api', WT='~/repos-ctbz/bots-api.wt/';
+const ccHead = dir => ({c:'cc', t:'', dir});
+const FEATS=[
+  {id:'main', branch:'main', dir:ROOT, st:'idle', msg:'sem tarefa', ago:'há 1 h', changes:[], tab:0,
+   term:[ccHead(ROOT),{c:'dim',t:'Sessão parada. Escreva abaixo para começar.'}]},
+  {id:'health', branch:'feat/healthcheck', dir:WT+'feat-healthcheck', st:'working', msg:'escrevendo src/health.ts', ago:'agora', changes:D_HEALTH, tab:0, t0:Date.now()-14000,
+   term:[ccHead(WT+'feat-healthcheck'),{c:'u',t:'> cria um endpoint /health que checa o banco e responde 503 se ele cair'},
+     {c:'dotw',t:'⏺ Vou criar a rota num arquivo próprio e plugar no app.'},{c:'dot',t:'⏺ Read(src/app.ts)'},{c:'out',t:'  ⎿  Read 6 lines'},{c:'dot',t:'⏺ Write(src/health.ts)'},{c:'out',t:'  ⎿  Wrote 8 lines to src/health.ts'}]},
+  {id:'slack', branch:'fix/timeout-slack', dir:WT+'fix-timeout-slack', st:'blocked', msg:'pediu permissão: npm test', ago:'há 3 min', changes:D_SLACK, tab:0, ask:'npm test -- slack', unseen:true,
+   term:[ccHead(WT+'fix-timeout-slack'),{c:'u',t:'> o client do slack estoura timeout em horário de pico, deixa configurável'},
+     {c:'dot',t:'⏺ Update(src/slack.ts)'},{c:'out',t:'  ⎿  Updated src/slack.ts with 1 addition and 1 removal'},{c:'dotw',t:'⏺ Agora vou rodar os testes do client.'}]},
+  {id:'deps', branch:'chore/deps', dir:WT+'chore-deps', st:'done', msg:'pronto pra revisar', ago:'há 12 min', changes:D_DEPS, tab:0, uncommitted:1, unseen:true,
+   term:[ccHead(WT+'chore-deps'),{c:'u',t:'> atualiza jest e typescript'},{c:'dot',t:'⏺ Bash(npm i -D jest@30 typescript@5.9)'},{c:'out',t:'  ⎿  added 3 packages, changed 41 packages in 9s'},
+     {c:'dot',t:'⏺ Bash(npm test)'},{c:'out',t:'  ⎿  Tests: 14 passed, 14 total'},{c:'dotw',t:'⏺ Pronto. jest 30 e typescript 5.9, 14 testes passando. Não commitei.'}]},
+];
+FEATS.push({id:'home', kind:'ws', branch:'~', dir:'~', st:'idle', msg:'zsh', ago:'', changes:[], tab:0, term:[]});
+const FX={main:{port:3000,cost:0,ctx:0,turns:[]},
+  health:{port:3001,cost:.42,ctx:38,turns:[{n:1,p:'cria um endpoint /health que checa o banco e responde 503 se ele cair'},{n:2,p:'agora pluga no app e roda os testes'}]},
+  slack:{port:3002,cost:.18,ctx:82,turns:[{n:1,p:'o client do slack estoura timeout em horário de pico, deixa configurável'}],mr:{iid:147,pipe:'success',sonar:'ok',comments:[{who:'@ana.lima',where:'src/slack.ts:2',body:'Documenta o `SLACK_TIMEOUT_MS` no README e no k8s-configmap?'}]}},
+  deps:{port:3003,cost:.09,ctx:12,turns:[{n:1,p:'atualiza jest e typescript'}],mr:{iid:148,pipe:'failed',job:'test:unit',sonar:'fail',sonarMsg:'cobertura do código novo em 71% (o gate pede 80%)',comments:[]}},
+  home:{cost:0,ctx:0}};
+FEATS.forEach(f=>Object.assign(f,FX[f.id]));
+D_HEALTH[0].turn=1; D_HEALTH[1].turn=2;
+{ const t=FEATS[1].term; t.splice(t.findIndex(l=>/Wrote 8 lines/.test(l.t||''))+1,0,{c:'u',t:'> agora pluga no app e roda os testes'}); }
+const ST={blocked:{g:'!',l:'precisa de você'},working:{g:'◐',l:'trabalhando'},done:{g:'✓',l:'pronto pra revisar'},idle:{g:'○',l:'parado'}};
+
+/* ---------- shell: prompt do ~/.config/starship.toml, aliases do ~/.zshrc (eza, bat) ---------- */
+const NF={os:'', br:'', pkg:'\u{F03D7}', node:'', dir:'', ts:'', md:'', json:'', lock:''};
+function mkTabs(f){ f.tabs = f.kind==='ws' ? [{k:'shell',lines:[],cwd:f.dir,hist:[]}] : [{k:'claude',lines:f.term},{k:'shell',lines:[],cwd:f.dir,hist:[]}]; f.split=null; }
+function promptHtml(f,cwd){
+  const shown = f.kind==='ws' ? cwd : f.dir.split('/').pop()+cwd.slice(f.dir.length);
+  let h=`┌─(<b class="w">${NF.os}</b>)(<b class="cy">${esc(shown)}</b>)`;
+  if(f.kind!=='ws'){ const gs=(f.changes.some(c=>!c.isNew)?'!':'')+(f.changes.some(c=>c.isNew)?'?':'');
+    h+=`\n│ (<b class="mg">${NF.br} ${esc(f.branch)}</b>${gs?`|<b class="rd">${gs}</b>`:''})(<b class="or">${NF.pkg} v1.0.0</b>)(<b class="gr">${NF.node} v24.16.0</b>)`; }
+  return h+'\n└<b class="gr">❯</b> ';
+}
+function sh(f,t,cmd){
+  const tab=f.tabs[t]; tab.lines.push({h:promptHtml(f,tab.cwd)+esc(cmd)}); if(cmd.trim()) tab.hist.push(cmd);
+  const out=h=>tab.lines.push({h}); const [c,...a]=cmd.trim().split(/\s+/); const git=f.kind!=='ws';
+  if(!c) return;
+  if(c==='clear'){ tab.lines=[]; return; }
+  if(c==='ls'||c==='la'||c==='ll'||c==='lt'){
+    const d=n=>`<b class="bl">${NF.dir} ${n}</b>`, fl=(i,n)=>`${i} ${n}`;
+    out(!git ? [d('Downloads'),d('repos-ctbz'),d('test-repos'),d('vault')].join('  ')
+      : tab.cwd===f.dir ? [d('node_modules'),d('src'),d('test'),fl(NF.md,'CLAUDE.md'),fl(NF.json,'package.json'),fl(NF.json,'package-lock.json'),fl(NF.md,'README.md'),fl(NF.json,'tsconfig.json')].join('  ')
+      : ['app.ts','handler.ts','health.ts','service.ts','slack.ts'].map(n=>fl(`<span class="cy">${NF.ts}</span>`,n)).join('  ')); return; }
+  if(c==='pwd'){ out(esc(tab.cwd.replace('~','/home/rafael.maestro@CONTABILIZEI.COM.BR'))); return; }
+  if(c==='cd'){ const to=a[0]; if(!to||to==='~') tab.cwd='~'; else if(to==='..') tab.cwd=tab.cwd.split('/').slice(0,-1).join('/')||'~'; else if(to==='-') tab.cwd=f.dir; else tab.cwd=tab.cwd+'/'+to.replace(/\/$/,''); return; }
+  if(c==='git'){ if(!git){ out('fatal: not a git repository (or any of the parent directories): .git'); return; }
+    if(a[0]==='status'||a[0]==='st'){ out(`On branch ${esc(f.branch)}\nChanges not staged for commit:\n${f.changes.filter(x=>!x.isNew).map(x=>`\t<span class="rd">modified:   ${x.path}</span>`).join('\n')||'\t(nada)'}${f.changes.some(x=>x.isNew)?`\n\nUntracked files:\n${f.changes.filter(x=>x.isNew).map(x=>`\t<span class="rd">${x.path}</span>`).join('\n')}`:''}`); return; }
+    if(a[0]==='log'){ out(['<span class="yl">9e41c07</span> (<b class="cy">HEAD -&gt; </b><b class="gr">'+esc(f.branch)+'</b>) chore: ajustes','<span class="yl">51bb0d2</span> (<b class="rd">origin/main</b>) feat: webhooks do bot','<span class="yl">a2f9c1e</span> fix: log sem CPF'].join('\n')); return; }
+    if(a[0]==='diff'){ out(f.changes.map(x=>`<b>diff --git a/${x.path} b/${x.path}</b>\n`+x.hunks.map(hk=>`<span class="cy">${esc(hk.h)}</span>\n`+hk.l.map(l=>l[0]==='+'?`<span class="gr">+${esc(l[3])}</span>`:l[0]==='-'?`<span class="rd">-${esc(l[3])}</span>`:' '+esc(l[3])).join('\n')).join('\n')).join('\n')||''); return; }
+    out(`(protótipo: git ${esc(a.join(' '))} rodaria normalmente)`); return; }
+  if(c==='npm'&&a[0]==='run'&&a[1]==='dev'){ if(!git){ out('npm error Missing script: "dev"'); return; } f.devUp=true; out(`\n&gt; bots-api@1.0.0 dev\n&gt; tsx watch src/main.ts\n\n<span class="gr">listening on http://localhost:${f.port}</span>  <span class="cm">(PORT=${f.port}, único desta worktree)</span>`); return; }
+  if(c==='npx'&&a[0]==='jest'&&a[1]==='--findRelatedTests'){ out(`<span class="pass"> PASS </span> test/health.spec.ts\n<span class="pass"> PASS </span> test/app.spec.ts\n\n<b>Tests:</b>       <b class="gr">5 passed</b>, 5 total  <span class="cm">(9 testes não afetados pelo diff foram pulados)</span>\n<b>Time:</b>        0.84 s`); return; }
+  if(c==='npm'&&(a[0]==='test'||a[0]==='t')){ if(!git){ out('npm error Missing script: "test"'); return; }
+    out(`\n&gt; bots-api@1.0.0 test\n&gt; jest\n\n<span class="pass"> PASS </span> test/handler.spec.ts\n<span class="pass"> PASS </span> test/slack.spec.ts\n\n<b>Tests:</b>       <b class="gr">14 passed</b>, 14 total\n<b>Time:</b>        2.31 s`); return; }
+  if(c==='cat'||c==='bat'){ const p=a[0]&&(F[a[0]]?a[0]:F['src/'+a[0]]?'src/'+a[0]:null); if(!p){ out(`[bat error]: '${esc(a[0]||'')}': No such file or directory`); return; } out(hl(F[p].text.trimEnd())); return; }
+  if(c==='claude'){ if(!git){ out('(protótipo: abriria uma sessão do claude nesta pasta)'); return; } f.tab=0; return; }
+  if(c==='echo'){ out(esc(a.join(' ').replace('$PORT',f.port||''))); return; }
+  if(c==='exit'){ if(f.tabs.length>1){ f.tabs.splice(t,1); f.split=null; f.tab=0; } else out('<span class="cm">(última aba: o herdr manteria o pane aberto)</span>'); return; }
+  if(['vim','nvim','htop','btop','lazygit','less','top','man'].includes(c)){ out(`<span class="cm">(protótipo: ${esc(c)} abriria aqui em tela cheia, como em qualquer terminal)</span>`); return; }
+  out(`zsh: command not found: ${esc(c)}`);
+}
+FEATS.forEach(f=>{ mkTabs(f); if(f.kind==='ws') sh(f,0,'ls'); else sh(f,1,'git status'); });
+
+const MRS = [
+  {g:'rev', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:124, title:'feat: retry no webhook', who:'@bruno.costa', ci:'success', st:'new', unread:true, src:'feat/retry-webhook', tgt:'main', sha:'9e41c07'},
+  {g:'rev', proj:'zendesk-agents', path:'ctbz/experts/atendimento/zendesk-agents', iid:88, title:'fix: timeout na sincronização de tickets', who:'@carla.dias', ci:'running', st:'inc', inc:2, sha:'a2f9c1e'},
+  {g:'rev', proj:'atendimento-canais', path:'ctbz/experts/atendimento/atendimento-canais', iid:301, title:'chore: atualiza dependências', who:'@diego.alves', ci:'failed', st:'done', sha:'51bb0d2'},
+  {g:'mine', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:119, title:'refactor: extrai SlackClient', who:'você', ci:'success', st:'threads', threads:2},
+  {g:'grp', proj:'agenda-api', path:'ctbz/experts/agenda-api', iid:42, title:'feat: endpoint de reagendamento', who:'@elisa.rocha', ci:'success', st:'none'},
+  {g:'grp', proj:'notas-fiscais', path:'ctbz/experts/notas-fiscais', iid:1207, title:'fix: arredondamento do ISS', who:'@fabio.nunes', ci:'success', st:'none'},
+  {g:'grp', proj:'onboarding-web', path:'ctbz/experts/onboarding-web', iid:388, title:'feat: etapa de certificado digital', who:'@heitor.mota', ci:'failed', st:'none'},
+];
+const D_MR = [
+  {path:'src/handler.ts', hunks:[{h:'@@ -9,6 +10,9 @@ export class Handler {', l:[
+      [' ',9,10,'  async run(payload: Payload): Promise<void> {'],[' ',10,11,'    const res = await this.svc.call(payload)'],
+      ['-',11,0,'    if (!res.ok) throw new Error(`webhook ${res.status}`)'],['+',0,12,'    if (!res.ok) {'],
+      ['+',0,13,"      log.warn('webhook falhou, tentando de novo', { status: res.status })"],['+',0,14,'      return retry(() => this.svc.call(payload))'],['+',0,15,'    }'],
+      [' ',12,16,"    log.info('webhook ok', { id: payload.id })"],[' ',13,17,'  }']]}]},
+  {path:'src/retry.ts', isNew:true, hunks:[{h:'@@ -0,0 +1,11 @@', l:[
+      ['+',0,1,'export async function retry<T>(fn: () => Promise<T>, tries = Infinity): Promise<T> {'],['+',0,2,'  let last: unknown'],['+',0,3,'  for (let i = 0; i < tries; i++) {'],
+      ['+',0,4,'    try {'],['+',0,5,'      return await fn()'],['+',0,6,'    } catch (err) {'],['+',0,7,'      last = err'],['+',0,8,'    }'],['+',0,9,'  }'],['+',0,10,'  throw last'],['+',0,11,'}']]}]},
+];
+let THREADS = [
+  {id:'t1', file:'src/handler.ts', line:14, resolved:false, notes:[{who:'@ana.lima', ago:'há 2 h', body:'Esse retry tem limite? Se o endpoint cair fica em loop.'},{who:'@bruno.costa', ago:'há 1 h', body:'Coloquei 3, como está na descrição.'}]},
+];
+const FINDINGS = [
+  {file:'src/handler.ts', line:14, sev:'major', label:'issue', body:'`retry` não tem backoff: com o endpoint fora, as tentativas saem coladas. Use espera exponencial.'},
+  {file:'src/retry.ts', line:1, sev:'major', label:'issue', body:'A thread diz "coloquei 3", mas o default de `tries` é `Infinity` e o handler não passa o limite.'},
+  {file:'README.md', line:null, sev:'nit', label:'nit', body:'Faltou documentar o limite de tentativas no README.', outside:true},
+];
+
+/* ---------- estado ---------- */
+const S = { mode:'feat', fid:'health', left:true, right:false, ltab:'changes', rtab:'review', file:null, ln:1, col:1,
+  ibox:'rev', q:'', isel:0, mr:null, sel:null, drafts:[], editing:null, undo:[], reviewed:{}, mq:[], mascot:null };
+const feat = id => FEATS.find(f=>f.id===(id||S.fid));
+let did=0;
+
+/* ---------- frame ---------- */
+function renderFrame(){
+  const m=$('#main'); m.dataset.left=S.left&&S.mode!=='mrs'?'on':'off'; m.dataset.right=S.right&&S.mode==='feat'?'on':'off';
+  $('#mFeat').setAttribute('aria-pressed',S.mode==='feat'||S.mode==='audit'); $('#mMrs').setAttribute('aria-pressed',S.mode==='mrs'||S.mode==='mr'); $('#mVault').setAttribute('aria-pressed',S.mode==='vault');
+  const att=FEATS.filter(f=>f.st==='blocked').length; $('#attCount').textContent=att?`${att} !`:'';
+  $('#qCount').textContent=attention().length||'';
+  $('#mrCount').textContent=MRS.filter(m=>m.g==='rev'&&m.st!=='done'&&!S.reviewed[m.proj+m.iid]).length;
+}
+function render(){ renderFrame(); renderLeft(); renderCenter(); renderRight(); renderHints(); renderStatus(); maybeTour(); }
+function setMode(m){ S.mode=m; if(m==='vault'&&!S.vview) S.vview='note'; render(); }
+
+/* ---------- lateral ---------- */
+function renderLeft(){
+  const el=$('#left');
+  if (S.mode==='mr') return renderMRFiles(el);
+  if (S.mode==='vault') return renderVaultTree(el);
+  if (S.mode!=='feat'&&S.mode!=='audit'){ el.innerHTML=''; return; }
+  const f=feat();
+  let h=`<div class="repo">bots-api <span class="mono">${ROOT}</span></div><div class="feats"><button class="feat ${S.mode==='audit'?'on':''}" id="audBtn"><span class="g ${AU.phase==='run'?'st-working spin':'cm'}">${AU.phase==='run'?'◐':'◇'}</span><span class="b">Auditoria</span><span class="k">${AU.phase==='run'?'rodando':AU.last.when}</span><span class="m">${AU.phase==='run'?'US$ '+AU.spent.toFixed(2).replace('.',','):AU.last.commits?AU.last.commits+' commits desde a última':'em dia'}</span></button></div><div class="phead">Features<span class="sp"></span><span class="mono" style="text-transform:none;letter-spacing:0">${FEATS.length}</span></div><div class="feats" role="listbox" aria-label="Features">`;
+  FEATS.filter(x=>x.kind!=='ws').forEach(x=>h+=featBtn(x));
+  h+=`</div><button class="newf" id="newF"><span>+ Nova feature</span><kbd>Alt+N</kbd></button><div class="fsep">Terminais</div><div class="feats">${FEATS.filter(x=>x.kind==='ws').map(featBtn).join('')}</div>`;
+  if(f.kind==='ws'){ el.innerHTML=h+'<div class="flist"><div class="none">Pasta fora de repositório git. Aqui é só terminal: abas e splits do herdr, nada para revisar.</div></div>'; bindLeft(el); return; }
+  const nd = S.drafts.filter(d=>d.ctx===f.id&&d.state==='draft').length;
+  h+=`<div class="ltabs"><button aria-pressed="${S.ltab==='changes'}" data-lt="changes">Mudanças ${f.changes.length}</button><button aria-pressed="${S.ltab==='files'}" data-lt="files">Arquivos</button></div><div class="flist">`;
+  if (S.ltab==='changes'){
+    if(!f.changes.length) h+='<div class="none">Nada mudou nesta branch.</div>';
+    f.changes.forEach(c=>{ const {a,r}=counts(c); const n=S.drafts.filter(d=>d.ctx===f.id&&d.file===c.path&&d.state==='draft').length; const [dir,nm]=split(c.path);
+      h+=`<button data-ch="${c.path}"><span class="nm"><span class="dir">${dir}</span>${nm}</span><span class="st ${n?'d':''}">${n?n+' coment.':(c.isNew?'novo ':'')+`+${a} −${r}`}</span></button>`; });
+    if(f.changes.length) h+=`<div class="none">${f.uncommitted?`${f.uncommitted} arquivo não commitado · `:''}base <span class="mono">main</span>${nd?` · <span style="color:var(--draft)">${nd} comentário${nd>1?'s':''} para o Claude</span>`:''}</div>`;
+  } else Object.keys(F).forEach(p=>{ const [dir,nm]=split(p); h+=`<button data-file="${p}" class="${S.file===p&&S.rtab==='file'?'on':''}"><span class="nm"><span class="dir">${dir}</span>${nm}</span><span class="st">${F[p].text!==F[p].saved?'●':''}</span></button>`; });
+  el.innerHTML=h+'</div>';
+  bindLeft(el);
+}
+function featBtn(x){ const s=ST[x.st], i=FEATS.indexOf(x), ws=x.kind==='ws';
+  return `<button class="feat ${x.id===S.fid&&S.mode==='feat'?'on':''} ${x.unseen?'unseen '+x.st:''}" data-f="${x.id}" role="option" aria-selected="${x.id===S.fid}" title="Ctrl+Shift+${i+1}">
+    <span class="g ${ws?'cm':'st-'+x.st} ${x.st==='working'?'spin':''}">${ws?'$':s.g}</span><span class="b">${x.branch}${x.group?`<span class="grp">${x.model}</span>`:''}</span><span class="k">${ws?x.tabs.length+' aba'+(x.tabs.length>1?'s':''):x.ago}</span>
+    <span class="m ${x.st}">${ws?'só terminal':(x.st==='blocked'||x.st==='done'?s.l+' · ':'')+esc(x.msg)}</span>${ws?'':`<span class="m2">:${x.port} · US$ ${x.cost.toFixed(2).replace('.',',')} · <span class="${x.ctx>=80?'w8':''}">ctx ${x.ctx}%${x.ctx>=80?' ⚠':''}</span>${mrSum(x.mr)}</span>`}</button>`; }
+function bindLeft(el){
+  el.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>selectFeat(b.dataset.f));
+  el.querySelectorAll('[data-lt]').forEach(b=>b.onclick=()=>{ S.ltab=b.dataset.lt; renderLeft(); });
+  el.querySelectorAll('[data-ch]').forEach(b=>b.onclick=()=>openReview(b.dataset.ch));
+  el.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>openFile(b.dataset.file));
+  $('#newF').onclick=newFeatureDlg;
+  $('#audBtn').onclick=()=>setMode('audit');
+}
+const split = p => { const i=p.lastIndexOf('/'); return [p.slice(0,i+1),p.slice(i+1)]; };
+const counts = f => { let a=0,r=0; f.hunks.forEach(h=>h.l.forEach(l=>{ if(l[0]==='+')a++; if(l[0]==='-')r++; })); return {a,r}; };
+
+function selectFeat(id,focus=true){
+  S.fid=id; const f=feat(); f.unseen=false; if(S.mode!=='feat') S.mode='feat';
+  if(S.mascot&&S.mascot.fid===id) dismissMascot();
+  render(); if(focus) focusTerm();
+}
+
+/* ---------- terminal herdr ---------- */
+function renderCenter(){
+  const el=$('#center');
+  if (S.mode==='mrs') return renderInbox(el);
+  if (S.mode==='mr') return renderMR(el);
+  if (S.mode==='audit') return renderAudit(el);
+  if (S.mode==='vault') return renderVaultMain(el);
+  const f=feat();
+  const keep={}; let foc=null; el.querySelectorAll('.tin-in').forEach(i=>{ keep[i.dataset.t]=i.value; if(i===document.activeElement) foc=i.dataset.t; });
+  const shown = f.split && f.tabs.length>1 && f.tab<2 ? [0,1] : [f.tab];
+  el.innerHTML=`<div class="term"><div class="hbar">${f.tabs.map((t,i)=>`<button class="${shown.includes(i)?'on':''}" data-tb="${i}">${i+1} ${t.k==='claude'?'claude':'zsh'}${t.k==='claude'&&f.st!=='idle'?` <span class="st-${f.st}">${ST[f.st].g}</span>`:''}</button>`).join('')}<button data-newtab title="Nova aba (Ctrl+A c)" aria-label="Nova aba">+</button><span class="sp"></span>${f.devUp?`<button data-dev class="st-done" title="Abrir no navegador">● localhost:${f.port} ↗</button>`:''}
+    <span class="r ${S.prefix?'pre':''}">${S.prefix?'PREFIX: v divide · - empilha · c aba · x fecha · z zoom':f.split?'Ctrl+Shift+Z: só este pane':'Ctrl+Shift+\\ divide · Ctrl+Shift+Enter empilha'}</span></div>
+    <div class="panes ${shown.length>1?f.split:''}">${shown.map(i=>paneHtml(f,i,shown.length>1&&i!==f.tab)).join('')}</div></div>`;
+  el.querySelectorAll('[data-tb]').forEach(b=>b.onclick=()=>{ f.tab=+b.dataset.tb; renderCenter(); focusTerm(); });
+  el.querySelector('[data-newtab]').onclick=()=>herdr(f,'c');
+  if(el.querySelector('[data-dev]')) el.querySelector('[data-dev]').onclick=()=>toast(`Abriria http://localhost:${f.port} (servidor de dev de ${f.branch})`);
+  el.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>answer(f,+b.dataset.p));
+  el.querySelectorAll('.tbody').forEach(tb=>tb.scrollTop=tb.scrollHeight);
+  el.querySelectorAll('.pane').forEach(p=>p.onclick=e=>{ if(getSelection().toString()||e.target.closest('button')) return; const t=+p.dataset.t; if(f.tab!==t){ f.tab=t; renderCenter(); } focusTerm(); });
+  el.querySelectorAll('.tin-in').forEach(i=>{ const t=i.dataset.t; if(keep[t]) i.value=keep[t]; i.onkeydown=e=>termKey(e,f,+t,i); });
+  if(foc!==null){ const i=el.querySelector(`.tin-in[data-t="${f.tab}"]`)||el.querySelector(`.tin-in[data-t="${foc}"]`); if(i) i.focus(); }
+}
+function paneHtml(f,i,unf){
+  const t=f.tabs[i]; let body, input;
+  if(t.k==='claude'){
+    body = t.lines.map(l=> l.c==='cc' ? `<div class="cc"><span>✻ <b class="w">Claude Code</b></span><span class="w">  cwd: ${esc(l.dir)}</span><span>  skills: /mr /comentario /pipe · MCP: sonarqube, ripwire</span><span>  vault: repos/bots-api.md + 2 decisões no contexto</span></div>` : `<div class="${l.c}">${esc(l.t)}</div>`).join('');
+    if (f.st==='blocked') body+=`<div class="perm" role="group" aria-label="Pedido de permissão"><span class="h">Bash command</span><span class="cmd">  ${esc(f.ask)}</span><span class="out">  Roda os testes do client do Slack</span><span style="margin-top:4px">Do you want to proceed?</span>
+      <button class="on" data-p="1">❯ 1. Yes</button><button data-p="2">  2. Yes, and don't ask again for npm test commands</button><button data-p="3">  3. No, and tell Claude what to do differently (esc)</button></div>`;
+    if (f.st==='working') body+=`<div class="think" id="thinking">✻ ${f.verb||'Trabalhando'}… (${Math.floor((Date.now()-f.t0)/1000)}s · esc para interromper)</div>`;
+    input=`<div class="tin"><span>&gt;</span><input class="tin-in" data-t="${i}" aria-label="Mensagem para o Claude em ${f.branch}" autocomplete="off" placeholder="${f.st==='blocked'?'responda 1, 2 ou 3 acima':f.st==='working'?'enfileirar mensagem…':'Try &quot;cria um teste para src/health.ts&quot;'}"></div><div class="tfoot"><span class="${f.ctx>=80?'warn':''}">${f.ctx>=80?`contexto ${f.ctx}%: vai compactar em breve`:'? for shortcuts'}</span><span>PORT=${f.port} · ${f.dir}</span></div>`;
+    return `<div class="pane ${unf?'unf':''}" data-t="${i}"><div class="tbody">${body}</div>${input}</div>`;
+  }
+  body = t.lines.map(l=>`<div>${l.h}</div>`).join('') + `<div class="live">${promptHtml(f,t.cwd)}<input class="tin-in sin" data-t="${i}" aria-label="Terminal zsh em ${esc(t.cwd)}" autocomplete="off" spellcheck="false"></div>`;
+  return `<div class="pane ${unf?'unf':''}" data-t="${i}"><div class="tbody">${body}</div></div>`;
+}
+function termKey(e,f,t,inp){
+  if(e.ctrlKey&&e.shiftKey) return;
+  if(S.prefix){ e.preventDefault(); S.prefix=false; herdr(f,e.key); return; }
+  if(e.ctrlKey&&e.key==='a'){ e.preventDefault(); S.prefix=true; renderCenter(); return; }
+  const tab=f.tabs[t];
+  if(tab.k==='claude'){
+    if(f.st==='blocked'&&!inp.value&&['1','2','3'].includes(e.key)){ e.preventDefault(); answer(f,+e.key); return; }
+    if(e.ctrlKey&&e.key==='c'){ e.preventDefault(); if(!interrupt(f)) inp.value=''; return; }
+    if(e.key==='Enter'&&inp.value.trim()){ const q=inp.value.trim(); inp.value=''; ask(f,q); }
+    return;
+  }
+  if(e.ctrlKey&&e.key==='l'){ e.preventDefault(); tab.lines=[]; renderCenter(); return; }
+  if(e.ctrlKey&&e.key==='c'){ e.preventDefault(); tab.lines.push({h:promptHtml(f,tab.cwd)+esc(inp.value)+'^C'}); inp.value=''; renderCenter(); return; }
+  if(e.key==='ArrowUp'||e.key==='ArrowDown'){ e.preventDefault(); const h=tab.hist; tab.hi=Math.max(0,Math.min(h.length,(tab.hi??h.length)+(e.key==='ArrowUp'?-1:1))); inp.value=h[tab.hi]||''; return; }
+  if(e.key==='Enter'){ e.preventDefault(); const c=inp.value; inp.value=''; tab.hi=undefined; sh(f,t,c); renderLeft(); renderCenter(); }
+}
+function herdr(f,k){
+  if(k==='v'||k==='-'){ if(f.tabs.length<2) f.tabs.push({k:'shell',lines:[],cwd:f.dir,hist:[]}); f.split=k==='v'?'v':'h'; f.tab=1; }
+  else if(k==='c'){ f.tabs.push({k:'shell',lines:[],cwd:f.dir,hist:[]}); f.tab=f.tabs.length-1; }
+  else if(k==='x'||k==='z'){ f.split=null; }
+  else if(k==='n'){ f.tab=(f.tab+1)%f.tabs.length; } else if(k==='p'){ f.tab=(f.tab+f.tabs.length-1)%f.tabs.length; }
+  else if(/^[1-9]$/.test(k)&&f.tabs[+k-1]){ f.tab=+k-1; }
+  else if(k==='ArrowLeft'||k==='ArrowUp'){ if(f.split) f.tab=0; } else if(k==='ArrowRight'||k==='ArrowDown'){ if(f.split) f.tab=1; }
+  renderLeft(); renderCenter(); focusTerm();
+}
+function focusTerm(){ const i=document.querySelector(`.tin-in[data-t="${feat().tab}"]`)||$('.tin-in'); if(i) i.focus(); }
+function push(f,c,t){ f.term.push({c,t}); if(S.mode==='feat'&&S.fid===f.id) renderCenter(); }
+function setSt(f,st,msg){ f.st=st; f.msg=msg; f.ago='agora'; if(st==='working') f.t0=Date.now();
+  if(st==='blocked'||st==='done') notify(f);
+  renderFrame(); if(S.mode==='feat'){ renderLeft(); renderCenter(); } renderStatus(); }
+function run(f,steps,end){
+  let t=0; steps.forEach(([ms,c,txt,verb])=>{ t+=ms; setTimeout(()=>{ if(f.st!=='working') return; f.cost=(f.cost||0)+.012; f.ctx=Math.min(99,(f.ctx||0)+1); if(verb) f.verb=verb; if(txt) push(f,c,txt); },t); });
+  setTimeout(()=>{ if(f.st!=='working') return; end(); },t+700);
+}
+function ask(f,q){
+  push(f,'u','> '+q);
+  if(f.st==='working'){ push(f,'dim','  (mensagem enfileirada: o Claude lê quando terminar o passo atual)'); return; }
+  setSt(f,'working','pensando…'); f.verb='Pensando';
+  const turn=newTurn(f,q); const test=/teste|test/i.test(q);
+  run(f, test ? [[900,'dot','⏺ Read(src/health.ts)','Lendo'],[700,'out','  ⎿  Read 8 lines'],[1100,'dot','⏺ Write(test/health.spec.ts)','Escrevendo'],[600,'out','  ⎿  Wrote 18 lines'],[1200,'dot','⏺ Bash(npm test -- health)','Testando'],[900,'out','  ⎿  Tests: 2 passed, 2 total']]
+              : [[900,'dot','⏺ Read(CLAUDE.md)','Lendo'],[900,'dim','  (protótipo: respostas simuladas)']],
+    ()=>{ push(f,'dotw', test?'⏺ Pronto: dois testes, banco ok (200) e banco fora (503).':'⏺ Feito.'); if(test && !f.changes.find(c=>c.path==='test/health.spec.ts')) f.changes.push({path:'test/health.spec.ts',isNew:true,turn,hunks:[{h:'@@ -0,0 +1,3 @@',l:[['+',0,1,"describe('GET /health', () => {"],['+',0,2,"  it('responde 503 sem banco', async () => { /* … */ })"],['+',0,3,'})']]}]});
+      setSt(f,'done','pronto pra revisar'); });
+}
+function answer(f,opt){
+  if(f.st!=='blocked') return;
+  if(opt===3){ push(f,'out','  ⎿  Negado. Diga ao Claude o que fazer.'); setSt(f,'idle','aguardando instrução'); focusTerm(); return; }
+  if(opt===1) learnPerm(f.ask);
+  push(f,'dot',`⏺ Bash(${f.ask})`); setSt(f,'working','rodando testes'); f.verb='Testando';
+  run(f,[[1400,'out','  ⎿  Tests: 6 passed, 6 total'],[900,'dotw','⏺ Testes ok. O timeout agora vem de SLACK_TIMEOUT_MS (padrão 10 s).','Concluindo']],()=>setSt(f,'done','pronto pra revisar'));
+}
+function interrupt(f){ if(f.st!=='working') return false; f.st='idle'; f.msg='interrompido'; push(f,'warn','  ⎿  Interrupted by user'); renderFrame(); renderLeft(); renderStatus(); return true; }
+setInterval(()=>{ const t=$('#thinking'); const f=feat(); if(t&&f&&f.st==='working') t.textContent=`✻ ${f.verb||'Trabalhando'}… (${Math.floor((Date.now()-f.t0)/1000)}s · esc para interromper)`; },1000);
+
+/* ---------- nova feature / remover ---------- */
+const slug = b => b.replace(/[^a-zA-Z0-9._-]+/g,'-');
+function newFeatureDlg(){
+  OV={type:'dlg',ok:createFeature};
+  $('#overlay').innerHTML=`<div class="scrim"><form class="dlg" id="nf" role="dialog" aria-label="Nova feature">
+    <h3>Nova feature em bots-api</h3>
+    <label class="fld" style="display:grid"><span>Issue do Jira (opcional: preenche branch e tarefa)</span><input type="text" id="nfJ" placeholder="ex.: PRD-171500" autocomplete="off"></label><span class="jira" id="nfJi"></span>
+    <div class="row2"><label class="fld" style="display:grid"><span>Branch</span><input type="text" id="nfB" value="feat/" autocomplete="off"></label>
+      <label class="fld" style="display:grid"><span>A partir de</span><select id="nfBase"><option>main</option><option>develop</option></select></label></div>
+    <label class="fld" style="display:grid"><span>O que o Claude deve fazer (opcional)</span><textarea id="nfP" placeholder="ex.: adiciona paginação no GET /bots"></textarea></label>
+    <div class="row2"><label class="fld" style="display:grid"><span>Tentativas em paralelo</span><select id="nfN"><option value="1">1</option><option value="2">2 (comparar no fim)</option><option value="3">3 (comparar no fim)</option></select></label>
+      <label class="fld" style="display:grid"><span>Modelos</span><select id="nfM"><option value="same">mesmo modelo</option><option value="mix">variar entre Opus e Sonnet</option></select></label></div>
+    <div class="prev" id="nfPrev"></div>
+    <fieldset><legend>Ao criar</legend>
+      <label><input type="checkbox" id="nfEnv" checked> Copiar <span class="mono">.env</span>, <span class="mono">.env.local</span> (ignorados pelo git)</label>
+      <label><input type="checkbox" id="nfCi" checked> Rodar <span class="mono">npm ci</span> <span class="muted">(setup do repo, vem do .maestro.toml)</span></label>
+      <label><input type="checkbox" id="nfCl" checked> Abrir o <span class="mono">claude</span> nessa worktree</label></fieldset>
+    <span class="err" id="nfErr" role="alert"></span>
+    <div class="acts"><button type="button" class="btn" id="nfNo">Cancelar</button><button class="btn pri" id="nfOk">Criar <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div></form></div>`;
+  const b=$('#nfB'); const prev=()=>{ const n=+$('#nfN').value; $('#nfPrev').textContent=`herdr worktree create --branch ${b.value||'…'}${n>1?` (×${n}: -a, -b${n>2?', -c':''})`:''} --base ${$('#nfBase').value} · PORT=${nextPort()}${n>1?'…'+(nextPort()+n-1):''} · docker compose -p bots-api-${slug(b.value||'…')}`; $('#nfErr').textContent=''; };
+  b.oninput=prev; $('#nfBase').onchange=prev; $('#nfN').onchange=prev; prev(); $('#nfJ').focus();
+  $('#nfJ').onchange=()=>{ const k=$('#nfJ').value.trim().toUpperCase(); if(!/^[A-Z][A-Z0-9]+-\d+$/.test(k)){ $('#nfJi').textContent=k?'Formato esperado: PROJ-123':''; return; }
+    $('#nfJi').textContent='buscando no Jira…'; setTimeout(()=>{ const J={'PRD-171500':{type:'Story',title:'Paginação no GET /bots',crit:'page e size na query (máx. 100) e o total no header X-Total-Count'}}, info=J[k]||{type:'Task',title:'Issue do Jira',crit:'os critérios de aceite da issue'};
+      $('#nfJi').textContent=`✓ ${k} · ${info.type} · ${info.title} (MCP Atlassian)`; const s2=info.title.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+      if(!b.value||b.value==='feat/') b.value=`feat/${k}-${slug(s2).slice(0,28).replace(/-+$/,'')}`; if(!$('#nfP').value) $('#nfP').value=`Implementar ${k}: ${info.title}.\nCritérios: ${info.crit}.\nLeia a issue no Jira antes de começar e não commite.`; prev(); },500); };
+  $('#nfNo').onclick=closeOverlay; $('#nf').onsubmit=e=>{ e.preventDefault(); createFeature(); };
+}
+function createFeature(){
+  const br=$('#nfB').value.trim(), base=$('#nfBase').value, p=$('#nfP').value.trim(), env=$('#nfEnv').checked, ci=$('#nfCi').checked, cl=$('#nfCl').checked;
+  if(!br || br.endsWith('/')){ $('#nfErr').textContent='Dê um nome à branch, ex.: feat/paginacao-bots'; return; }
+  if(FEATS.some(f=>f.branch===br)){ $('#nfErr').textContent=`Já existe uma feature em ${br}. Escolha outro nome ou abra a existente.`; return; }
+  const n=+$('#nfN').value, mix=$('#nfM').value==='mix';
+  closeOverlay();
+  if(n>1){ const models=mix?['Opus','Sonnet','Opus 1M']:['Opus','Opus','Opus']; ['a','b','c'].slice(0,n).forEach((x,i)=>spawnFeature(`${br}-${x}`,base,p,env,ci,cl,{group:br,model:models[i],variant:i})); toast(`${n} tentativas de ${br} em paralelo. A fila avisa quando der para comparar.`); return; }
+  spawnFeature(br,base,p,env,ci,cl,{});
+}
+const VARIANTS=[
+  {approach:'Offset (page/size) com total via COUNT(*). Mais simples; o COUNT pesa em tabela grande.',tests:'16/16',lines:["router.get('/bots', async (req, res) => {","  const { page = 1, size = 20 } = req.query","  const [rows, total] = await bots.page(+page, Math.min(+size, 100))","  res.set('X-Total-Count', String(total)).json(rows)","})"]},
+  {approach:'Cursor (after=id), sem COUNT. Escala melhor, mas muda o contrato da resposta.',tests:'15/16 (falha: X-Total-Count)',lines:["router.get('/bots', async (req, res) => {","  const { after, size = 20 } = req.query","  const rows = await bots.after(after, Math.min(+size, 100))","  res.json({ rows, next: rows.at(-1)?.id })","})"]},
+  {approach:'Offset com o total em cache no Redis por 60 s.',tests:'16/16',lines:["router.get('/bots', async (req, res) => {","  const { page = 1, size = 20 } = req.query","  const total = await cached('bots:count', 60, () => bots.count())","  res.set('X-Total-Count', String(total)).json(await bots.page(+page, Math.min(+size, 100)))","})"]}];
+const nextPort=()=>Math.max(...FEATS.map(x=>x.port||3000))+1;
+function spawnFeature(br,base,p,env,ci,cl,o){
+  o=o||{}; const dir=WT+slug(br), V=VARIANTS[o.variant||0];
+  const f={id:'f'+Date.now()+Math.random().toString(36).slice(2,5), branch:br, dir, st:'working', msg:'preparando worktree', ago:'agora', changes:[], tab:0, t0:Date.now(), verb:'Preparando',
+    port:nextPort(), cost:0, ctx:3, turns:[], group:o.group||null, model:o.model||'Opus', approach:V.approach, tests:V.tests,
+    term:[{c:'ps',t:`$ herdr worktree create --branch ${br} --base ${base}`}]};
+  mkTabs(f); FEATS.splice(FEATS.findIndex(x=>x.kind==='ws'),0,f); S.fid=f.id; S.mode='feat'; render();
+  const steps=[[500,'okc',`✓ worktree em ${dir}`]];
+  if(env) steps.push([400,'okc','✓ copiados .env, .env.local']);
+  steps.push([300,'okc',`✓ PORT=${f.port} · docker compose -p bots-api-${slug(br)}`]);
+  if(ci) steps.push([600,'ps','$ npm ci'],[1500,'okc','✓ 412 pacotes em 8s']);
+  run(f,steps,()=>{
+    if(!cl){ f.st='idle'; f.msg='worktree pronta'; f.term.push({c:'ps',t:'$ █'}); render(); toast(`Feature ${br} criada`); return; }
+    f.term.push(ccHead(dir));
+    if(!p){ f.st='idle'; f.msg='claude aberto, sem tarefa'; render(); focusTerm(); toast(`Feature ${br} criada. O Claude está esperando.`); return; }
+    f.term.push({c:'u',t:'> '+p}); f.verb='Pensando'; f.msg='lendo o código'; const turn=newTurn(f,p); render();
+    run(f,[[1200+(o.variant||0)*500,'dot','⏺ Read(src/routes/bots.ts)','Lendo'],[700,'dot','⏺ Update(src/routes/bots.ts)','Escrevendo'],[1300,'dot','⏺ Bash(npm test)','Testando'],[900,'out',`  ⎿  Tests: ${V.tests}`],[600,'dotw','⏺ '+V.approach]],()=>{
+      f.changes=[{path:'src/routes/bots.ts',turn,hunks:[{h:'@@ -12,3 +12,5 @@',l:V.lines.map((x,i)=>['+',0,12+i,x])}]}]; f.cost+=.25+(o.variant||0)*.08; setSt(f,'done','pronto pra revisar'); });
+  });
+}
+function removeFeatureDlg(f){
+  f=f||feat(); if(f.id==='main'||f.kind==='ws'){ toast(f.kind==='ws'?'Este é o terminal da home; feche abas com Ctrl+A x':'A main é o checkout principal e não pode ser removida'); return; }
+  const warn = f.uncommitted ? `${f.uncommitted} arquivo não commitado vai ser apagado junto com a worktree.` : f.st==='working' ? 'O Claude ainda está trabalhando nela e vai ser encerrado.' : 'Nada pendente. A branch local continua existindo; só a pasta da worktree sai.';
+  confirmDlg(`Remover a feature ${f.branch}?`,`${warn} Pasta: ${f.dir}`,'Remover worktree',()=>{
+    const i=FEATS.indexOf(f); FEATS.splice(i,1); if(S.fid===f.id) S.fid=FEATS[Math.max(0,i-1)].id; render(); toast(`Worktree ${f.branch} removida`); }, !!(f.uncommitted||f.st==='working'));
+}
+
+/* ---------- alertas: mascote ---------- */
+function notify(f){
+  const viewing = S.mode==='feat' && S.fid===f.id && document.hasFocus();
+  if (viewing) return;
+  f.unseen=true;
+  if(!S.mq.find(x=>x.fid===f.id)) S.mq.push({fid:f.id,kind:f.st==='blocked'?'ask':'done'});
+  if(!S.mascot) nextMascot(); else updateQueueHint();
+}
+function updateQueueHint(){ const g=$('#mGo'); if(g) g.textContent=`clique para ir · Esc dispensa${S.mq.length?` · +${S.mq.length} na fila`:''}`; }
+let blinkT;
+function nextMascot(){
+  const n=S.mq.shift(); if(!n){ S.mascot=null; $('#mascotSlot').innerHTML=''; return; }
+  const f=feat(n.fid); if(!f){ nextMascot(); return; }
+  S.mascot=n;
+  const text = n.kind==='ask' ? f.msg : 'terminou, pronto pra revisar';
+  $('#mascotSlot').innerHTML=`<div class="mascot" id="mascot" role="button" tabindex="0" aria-label="${f.branch} ${n.kind==='ask'?'precisa de você':'terminou'}. Clique para ir.">
+    <div class="card"><b>${f.branch}</b><span>${esc(text)}</span><span class="go" id="mGo"></span></div>
+    <div><div class="body"><span class="sym ${n.kind}">${n.kind==='ask'?'?':'✓'}</span><span id="mSpr">${sprite(n.kind==='ask'?'front':'happy',5)}</span></div><div class="shadow"></div></div></div>`;
+  updateQueueHint();
+  const m=$('#mascot'); m.onclick=()=>selectFeat(n.fid); m.onkeydown=e=>{ if(e.key==='Enter') selectFeat(n.fid); };
+  clearInterval(blinkT); let k=0; blinkT=setInterval(()=>{ const s=$('#mSpr'); if(!s) return clearInterval(blinkT); k++; s.innerHTML=sprite(k%6===5?'blink':(n.kind==='ask'?'front':'happy'),5); },450);
+}
+function dismissMascot(){
+  const m=$('#mascot'); if(!m||!S.mascot) return; const fid=S.mascot.fid; S.mq=S.mq.filter(x=>x.fid!==fid); m.classList.add('out'); clearInterval(blinkT);
+  S.mascot={fid,leaving:true};
+  setTimeout(()=>{ S.mascot=null; $('#mascotSlot').innerHTML=''; if(S.mq.length) nextMascot(); },650);
+}
+
+/* ---------- painel direito ---------- */
+function openReview(path){ S.right=true; S.rtab='review'; renderFrame(); renderRight(); if(path) setTimeout(()=>{ const t=document.getElementById('F-'+path); if(t) t.scrollIntoView({block:'start'}); }); }
+function openFile(p){ S.right=true; S.rtab='file'; S.file=p; renderFrame(); renderRight(); renderLeft(); setTimeout(()=>$('#code')&&$('#code').focus()); }
+function toggleRight(){ if(S.mode!=='feat') return; S.right=!S.right; renderFrame(); renderRight(); }
+function renderRight(){
+  const el=$('#right'); if(S.mode!=='feat'||!S.right){ el.innerHTML=''; return; }
+  const f=feat(), ws=f.kind==='ws';
+  if(S.rtab==='vault') S.rtab='review';
+  const T=(k,l)=>`<button class="t" aria-pressed="${S.rtab===k}" data-rt="${k}">${l}</button>`;
+  const tabs=`<div class="rtabs">${ws?'':T('review','Revisar')+T('mr',f.mr?`MR !${f.mr.iid}`:'MR')}${S.file?`<button class="t" aria-pressed="${S.rtab==='file'}" data-rt="file">${S.file.split('/').pop()}${F[S.file].text!==F[S.file].saved?' <span style="color:var(--accent)">●</span>':''}</button>`:''}<span class="sp"></span><button class="x" id="rClose" title="Ctrl+Shift+E" aria-label="Fechar painel">×</button></div>`;
+  if(S.rtab==='file' && S.file){
+    el.innerHTML=tabs+`<div class="ed"><div class="gut" id="gut"></div><div class="edwrap"><pre id="hl" aria-hidden="true"></pre><textarea id="code" spellcheck="false" aria-label="Editor ${S.file}"></textarea></div></div>`;
+    const ta=$('#code'); ta.value=F[S.file].text; paint();
+    ta.oninput=()=>{ F[S.file].text=ta.value; paint(); renderStatus(); };
+    ta.onscroll=()=>{ $('#hl').scrollTop=ta.scrollTop; $('#hl').scrollLeft=ta.scrollLeft; $('#gut').scrollTop=ta.scrollTop; };
+    ta.onkeyup=ta.onclick=()=>{ const pre=ta.value.slice(0,ta.selectionStart).split('\n'); S.ln=pre.length; S.col=pre[pre.length-1].length+1; renderStatus(); };
+    ta.onkeydown=e=>{ if(e.key==='Tab'){ e.preventDefault(); ta.setRangeText('  ',ta.selectionStart,ta.selectionEnd,'end'); ta.oninput(); } };
+  } else if(S.rtab==='mr'){ el.innerHTML=tabs+renderMRTab(f); bindMRTab(el,f); }
+  else if(ws){ el.innerHTML=tabs+'<div class="empty"><h3>Terminal fora de repositório</h3><p>Aqui não há mudanças nem MR para revisar.</p></div>'; }
+  else {
+    const turns=f.turns||[], tsel=S.turn&&S.turn!=='all'?+S.turn:null;
+    const shown=f.changes.filter(c=>!tsel||(c.turn||1)===tsel);
+    const grp=f.group&&FEATS.filter(x=>x.group===f.group).length>1;
+    const pend=S.drafts.filter(d=>d.ctx===f.id&&d.state==='draft'), ed=f.myEdits||0;
+    const tool=`<div class="rtool"><select id="turnSel" aria-label="Turno do Claude"><option value="all">Todos os turnos · ${f.changes.length} arquivo${f.changes.length!==1?'s':''}</option>${turns.map(t=>`<option value="${t.n}" ${tsel===t.n?'selected':''}>Turno ${t.n}: ${esc(t.p.slice(0,40))}${t.p.length>40?'…':''}</option>`).join('')}</select>
+      ${tsel?`<button class="btn" id="rew">⏪ Voltar para antes do turno ${tsel}</button>`:''}<span class="sp"></span>
+      ${f.changes.some(c=>c.path.startsWith('src/'))?'<button class="btn" id="aff" title="ripwire + jest --findRelatedTests">▶ Testes afetados</button>':''}${grp?'<button class="btn" id="cmp">Comparar tentativas</button>':''}${f.changes.length?'<button class="btn" id="accAll">✓ Aceitar tudo</button>':''}</div>`;
+    el.innerHTML=tabs+tool+(shown.length?`<div class="diff" id="diff">${shown.map(c=>diffFile(c,f.id)).join('')}</div>`:`<div class="empty"><h3>${f.changes.length?'Nada neste turno':'Nada para revisar em '+esc(f.branch)}</h3><p>Quando o Claude mudar arquivos nesta worktree, o diff contra <span class="mono">main</span> aparece aqui, separado por turno.</p></div>`)+
+      `<div class="pubbar">${pend.length||ed?`<span class="cnt">${[pend.length?`${pend.length} comentário${pend.length>1?'s':''}`:'',ed?`${ed} edição${ed>1?'ões':''} sua${ed>1?'s':''}`:''].filter(Boolean).join(' · ')} para o Claude</span>`:'<span class="muted">Edite as linhas aqui mesmo, aceite ou desfaça blocos, ou comente com <kbd>C</kbd>.</span>'}<span class="sp"></span>
+      <button class="btn danger" id="dAll" ${pend.length?'':'disabled'}>Descartar</button><button class="btn pri" id="send" ${pend.length||ed?'':'disabled'}>Enviar ao Claude <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div>`;
+    bindDiff(el); $('#dAll').onclick=()=>discardAll(f.id); $('#send').onclick=sendToClaude;
+    $('#turnSel').onchange=e=>{ S.turn=e.target.value; renderRight(); };
+    const b=(id,fn)=>{ const x=el.querySelector('#'+id); if(x) x.onclick=fn; };
+    b('rew',()=>rewindTo(f,tsel)); b('aff',()=>runAffected(f)); b('cmp',()=>compareDlg(f));
+    b('accAll',()=>{ f.changes.forEach(c=>c.hunks.forEach(h=>h.ok=true)); rerender(); toast('Tudo aceito. Os blocos continuam no diff até você commitar.'); });
+  }
+  el.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{ S.rtab=b.dataset.rt; renderRight(); });
+  $('#rClose').onclick=toggleRight;
+  maybeTour();
+}
+function maybeTour(){ setTimeout(()=>{ if(OV||TOUR) return; const id=S.mode==='feat'?(S.right?{review:'review',mr:'mrtab'}[S.rtab]:'feat'):S.mode==='audit'?'audit':S.mode==='vault'?'vault':S.mode==='mrs'?'mrs':null; if(id) tour(id); },400); }
+function paint(){ const t=F[S.file].text; $('#hl').innerHTML=hl(t)+'\n'; $('#gut').textContent=t.split('\n').map((_,i)=>i+1).join('\n'); }
+function save(){ if(!(S.right&&S.rtab==='file'&&S.file)) return; if(F[S.file].text===F[S.file].saved){ toast('Nada a salvar'); return; } F[S.file].saved=F[S.file].text; renderRight(); renderLeft(); renderStatus(); toast(`Salvo: ${S.file}`); }
+function sendToClaude(){
+  const f=feat(); const pend=S.drafts.filter(d=>d.ctx===f.id&&d.state==='draft'); if(!pend.length&&!f.myEdits) return;
+  pend.forEach(d=>d.state='sent'); const edited=f.changes.filter(c=>c.userEdited).map(c=>c.path);
+  push(f,'u','> Revisei suas mudanças.'+(pend.length?' Ajuste:\n'+pend.map(d=>`  - ${d.file}:${d.line??'geral'}: ${d.body}`).join('\n'):'')+(edited.length?`\n  Eu editei direto em ${edited.join(', ')}; mantenha minhas edições.`:''));
+  f.myEdits=0; newTurn(f,'revisão: '+(pend.length?pend.length+' comentário(s)':'')+(edited.length?' + edições suas':''));
+  if(!pend.length){ pend.push({file:edited[0]}); }
+  if(f.st==='working'){ push(f,'dim','  (enfileirado: o Claude lê quando terminar o passo atual)'); rerender(); toast('Comentários enfileirados para o Claude'); return; }
+  setSt(f,'working','aplicando sua revisão'); f.verb='Ajustando';
+  run(f,[[900,'dot',`⏺ Read(${pend[0].file})`],[1000,'dot',`⏺ Update(${pend[0].file})`],[600,'out','  ⎿  Updated with 2 additions and 1 removal'],[900,'dotw',`⏺ Ajustei os ${pend.length} ponto${pend.length>1?'s':''} da sua revisão.`]],()=>setSt(f,'done','revisão aplicada'));
+  rerender(); toast(`${pend.length} comentário${pend.length>1?'s':''} enviado${pend.length>1?'s':''} ao Claude de ${f.branch}`);
+}
+
+/* ---------- diff compartilhado ---------- */
+function lineRow(f,l,ctx,hi,li,acc){
+  const [t,o,n,code]=l, cls=t==='+'?'add':t==='-'?'del':'', edit=ctx&&ctx!=='mr'&&t!=='-';
+  const sel = S.sel && S.sel.file===f.path && S.sel.n===n && n ? 'sel':'';
+  return `<div class="dl ${cls} ${sel} ${acc?'acc':''}" data-file="${f.path}" data-n="${n}" id="L-${f.path}-${n||'o'+o}"><span class="o">${o||''}</span><span class="nn">${n||''}</span><span class="sg">${t===' '?'':t}</span><span class="cd" ${edit?`contenteditable="plaintext-only" spellcheck="false" data-path="${f.path}" data-hi="${hi}" data-li="${li}"`:''}>${hl(code)}</span>${n?'<span class="cm" title="Comentar (C)">+</span>':''}</div>`;
+}
+function diffFile(f,ctx){
+  const {a,r}=counts(f);
+  let h=`<div id="F-${f.path}"><div class="fh"><span class="p">${f.path}</span>${f.isNew?'<span class="pill new">novo</span>':''}<span class="plus">+${a}</span><span class="minus">−${r}</span>${f.userEdited?'<span class="badge">editado por você</span>':''}${ctx!=='mr'&&f.turn?`<span class="muted" style="font-size:11px">turno ${f.turn}</span>`:''}<span class="sp"></span>${ctx!=='mr'&&F[f.path]?`<button class="btn" data-open="${f.path}">Abrir no editor</button>`:''}</div>`;
+  f.hunks.forEach((hk,hi)=>{
+    h+=`<div class="hh ${hk.ok?'okh':''}" data-hunk><span>${esc(hk.h)}</span>${ctx!=='mr'?`<span class="hunkacts">${hk.ok?'<span>✓ aceito</span>':`<button data-hacc="${f.path}|${hi}">✓ Aceitar</button><button data-hrej="${f.path}|${hi}">↶ Desfazer</button>`}</span>`:''}</div>`;
+    hk.l.forEach((l,li)=>{ h+=lineRow(f,l,ctx,hi,li,hk.ok);
+      if(l[2]){ if(ctx==='mr') THREADS.filter(t=>t.file===f.path&&t.line===l[2]).forEach(t=>h+=threadHtml(t));
+        S.drafts.filter(d=>d.ctx===ctx&&d.file===f.path&&d.line===l[2]).forEach(d=>h+=draftHtml(d)); } });
+  });
+  S.drafts.filter(d=>d.ctx===ctx&&d.file===f.path&&d.line==null).forEach(d=>h+=draftHtml(d));
+  return h+'</div>';
+}
+function threadHtml(t){
+  return `<div class="thr ${t.resolved?'resolved':''}"><div class="th"><b>${t.notes[0].who}</b><span>${t.notes[0].ago}</span><span class="sp"></span><button class="btn" data-res="${t.id}">${t.resolved?'Reabrir':'✓ Resolver'}</button></div>
+    <div class="bd"><p>${md(t.notes[0].body)}</p>${t.notes.slice(1).map(n=>`<div class="rp"><b>${n.who}</b> <span class="muted">${n.ago||''}</span><p>${md(n.body)}</p></div>`).join('')}</div></div>`;
+}
+function draftHtml(d){
+  if(d.state==='posted') return `<div class="thr"><div class="th"><b>você</b><span>agora</span>${d.sev?`<span class="sev ${d.sev}">${d.sev}</span>`:''}<span class="sp"></span><span class="muted">publicado no GitLab</span></div><div class="bd"><p>${d.label?`<b>${d.label}:</b> `:''}${md(d.body)}</p></div></div>`;
+  if(d.state==='sent') return `<div class="thr sent"><div class="th"><span>enviado ao Claude</span><span class="sp"></span></div><div class="bd"><p>${md(d.body)}</p></div></div>`;
+  const ed=S.editing===d.id, toMR=d.ctx==='mr';
+  return `<div class="thr draft ${d.state==='error'?'err':''} ${d.state==='posting'?'posting':''}" id="D-${d.id}"><div class="th"><span class="lbl">${toMR?'RASCUNHO':'PARA O CLAUDE'}</span><span>· ${d.by}</span>${d.sev?`<span class="sev ${d.sev}">${d.sev}</span>`:''}${d.line==null?'<span class="muted">nota geral</span>':''}<span class="sp"></span>
+    ${d.state==='posting'?'<span>publicando…</span>':ed?'':`<button class="btn" data-ed="${d.id}">Editar</button><button class="btn danger" data-del="${d.id}">Descartar</button>`}</div>
+    <div class="bd">${ed?`<textarea id="dt-${d.id}" aria-label="Texto do comentário" placeholder="${toMR?'Comentário para o autor do MR':'O que o Claude deve mudar aqui?'}">${esc(d.body)}</textarea><div class="acts"><button class="btn pri" data-sv="${d.id}">Salvar</button><button class="btn" data-cn="${d.id}">Cancelar</button><span class="muted" style="font-size:12px">Ctrl+⏎ salva · Esc cancela</span></div>`:`<p>${d.label?`<b>${d.label}:</b> `:''}${md(d.body)}</p>`}
+    ${d.state==='error'?`<p class="em">${esc(d.err)}</p><div class="acts"><button class="btn" data-retry="${d.id}">Tentar de novo</button><button class="btn" data-gen="${d.id}">Publicar como nota geral</button></div>`:''}</div></div>`;
+}
+function bindDiff(el){
+  const ctx = S.mode==='mr' ? 'mr' : S.fid;
+  el.querySelectorAll('.dl').forEach(r=>r.onclick=e=>{ const n=+r.dataset.n; if(!n) return; S.sel={file:r.dataset.file,n,ctx}; if(e.target.classList.contains('cm')) newDraft(); else { el.querySelectorAll('.dl.sel').forEach(x=>x.classList.remove('sel')); r.classList.add('sel'); } });
+  el.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openFile(b.dataset.open));
+  el.querySelectorAll('.cd[contenteditable]').forEach(c=>{
+    c.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); c.blur(); } if(e.key==='Escape'){ e.stopPropagation(); c.dataset.cancel='1'; c.blur(); } };
+    c.onblur=()=>{ const f=feat(), ch=f.changes.find(x=>x.path===c.dataset.path); if(!ch) return; if(c.dataset.cancel){ rerender(); return; }
+      const hk=ch.hunks[+c.dataset.hi], li=+c.dataset.li, l=hk.l[li], v=c.textContent; if(v===l[3]) return;
+      if(l[0]===' ') hk.l.splice(li,1,['-',l[1],0,l[3]],['+',0,l[2],v]); else l[3]=v;
+      ch.userEdited=true; f.myEdits=(f.myEdits||0)+1; rerender(); toast(`Editado ${ch.path}:${l[2]}. Vai junto quando enviar ao Claude.`); }; });
+  el.querySelectorAll('[data-hacc]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); const [p,hi]=b.dataset.hacc.split('|'); feat().changes.find(x=>x.path===p).hunks[+hi].ok=true; rerender(); });
+  el.querySelectorAll('[data-hrej]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); const f=feat(), [p,hi]=b.dataset.hrej.split('|'), ch=f.changes.find(x=>x.path===p), ci=f.changes.indexOf(ch); const [hk]=ch.hunks.splice(+hi,1); if(!ch.hunks.length) f.changes.splice(ci,1);
+    push(f,'dim',`  ↶ você desfez um bloco de ${p} (git apply -R; o Claude é avisado na próxima mensagem)`); rerender();
+    toast(`Bloco de ${p} desfeito`,{label:'Desfazer',run:()=>{ if(!f.changes.includes(ch)) f.changes.splice(ci,0,ch); ch.hunks.splice(+hi,0,hk); rerender(); }}); });
+  el.querySelectorAll('[data-res]').forEach(b=>b.onclick=()=>{ const t=THREADS.find(t=>t.id===b.dataset.res); t.resolved=!t.resolved; rerender(); });
+  el.querySelectorAll('[data-ed]').forEach(b=>b.onclick=()=>{ S.editing=+b.dataset.ed; rerender(); const ta=$('#dt-'+b.dataset.ed); if(ta) ta.focus(); });
+  el.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>discard(+b.dataset.del));
+  el.querySelectorAll('[data-sv]').forEach(b=>b.onclick=()=>saveDraft(+b.dataset.sv));
+  el.querySelectorAll('[data-cn]').forEach(b=>b.onclick=()=>cancelEdit(+b.dataset.cn));
+  el.querySelectorAll('[data-retry]').forEach(b=>b.onclick=()=>postOne(S.drafts.find(d=>d.id===+b.dataset.retry),false));
+  el.querySelectorAll('[data-gen]').forEach(b=>b.onclick=()=>{ const d=S.drafts.find(d=>d.id===+b.dataset.gen); d.body+=`\n\n\`${d.file}:${d.line}\``; d.line=null; postOne(d,false); });
+}
+function rerender(){ const dv=$('#diff'); const st=dv?dv.scrollTop:0; if(S.mode==='mr') renderCenter(); else renderRight(); renderLeft(); renderStatus(); const n=$('#diff'); if(n) n.scrollTop=st; }
+function newDraft(){
+  if(!S.sel||!S.sel.n){ toast('Clique numa linha do diff primeiro'); return; }
+  const d={id:++did,ctx:S.sel.ctx,file:S.sel.file,line:S.sel.n,by:'você',body:'',state:'draft',isNew:true}; S.drafts.push(d); S.editing=d.id;
+  rerender(); const ta=$('#dt-'+d.id); if(ta){ ta.focus(); ta.scrollIntoView({block:'center'}); }
+}
+function saveDraft(id){ const d=S.drafts.find(d=>d.id===id), ta=$('#dt-'+id); if(!ta.value.trim()){ toast('Escreva algo antes de salvar'); return; } d.body=ta.value.trim(); d.isNew=false; S.editing=null; rerender(); }
+function cancelEdit(id){ const d=S.drafts.find(d=>d.id===id); S.editing=null; if(d&&d.isNew) S.drafts=S.drafts.filter(x=>x!==d); rerender(); }
+function discard(id){ const i=S.drafts.findIndex(d=>d.id===id); const [d]=S.drafts.splice(i,1); S.undo.push([[d,i]]); rerender(); toast('Comentário descartado',{label:'Desfazer',run:undo}); }
+function discardAll(ctx){ const pend=S.drafts.filter(d=>d.ctx===ctx&&(d.state==='draft'||d.state==='error')); if(!pend.length) return;
+  S.undo.push(pend.map(d=>[d,S.drafts.indexOf(d)])); S.drafts=S.drafts.filter(d=>!pend.includes(d)); rerender(); toast(`${pend.length} descartado${pend.length>1?'s':''}`,{label:'Desfazer',run:undo}); }
+function undo(){ const g=S.undo.pop(); if(!g){ toast('Nada para desfazer'); return; } g.sort((a,b)=>a[1]-b[1]).forEach(([d,i])=>S.drafts.splice(i,0,d)); rerender(); toast('Desfeito'); }
+
+/* ---------- MRs ---------- */
+const GROUPS={rev:'Para revisar',mine:'Meus',grp:'ctbz/experts'};
+const ciTxt=c=>({success:'✓ CI',running:'⟳ CI',failed:'✗ CI',none:'– sem CI'}[c]);
+function inboxRows(){ const q=S.q.toLowerCase(); return MRS.filter(m=>m.g===S.ibox&&(!q||(m.proj+' '+m.title+' '+m.who+' !'+m.iid).toLowerCase().includes(q))); }
+function stPill(m){ if(S.reviewed[m.proj+m.iid]) return '<span class="pill">revisado</span>';
+  return {new:'<span class="pill new">novo</span>',inc:`<span class="pill inc">+${m.inc} commits</span>`,done:'<span class="pill">revisado</span>',threads:`<span class="pill">${m.threads} threads abertas</span>`,none:'<span class="pill">não revisado</span>'}[m.st]; }
+function renderInbox(el){
+  const rows=inboxRows(); S.isel=Math.min(S.isel,Math.max(rows.length-1,0));
+  el.innerHTML=`<div class="ibar"><div class="seg">${Object.entries(GROUPS).map(([k,v])=>`<button aria-pressed="${S.ibox===k}" data-g="${k}">${v}<span class="count">${MRS.filter(m=>m.g===k).length}</span></button>`).join('')}</div><span class="sp"></span><input id="iq" placeholder="filtrar  ( / )" value="${esc(S.q)}" aria-label="Filtrar MRs"></div>`+
+    (rows.length?'<div class="list">'+rows.map((m,i)=>`<div class="row ${i===S.isel?'on':''}" data-i="${i}"><span class="uw">${m.unread&&!S.reviewed[m.proj+m.iid]?'<span class="unread"></span>':''}</span><span class="proj">${m.proj} <span class="muted">!${m.iid}</span></span><span class="t">${esc(m.title)}</span><span class="who">${m.who}</span><span class="ci ${m.ci}">${ciTxt(m.ci)}</span>${stPill(m)}</div>`).join('')+'</div>'
+     :`<div class="empty"><h3>Nenhum MR bate com “${esc(S.q)}”</h3><p><kbd>Esc</kbd> limpa o filtro.</p></div>`);
+  el.querySelectorAll('[data-g]').forEach(b=>b.onclick=()=>{ S.ibox=b.dataset.g; S.isel=0; renderInbox(el); });
+  el.querySelectorAll('.row').forEach(r=>{ r.onclick=()=>{ S.isel=+r.dataset.i; renderInbox(el); }; r.ondblclick=()=>openMR(rows[+r.dataset.i]); });
+  $('#iq').oninput=e=>{ S.q=e.target.value; S.isel=0; const p=e.target.selectionStart; renderInbox(el); const i=$('#iq'); i.focus(); i.setSelectionRange(p,p); };
+}
+function openMR(m){ if(!m) return; S.mr=m; S.mode='mr'; S.sel=null; render(); }
+function renderMRFiles(el){
+  if(!S.mr||S.mr.iid!==124){ el.innerHTML=''; return; }
+  el.innerHTML='<div class="phead">Arquivos do MR</div><div class="flist">'+D_MR.map(f=>{ const {a,r}=counts(f); const n=S.drafts.filter(d=>d.ctx==='mr'&&d.file===f.path&&d.state!=='posted').length; const [dir,nm]=split(f.path);
+    return `<button data-j="${f.path}"><span class="nm"><span class="dir">${dir}</span>${nm}</span><span class="st ${n?'d':''}">${n?n+' rasc.':`+${a} −${r}`}</span></button>`; }).join('')+'</div>';
+  el.querySelectorAll('[data-j]').forEach(b=>b.onclick=()=>{ const t=document.getElementById('F-'+b.dataset.j); if(t) t.scrollIntoView({block:'start'}); });
+}
+function renderMR(el){
+  const m=S.mr, has=m.iid===124;
+  const pend=S.drafts.filter(d=>d.ctx==='mr'&&(d.state==='draft'||d.state==='error'));
+  el.innerHTML=`<div class="mrh"><div class="l1"><h2>${esc(m.title)}</h2><span class="mono muted">${m.proj} !${m.iid}</span><span class="muted">${m.who}</span><span class="ci ${m.ci}">${ciTxt(m.ci)}</span></div>
+    <div class="l2"><button class="btn" id="back">← Inbox</button><span class="sp"></span><button class="btn pri" id="revB">Revisar com Claude <kbd style="background:transparent;color:inherit;border-color:currentColor">⇧R</kbd></button></div></div>`+
+    (has?`<div class="diff" id="diff">${D_MR.map(f=>diffFile(f,'mr')).join('')}</div>`:`<div class="empty"><h3>Sem diff de exemplo para este MR</h3><p>No protótipo só <span class="mono">bots-api !124</span> tem diff.</p><div><button class="btn pri" id="go124">Abrir bots-api !124</button></div></div>`)+
+    `<div class="pubbar">${pend.length?`<span class="cnt">${pend.length} rascunho${pend.length>1?'s':''} não publicado${pend.length>1?'s':''}</span><span class="muted">só você vê</span>`:'<span class="muted"><kbd>C</kbd> numa linha comenta; <kbd>⇧R</kbd> pede revisão ao Claude.</span>'}<span class="sp"></span>
+    <button class="btn danger" id="dAll" ${pend.length?'':'disabled'}>Descartar todos</button><button class="btn pri" id="pub" ${pend.filter(d=>d.state==='draft').length?'':'disabled'}>Publicar review <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div>`;
+  $('#back').onclick=()=>setMode('mrs'); $('#revB').onclick=()=>startReview(m);
+  if($('#go124')) $('#go124').onclick=()=>openMR(MRS[0]);
+  bindDiff(el); $('#dAll').onclick=()=>discardAll('mr'); $('#pub').onclick=askPublish;
+}
+function askPublish(){
+  if(S.mode!=='mr') return; const pend=S.drafts.filter(d=>d.ctx==='mr'&&d.state==='draft'); if(!pend.length){ toast('Nenhum rascunho para publicar'); return; }
+  confirmDlg(`Publicar ${pend.length} comentário${pend.length>1?'s':''} em ${S.mr.proj} !${S.mr.iid}?`,`Sai como uma review só: ${S.mr.who} recebe 1 notificação.`,'Publicar',()=>{
+    pend.forEach((d,i)=>{ d.state='posting'; setTimeout(()=>postOne(d,true),500+i*250); }); rerender();
+    setTimeout(()=>{ S.reviewed[S.mr.proj+S.mr.iid]=true; const bad=S.drafts.filter(d=>d.state==='error').length; toast(bad?`Review publicada. ${bad} comentário falhou: veja em vermelho.`:'Review publicada'); renderFrame(); },700+pend.length*250); });
+}
+let failedOnce=false;
+function postOne(d,first){ if(first&&!failedOnce&&d.file==='src/retry.ts'){ failedOnce=true; d.state='error'; d.err='GitLab 409: o MR recebeu um commit novo durante a review e esta linha mudou de posição.'; } else { d.state='posted'; d.err=null; } if(S.mode==='mr') rerender(); }
+
+let RV=null, rvT=[];
+function startReview(m){
+  m=m||(S.mode==='mrs'?inboxRows()[S.isel]:S.mr); if(!m) return;
+  const go=()=>{ RV={mr:m,phase:'setup',steps:[]}; renderDrawer(); };
+  if(m.ci==='running'||m.ci==='failed') confirmDlg(`Pipeline ${m.ci==='running'?'ainda rodando':'falhou'} em ${m.proj} !${m.iid}`,'Revisar código que o CI ainda pode reprovar costuma gerar achados repetidos. Revisar mesmo assim?','Revisar mesmo assim',go); else go();
+}
+function renderDrawer(){
+  let o=$('#drawerSlot'); if(!o){ o=document.createElement('div'); o.id='drawerSlot'; $('#app').appendChild(o); }
+  if(!RV){ o.innerHTML=''; renderStatus(); return; }
+  const m=RV.mr; let body,foot;
+  if(RV.phase==='setup'){ body=`<fieldset><legend>Escopo</legend><label><input type="radio" name="sc" checked> MR inteiro</label><label class="${m.st==='inc'?'':'off'}"><input type="radio" name="sc" ${m.st==='inc'?'':'disabled'}> Só commits novos desde a última revisão</label></fieldset>
+      <fieldset><legend>Contexto enviado</legend><div class="steps"><span>· descrição do MR e ${THREADS.length} thread existente (dedup)</span><span>· rubrica ~/.claude/mr-review-rubric.md</span><span>· CLAUDE.md e skills do repo</span></div></fieldset><p class="muted" style="margin:0">Os achados viram rascunhos. Nada é publicado sem você.</p>`;
+    foot=`<button class="btn" id="rvX">Cancelar</button><button class="btn pri" id="rvGo">Iniciar revisão</button>`; }
+  else if(RV.phase==='run'){ body=`<div class="steps">${RV.steps.map(s=>`<span class="${s.k}">${s.k==='ok'?'✓':s.k==='run'?'⟳':'↳'} ${esc(s.t)}</span>`).join('')}</div>`; foot=`<button class="btn danger" id="rvStop">Parar</button>`; }
+  else { const on=RV.f.filter(x=>x.on).length;
+    body=RV.f.map((x,i)=>`<div class="find ${x.on?'':'offd'}"><input type="checkbox" id="fd${i}" data-fi="${i}" ${x.on?'checked':''}><div class="loc"><span class="sev ${x.sev}">${x.sev}</span><label for="fd${i}">${x.file}:${x.line??'–'}</label>${x.outside?'<span class="warnl">⚠ fora do diff, vai como nota geral</span>':''}</div><p>${md(x.body)}</p></div>`).join('');
+    foot=`<button class="btn" id="rvX">Descartar tudo</button><button class="btn pri" id="rvMk" ${on?'':'disabled'}>Criar ${on} rascunho${on!==1?'s':''}</button>`; }
+  o.innerHTML=`<div class="drawer" role="dialog" aria-label="Revisão Claude"><div class="dh"><b>Revisão Claude</b><span class="mono muted">${m.proj} !${m.iid}</span><span class="sp"></span><button id="rvC" aria-label="Fechar">×</button></div><div class="db">${body}</div><div class="df">${foot}</div></div>`;
+  const b=(id,fn)=>{ const e=document.getElementById(id); if(e) e.onclick=fn; };
+  b('rvC',closeDrawer); b('rvX',closeDrawer); b('rvGo',runReview); b('rvStop',closeDrawer); b('rvMk',makeDrafts);
+  o.querySelectorAll('[data-fi]').forEach(c=>c.onchange=()=>{ RV.f[+c.dataset.fi].on=c.checked; renderDrawer(); });
+  renderStatus();
+}
+function closeDrawer(){ rvT.forEach(clearTimeout); rvT=[]; RV=null; renderDrawer(); }
+function runReview(){
+  RV.phase='run'; renderDrawer();
+  [[300,'ok','worktree refs/mr/124 pronta (reutilizada)'],[700,'ok','thread existente carregada para dedup'],[1100,'run','claude -p · stream-json · json-schema'],[1700,'sub','Read src/handler.ts'],[2300,'sub','Read src/retry.ts'],[2900,'sub','Bash git log -3'],[3500,'ok','resposta validada pelo schema (3 itens)']]
+   .forEach(([ms,k,t])=>rvT.push(setTimeout(()=>{ RV.steps.forEach(s=>{ if(s.k==='run'&&k!=='sub') s.k='ok'; }); RV.steps.push({k,t}); renderDrawer(); },ms)));
+  rvT.push(setTimeout(()=>{ RV.phase='done'; RV.f=FINDINGS.map(x=>({...x,on:!x.outside})); renderDrawer(); },4000));
+}
+function makeDrafts(){ const m=RV.mr; RV.f.filter(x=>x.on).forEach(x=>S.drafts.push({id:++did,ctx:'mr',file:x.file,line:x.line,sev:x.sev,label:x.label,body:x.body,by:'Claude',state:'draft'})); closeDrawer(); if(m.iid===124){ S.mr=m; S.mode='mr'; render(); } toast('Rascunhos criados. Nada foi publicado.'); }
+
+/* ---------- auditoria (prompt do snippet 5996330, melhorado) ---------- */
+const AU = { phase:'cached', kind:'inc', budget:{inc:2,full:12}, prod:false, pil:{arq:true,sec:true,qual:true,custo:true,hig:true},
+  spent:0, steps:[], open:null, editing:null, ignored:[], nextIid:31,
+  last:{when:'3 out', sha:'51bb0d2', commits:41, files:23, cost:'US$ 7,40'} };
+const PIL={arq:'Arquitetura & Design',sec:'Segurança',qual:'Qualidade',custo:'Custos & Performance',hig:'Higiene'};
+const SEVT={P0:'perda de dados ou serviço fora em produção',P1:'risco alto e provável',P2:'risco real, raro ou contornável',P3:'higiene'};
+const AUD=[
+  {id:'a1',sev:'P0',lab:['bug'],title:'fix(worker): erro no handler faz ack e descarta a mensagem do Pub/Sub',loc:'src/worker.ts:41',conf:'alta',st:'cross',ref:'email-service #19',size:'small',
+   prob:'O `catch` do handler chama `message.ack()`. Qualquer erro transitório (banco, rede) descarta o webhook para sempre.',
+   ev:'`src/worker.ts:38-44`: `catch (err) { log.error(err); message.ack() }`. O mesmo padrão foi corrigido em email-service #19.',
+   fix:'Trocar por `message.nack()` e configurar dead letter topic com `maxDeliveryAttempts: 10`.',imp:'Nenhum webhook perdido em instabilidade do banco.'},
+  {id:'a2',sev:'P1',lab:['security'],title:'sec(logs): payload do webhook logado inteiro em INFO (contém CPF)',loc:'src/handler.ts:13',conf:'alta',st:'new',size:'small',
+   prob:'`log.info(\'webhook ok\', payload)` grava o corpo completo, que inclui CPF. O CLAUDE.md do repo proíbe isso.',
+   ev:'`src/handler.ts:13`; amostra no Cloud Logging de ontem com campo `document` preenchido.',
+   fix:'Logar só `{ id: payload.id }` e adicionar redact de `document`/`cpf` no logger.',imp:'Fecha exposição de dado pessoal nos logs (LGPD).'},
+  {id:'a4',sev:'P2',lab:['scalability'],title:'perf(pubsub): topic instanciado a cada request impede batching',loc:'src/publisher.ts:9',conf:'alta',st:'new',size:'small',
+   prob:'`pubsub.topic(name)` dentro do handler cria um publisher novo por request; o batching do client nunca acontece.',
+   ev:'`src/publisher.ts:9`. contato-service #20 tinha o mesmo problema.',fix:'Instanciar o topic uma vez no módulo e reutilizar.',imp:'Menos chamadas à API do Pub/Sub e menor latência.'},
+  {id:'a5',sev:'P2',lab:['security','tech-debt'],title:'sec(docker): devDependencies e token do Artifact Registry na imagem final',loc:'Dockerfile:18',conf:'alta',st:'dup',ref:'#12',size:'medium',
+   prob:'Já reportado.',ev:'Aberto como #12 em 20 set; o código não mudou desde então.',fix:'—',imp:'—'},
+  {id:'a6',sev:'P3',lab:['tech-debt','size:small'],title:'chore(env): typo SLAK_TOKEN no .env.example',loc:'.env.example:4',conf:'alta',st:'new',size:'small',
+   prob:'O `.env.example` declara `SLAK_TOKEN`, e o código lê `SLACK_TOKEN`.',ev:'`.env.example:4` vs `src/slack.ts:3`.',fix:'Renomear no `.env.example`.',imp:'Setup local sem erro silencioso.'},
+];
+const AUD_DROPPED=['infra(k8s) limite de 512Mi sem --max-old-space-size: descartado, contradiz a decisão do vault [[node-24-dimensiona-a-heap-pelo-cgroup]] (o Node 24 dimensiona o heap pelo cgroup)','SQL injection em findByName: descartado, usa query parametrizada do drizzle','Segredo hard-coded em test/fixtures: descartado, é valor fake de teste','N+1 em listBots: descartado, a rota pagina em 20','Complexidade alta em router.ts: descartado, 1 função de 40 linhas'];
+AUD.forEach(a=>a.on=a.st!=='dup');
+const body=a=>`## Problema\n\n${a.prob}\n\n## Evidência\n\n${a.ev}\n\n## Correção sugerida\n\n${a.fix}\n\n## Impacto\n\n${a.imp}${a.ref&&a.st==='cross'?`\n\nRelacionado: ${a.ref}`:''}`;
+const stLbl=a=>({new:'<span class="pill new">novo</span>',cross:`<span class="pill new">novo · mesmo padrão de ${a.ref}</span>`,dup:`<span class="pill">já existe ${a.ref}</span>`,created:`<span class="pill" style="color:var(--ok);border-color:var(--ok)">aberto #${a.iid}</span>`}[a.st]);
+
+function renderAudit(el){
+  const L=AU.last, list=AUD.filter(a=>!AU.ignored.includes(a));
+  const head=`<div class="mrh"><div class="l1"><h2>Auditoria · bots-api</h2><span class="muted">última completa em ${L.when} · <span class="mono">${L.sha}</span> · ${L.cost}</span></div>
+    <div class="l2"><span class="${AU.phase==='cached'?'pill inc':'pill'}">${L.commits} commits e ${L.files} arquivos mudaram desde então</span><span class="sp"></span>${AU.phase==='run'?'':`<button class="btn pri" id="auNew">Nova auditoria…</button>`}</div></div>`;
+  let main='';
+  if(AU.phase==='setup'){
+    const est={inc:`${L.files} arquivos + vizinhos de 1 salto (~31) · ~US$ 0,80 · ~5 min`,full:'142 arquivos, 5 pilares + verificação · ~US$ 6 a 10 · ~25 min'};
+    main=`<div class="ovw" style="max-width:760px;display:grid;gap:14px;padding:16px 18px;overflow:auto">
+      <fieldset><legend>Escopo</legend>
+        <label><input type="radio" name="auk" value="inc" ${AU.kind==='inc'?'checked':''}> <span><b>Incremental</b> (recomendado): só o que mudou desde <span class="mono">${L.sha}</span>. <span class="muted">${est.inc}</span></span></label>
+        <label><input type="radio" name="auk" value="full" ${AU.kind==='full'?'checked':''}> <span><b>Completa (holística)</b>: o repo inteiro. <span class="muted">${est.full}</span></span></label></fieldset>
+      <fieldset><legend>Pilares</legend><div style="display:flex;flex-wrap:wrap;gap:6px 16px">${Object.entries(PIL).map(([k,v])=>`<label><input type="checkbox" data-pil="${k}" ${AU.pil[k]?'checked':''}> ${v}</label>`).join('')}</div></fieldset>
+      <fieldset><legend>Limites e contexto</legend>
+        <label>Teto de gasto <input type="number" id="auB" min="0.5" step="0.5" value="${AU.budget[AU.kind]}" style="width:80px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:2px 6px;font:13px var(--mono)"> <span class="muted">US$ (<span class="mono">--max-budget-usd</span>: o processo para ao atingir)</span></label>
+        <label><input type="checkbox" id="auProd" ${AU.prod?'checked':''}> Incluir dados de produção via MCP (Datadog, Cloud SQL) <span class="muted">para validar achados de custo e infra; +~US$ 0,50</span></label>
+        <span class="muted">Contexto incluído: CLAUDE.md, k8s-configmap, pipeline do repo, os 50 work items deste repo e os de email-service e contato-service (para não repetir e para reconhecer padrões), e as decisões do vault (para não sugerir o que já foi decidido contra).</span></fieldset>
+      <details><summary class="muted" style="cursor:pointer">O que mudou em relação ao prompt do snippet 5996330</summary><ul style="margin:8px 0 0;padding-left:18px;color:var(--muted);display:grid;gap:4px">
+        <li>Saída em JSON validada por schema (o campo de cada work item vem pronto), em vez de Markdown para parsear.</li>
+        <li>Evidência obrigatória: arquivo:linha com o trecho citado; o que não dá para verificar não entra.</li>
+        <li>Severidade P0 a P3 definida por impacto, igual aos work items do email-service.</li>
+        <li>Uma segunda passada verifica cada achado contra o código (o papel que o Codex fazia) e descarta falsos positivos.</li>
+        <li>Lista dos work items existentes e dos ignorados no prompt: não repete nada.</li>
+        <li>Somente leitura: as ferramentas liberadas não escrevem nada nem acessam a rede, exceto os MCPs que você marcar.</li></ul></details>
+      <div class="acts"><button class="btn" id="auCancel">Cancelar</button><button class="btn pri" id="auGo">Iniciar auditoria ${AU.kind==='inc'?'incremental':'completa'}</button></div></div>`;
+  } else if(AU.phase==='run'||AU.phase==='stopped'){
+    const cap=AU.budget[AU.kind];
+    main=`<div class="ovw" style="max-width:760px;padding:16px 18px;overflow:auto;display:grid;gap:12px"><div class="steps">${AU.steps.map(s=>`<span class="${s.k}">${s.k==='ok'?'✓':s.k==='run'?'⟳':'↳'} ${esc(s.t)}</span>`).join('')}</div>
+      <div class="acts"><span class="mono">US$ ${AU.spent.toFixed(2).replace('.',',')} de ${String(cap).replace('.',',')}</span><span class="sp" style="flex:1"></span>${AU.phase==='run'?'<button class="btn danger" id="auStop">Parar</button>':'<span class="muted">Parada. Nada foi criado; o gasto até aqui fica registrado.</span>'}</div></div>`;
+  } else {
+    const sel=list.filter(a=>a.on&&a.st!=='dup'&&a.st!=='created');
+    const groups=['P0','P1','P2','P3'].map(s=>[s,list.filter(a=>a.sev===s)]).filter(g=>g[1].length);
+    main=`<div class="diff" style="font-family:var(--sans);padding:8px 0 30px">${AU.phase==='cached'?`<div class="banner" style="margin:0 12px 8px;border-radius:6px"><span>Este é o relatório salvo de ${L.when}. Abrir o projeto não roda auditoria; rode uma <b>incremental</b> quando quiser cobrir os ${L.commits} commits novos.</span></div>`:''}
+      ${groups.map(([s,g])=>`<div class="fh" style="position:static"><b>${s}</b><span class="muted">${SEVT[s]}</span></div>`+g.map(a=>{
+        const o=AU.open===a.id;
+        return `<div style="border-bottom:1px solid var(--line)"><div class="row" style="grid-template-columns:18px minmax(0,1fr) auto auto;cursor:default">
+          <input type="checkbox" data-au="${a.id}" ${a.on?'checked':''} ${a.st==='dup'||a.st==='created'?'disabled':''} aria-label="Selecionar ${esc(a.title)}">
+          <button style="text-align:left;min-width:0" data-ao="${a.id}"><div class="t">${o?'▾':'▸'} [${a.sev}] ${esc(a.title)}</div><div class="who"><span class="mono">${a.loc}</span> · ${a.lab.join(', ')} · confiança ${a.conf}</div></button>
+          ${stLbl(a)}<span class="acts">${a.st==='created'?`<button class="btn" data-afix="${a.id}">Corrigir em feature</button>`:''}</span></div>
+          ${o?`<div style="padding:4px 12px 12px 42px;display:grid;gap:8px">${AU.editing===a.id?`<textarea id="aT" style="width:100%;min-height:220px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:12.5px/1.5 var(--mono);padding:8px">${esc(a.custom||body(a))}</textarea><div class="acts"><button class="btn pri" data-asv="${a.id}">Salvar texto</button><button class="btn" data-acn>Cancelar</button></div>`
+            :`<div class="thr" style="margin:0;max-width:none"><div class="th"><b>Prévia do work item</b><span class="sp"></span>${a.st==='dup'||a.st==='created'?'':`<button class="btn" data-aed="${a.id}">Editar</button><button class="btn danger" data-aig="${a.id}">Não é problema</button>`}</div><div class="bd"><pre style="margin:0;white-space:pre-wrap;font:12.5px/1.5 var(--mono)">${md(a.custom||body(a))}</pre></div></div>`}</div>`:''}</div>`; }).join('')).join('')}
+      <details style="padding:10px 14px"><summary class="muted" style="cursor:pointer">${AUD_DROPPED.length} descartados na verificação${AU.ignored.length?` · ${AU.ignored.length} marcados como “não é problema”`:''}</summary><ul style="color:var(--muted);padding-left:18px">${AUD_DROPPED.map(d=>`<li>${esc(d)}</li>`).join('')}${AU.ignored.map(a=>`<li>${esc(a.title)}: ignorado por você <button class="btn" data-aun="${a.id}">Desfazer</button></li>`).join('')}</ul></details></div>
+      <div class="pubbar"><span class="${sel.length?'cnt':'muted'}">${sel.length} selecionado${sel.length!==1?'s':''}</span><span class="muted">nada é criado no GitLab sem este botão</span><span class="sp"></span><button class="btn pri" id="auCreate" ${sel.length?'':'disabled'}>Abrir ${sel.length} work item${sel.length!==1?'s':''}</button></div>`;
+  }
+  el.innerHTML=head+main;
+  const b=(id,fn)=>{ const e=document.getElementById(id); if(e) e.onclick=fn; };
+  b('auNew',()=>{ AU.phase='setup'; renderCenter(); }); b('auCancel',()=>{ AU.phase=AU.had?'done':'cached'; renderCenter(); }); b('auGo',runAudit); b('auStop',stopAudit); b('auCreate',createItems);
+  el.querySelectorAll('[name=auk]').forEach(r=>r.onchange=()=>{ AU.kind=r.value; renderCenter(); });
+  el.querySelectorAll('[data-pil]').forEach(c=>c.onchange=()=>AU.pil[c.dataset.pil]=c.checked);
+  if($('#auB')) $('#auB').onchange=e=>AU.budget[AU.kind]=+e.target.value||AU.budget[AU.kind];
+  if($('#auProd')) $('#auProd').onchange=e=>AU.prod=e.target.checked;
+  const A=id=>AUD.find(a=>a.id===id);
+  el.querySelectorAll('[data-au]').forEach(c=>c.onchange=()=>{ A(c.dataset.au).on=c.checked; renderCenter(); });
+  el.querySelectorAll('[data-ao]').forEach(x=>x.onclick=()=>{ AU.open=AU.open===x.dataset.ao?null:x.dataset.ao; AU.editing=null; renderCenter(); });
+  el.querySelectorAll('[data-aed]').forEach(x=>x.onclick=()=>{ AU.editing=x.dataset.aed; renderCenter(); $('#aT').focus(); });
+  el.querySelectorAll('[data-asv]').forEach(x=>x.onclick=()=>{ A(x.dataset.asv).custom=$('#aT').value; AU.editing=null; renderCenter(); });
+  el.querySelectorAll('[data-acn]').forEach(x=>x.onclick=()=>{ AU.editing=null; renderCenter(); });
+  el.querySelectorAll('[data-aig]').forEach(x=>x.onclick=()=>{ const a=A(x.dataset.aig); a.on=false; AU.ignored.push(a); AU.open=null; renderCenter(); toast('Ignorado: não volta nas próximas auditorias (.maestro/audit-ignore.json)',{label:'Desfazer',run:()=>{ AU.ignored=AU.ignored.filter(y=>y!==a); a.on=true; renderCenter(); }}); });
+  el.querySelectorAll('[data-aun]').forEach(x=>x.onclick=()=>{ const a=A(x.dataset.aun); AU.ignored=AU.ignored.filter(y=>y!==a); a.on=true; renderCenter(); });
+  el.querySelectorAll('[data-afix]').forEach(x=>x.onclick=()=>fixInFeature(A(x.dataset.afix)));
+}
+let auT=[];
+function runAudit(){
+  AU.phase='run'; AU.spent=0; AU.steps=[]; renderCenter(); renderStatus();
+  const pil=Object.keys(PIL).filter(k=>AU.pil[k]); const inc=AU.kind==='inc', cap=AU.budget[AU.kind], k=inc?1:7;
+  const seq=[[400,'ok',`mapa do repo (ripwire): 142 arquivos, 9 hotspots`,.05],[700,'ok',inc?`escopo: ${AU.last.files} arquivos mudaram desde ${AU.last.sha} + 8 vizinhos de 1 salto`:'escopo: repo inteiro, Dockerfile, k8s e .gitlab-ci.yml incluídos',.02],
+    ...(AU.prod?[[600,'ok','dados de produção: CPU/memória do pod e disco do Cloud SQL (MCP Datadog)',.4]]:[]),
+    ...pil.map((p,i)=>[700+i*150,'sub',`${PIL[p]}: ${[3,4,3,2,2][i]} achados brutos`,.12*k]),
+    [900,'ok','verificação: 14 achados brutos → 5 confirmados; 5 descartados, 1 deles por contradizer a decisão do vault node-24-dimensiona-a-heap-pelo-cgroup',.15*k],[600,'ok','dedup contra 50 work items deste repo + email-service e contato-service: 1 já existe, 1 repete padrão já corrigido lá',.03]];
+  let t=0; seq.forEach(([ms,kk,txt,cost])=>{ t+=ms; auT.push(setTimeout(()=>{ AU.spent=Math.min(cap,AU.spent+cost); AU.steps.push({k:kk,t:txt}); if(AU.spent>=cap){ stopAudit('teto de gasto atingido'); return; } if(S.mode==='audit') renderCenter(); },t)); });
+  auT.push(setTimeout(()=>{ if(AU.phase!=='run') return; AU.phase='done'; AU.had=true; AU.last={...AU.last,when:'agora',sha:'9e41c07',commits:0,files:0,cost:'US$ '+AU.spent.toFixed(2).replace('.',',')};
+    if(S.mode==='audit') renderCenter(); else toast('Auditoria pronta: 5 achados para revisar'); renderStatus(); },t+500));
+}
+function stopAudit(why){ auT.forEach(clearTimeout); auT=[]; AU.phase='stopped'; AU.steps.push({k:'',t:typeof why==='string'?why:'processo claude encerrado'}); renderCenter(); renderStatus(); }
+function createItems(){
+  const sel=AUD.filter(a=>a.on&&a.st!=='dup'&&a.st!=='created'&&!AU.ignored.includes(a));
+  confirmDlg(`Abrir ${sel.length} work item${sel.length>1?'s':''} em bots-api?`,`Títulos no padrão [P0–P3] tipo(escopo), labels ${[...new Set(sel.flatMap(a=>a.lab))].join(', ')}, corpo com Problema / Evidência / Correção sugerida / Impacto. Ninguém é atribuído e nada é corrigido.`,'Abrir work items',()=>{
+    sel.forEach(a=>{ a.st='created'; a.iid=AU.nextIid++; a.on=false; }); renderCenter(); toast(`${sel.length} work items abertos: #${sel[0].iid} a #${sel[sel.length-1].iid}`); });
+}
+function fixInFeature(a){
+  const br=`fix/${a.iid}-${slug(a.title.replace(/^[^:]+:\s*/,'')).toLowerCase().slice(0,32).replace(/-+$/,'')}`;
+  confirmDlg(`Corrigir #${a.iid} numa feature nova?`,`Cria a worktree ${br} e abre o Claude com o work item #${a.iid} como tarefa. Ele não commita nem abre MR sem você pedir.`,'Criar feature',()=>{
+    spawnFeature(br,'main',`Corrija o work item #${a.iid} (${a.title}). Leia o work item com glab antes. Não commite.`,true,true,true); });
+}
+
+/* ---------- vault nativo (~/vault: repos/, decisions/, daily/) ---------- */
+const TODAY='2026-10-15';
+const VAULT={
+'repos/bots-api.md':`---
+tipo: repo
+squad: atendimento-canais
+deploy: k8s
+---
+# bots-api
+
+\`~/repos-ctbz/bots-api\`
+
+## O que é
+Recebe webhooks e repassa para os bots. API Express + worker Pub/Sub.
+
+## Rodar local
+\`npm ci && npm run dev\` (a porta vem de \`PORT\`)
+
+## Gotchas
+- Nunca logar payload inteiro (tem CPF).
+- Memória do pod: ler [[node-24-dimensiona-a-heap-pelo-cgroup]] antes de mexer.
+- CI de teste: [[ctbz-check-sonar-vitest]]
+
+## Histórico
+- 2026-10-02: MR !143 \`fix/failover-agente-indisponivel\`: failsafe checa se o agente está disponível.
+- 2026-10-13: MR !146 \`fix/reroute-noturno\`: reroute fora do horário vai direto ao grupo noturno; ver [[atendimento-zendesk]].`,
+'decisions/node-24-dimensiona-a-heap-pelo-cgroup.md':`---
+tipo: decisao
+data: 2026-09-22
+---
+# Node 24 lê o cgroup: \`--max-old-space-size\` virou no-op nos serviços
+
+**Medido** em \`node:24-alpine\`: com limite de 768m o heap fica em 432 MB com ou sem o flag.
+
+**Decisão:** não passar \`--max-old-space-size\`. Quem dá heap ao processo é o limite de memória do pod.
+
+**Armadilha:** medir fora de container engana; só vale com \`docker run -m\`.`,
+'decisions/ctbz-check-sonar-vitest.md':`---
+tipo: decisao
+data: 2026-10-02
+---
+# O job de teste do CI valida o vitest.config pelo \`ctbz-check sonar-vitest\`
+
+O \`ctbz-check-test\` faz parse do \`vitest.config.ts\` e do \`sonar-project.properties\`; se não bater, o CI quebra antes do Sonar.
+Exige \`coverage.reporter\` com \`cobertura\`, \`lcov\`, \`json\` e \`text\`, e \`coverage.include\` não vazio.`,
+};
+const DAILY={tasks:[{t:'responder a Ana sobre o SLACK_TIMEOUT_MS no !147',done:false,fid:'slack'},{t:'revisar o !124 do Bruno',done:false},{t:'email-service #46: typo STMP',done:false}],summary:null};
+const VLOG=[];
+function vlog(d,undoFn){ const t=new Date().toTimeString().slice(0,5); VLOG.unshift({t,d,undo:undoFn}); if(S.mode==='vault'){ renderLeft(); renderCenter(); } toast('vault: '+d, undoFn?{label:'Desfazer',run:()=>{ undoFn(); VLOG.shift(); if(S.mode==='vault'){ renderLeft(); renderCenter(); } }}:null); }
+const vkey=(d,n)=>d==='.'?n+'.md':`${d}/${n}.md`;
+function vNotes(){ const m=new Map(); VAULT_REAL.forEach(([d,n])=>m.set(vkey(d,n),{d,n})); Object.keys(VAULT).forEach(k=>{ const [d,f]=k.includes('/')?k.split('/'):['.',k]; m.set(k,{d,n:f.replace(/\.md$/,'')}); }); return [...m].map(([k,v])=>({k,...v})); }
+const findNote=name=>vNotes().find(x=>x.n===name);
+function outLinks(k){ if(VAULT[k]) return [...new Set([...VAULT[k].matchAll(/\[\[([^\]]+)\]\]/g)].map(m=>m[1]))]; const r=VAULT_REAL.find(([d,n])=>vkey(d,n)===k); return r?r[2]:[]; }
+const backLinks=name=>vNotes().filter(x=>outLinks(x.k).includes(name));
+const wl=n=>`<span class="wl ${findNote(n)?'':'broken'}" data-wl="${esc(n)}" title="${findNote(n)?'abrir':'link quebrado: é TODO, não erro'}">[[${esc(n)}]]</span>`;
+function vmd(src){
+  let fm=''; src=src.replace(/^---\n([\s\S]*?)\n---\n/,(m,x)=>{ fm=x; return ''; });
+  const inl=t=>esc(t).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/\[\[([^\]]+)\]\]/g,(m,n)=>wl(n));
+  let h=fm?`<div class="fm">${esc(fm).replace(/\n/g,' · ')}</div>`:'', ul=false;
+  src.split('\n').forEach(l=>{ if(/^- /.test(l)){ if(!ul){ h+='<ul>'; ul=true; } h+=`<li>${inl(l.slice(2))}</li>`; return; } if(ul){ h+='</ul>'; ul=false; }
+    if(/^# /.test(l)) h+=`<h1>${inl(l.slice(2))}</h1>`; else if(/^## /.test(l)) h+=`<h2>${inl(l.slice(3))}</h2>`; else if(l.trim()) h+=`<p>${inl(l)}</p>`; });
+  return h+(ul?'</ul>':'');
+}
+const DKEY=`daily/${TODAY}.md`;
+function openVault(k,view){ S.mode='vault'; S.vnote=k||S.vnote||'repos/bots-api.md'; S.vview=view||'note'; S.vedit=null; render(); }
+function renderVaultTree(el){
+  const q=(S.vq||'').toLowerCase(), all=vNotes(), notes=all.filter(x=>!q||x.n.toLowerCase().includes(q));
+  const sec=(d,label)=>{ const xs=notes.filter(x=>x.d===d).sort((a,b)=>d==='daily'?b.n.localeCompare(a.n):a.n.localeCompare(b.n)); if(!xs.length) return '';
+    return `<div class="fsep">${label} <span class="mono" style="letter-spacing:0">${xs.length}</span></div><div class="flist" style="padding:0 0 6px">${xs.map(x=>{ const bl=backLinks(x.n).length;
+      return `<button data-vk="${x.k}" class="${S.vnote===x.k&&S.vview==='note'?'on':''}" title="${x.k}${bl?` · mencionada em ${bl}`:''}"><span class="nm">${esc(x.n)}${VAULT[x.k]||x.k===DKEY?'':' <span class="dir">·</span>'}</span><span class="st">${bl?'←'+bl:''}</span></button>`; }).join('')}</div>`; };
+  const pend=DAILY.tasks.filter(t=>!t.done).length;
+  el.innerHTML=`<div class="repo">vault <span class="mono">~/vault</span></div>
+    <div style="padding:2px 10px 8px"><input id="vq" placeholder="buscar nota…" value="${esc(S.vq||'')}" aria-label="Buscar nota" style="width:100%;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:3px 8px;font:12.5px var(--sans)"></div>
+    <div class="feats">
+      <button class="feat ${S.vview==='graph'?'on':''}" data-vgo="graph"><span class="g cm">◎</span><span class="b">Grafo</span><span class="k">${all.length} notas</span></button>
+      <button class="feat ${S.vview==='note'&&S.vnote===DKEY?'on':''}" data-vgo="today"><span class="g" style="color:var(--yellow)">☐</span><span class="b">Hoje</span><span class="k">${pend} pendente${pend!==1?'s':''}</span></button>
+      <button class="feat ${S.vview==='log'?'on':''}" data-vgo="log"><span class="g cm">↺</span><span class="b">Atividade</span><span class="k">${VLOG.length||''}</span></button></div>
+    ${sec('repos','Repos')}${sec('decisions','Decisões')}${sec('daily','Daily')}${sec('.','Raiz')}${notes.length?'':'<div class="flist"><div class="none">Nenhuma nota com esse nome.</div></div>'}`;
+  el.querySelectorAll('[data-vk]').forEach(b=>b.onclick=()=>openVault(b.dataset.vk));
+  el.querySelectorAll('[data-vgo]').forEach(b=>b.onclick=()=>{ const g=b.dataset.vgo; g==='today'?openVault(DKEY):openVault(null,g); });
+  const i=el.querySelector('#vq'); i.oninput=()=>{ S.vq=i.value; const p=i.selectionStart; renderVaultTree(el); const n=el.querySelector('#vq'); n.focus(); n.setSelectionRange(p,p); };
+}
+function renderVaultMain(el){
+  if(S.vview==='graph'){ el.innerHTML=`<div style="flex:1;min-height:0;padding:12px;display:grid">${graphCard(true)}</div>`; bindGraph(el); return; }
+  const wrap=h=>`<div class="diff" style="font-family:var(--sans);padding:14px 18px;display:grid;gap:12px;align-content:start;max-width:900px">${h}</div>`;
+  if(S.vview==='log'){ el.innerHTML=wrap(`<div class="card2"><h4>Atividade do vault</h4>${VLOG.length?`<div class="vlog">${VLOG.map(x=>`<div><span class="t">${x.t}</span><span>${esc(x.d)}</span></div>`).join('')}</div>`:'<p class="muted">Nada ainda.</p>'}
+    <p class="muted">O Maestro escreve sozinho só o que o contrato do <span class="mono">vault/CLAUDE.md</span> permite: MR aberto ou mergeado → Histórico; gotcha de debug → <span class="mono">decisions/</span>; tarefa da daily concluída → [x]. Cada escrita aparece aqui e no toast, com desfazer.</p></div>`); bindVaultMain(el); return; }
+  const k=S.vnote||'repos/bots-api.md', name=k.replace(/^.*\//,'').replace(/\.md$/,''), ed=S.vedit===k, bl=backLinks(name), ol=outLinks(k);
+  let body;
+  if(k===DKEY) body=`<div class="card2"><h4>Fila<span class="sp"></span><button class="btn" id="vSum">Gerar resumo do dia</button></h4>
+      ${DAILY.tasks.map((t,i)=>`<label><input type="checkbox" data-dt="${i}" ${t.done?'checked':''}> <span style="${t.done?'text-decoration:line-through;color:var(--muted)':''}">${esc(t.t)}</span></label>`).join('')}
+      ${DAILY.summary?`<div class="thr draft" style="margin:6px 0 0;max-width:none"><div class="th"><span class="lbl">PRÉVIA</span><span>· vai para a seção “Resumo” da daily</span></div><div class="bd"><pre style="margin:0;white-space:pre-wrap;font:12.5px/1.5 var(--mono)">${esc(DAILY.summary)}</pre><div class="acts"><button class="btn pri" id="vSumOk">Salvar na daily</button><button class="btn" id="vSumNo">Descartar</button></div></div></div>`:''}</div>`;
+  else if(VAULT[k]) body=`<div class="card2">${ed?`<textarea id="vT" style="width:100%;min-height:340px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:12.5px/1.5 var(--mono);padding:8px">${esc(VAULT[k])}</textarea><div class="acts"><button class="btn pri" id="vSv">Salvar no vault</button><button class="btn" id="vCn">Cancelar</button></div>`:`<div class="vmd">${vmd(VAULT[k])}</div>`}</div>`;
+  else body=`<div class="card2"><p class="muted">No app esta nota abre direto de <span class="mono">~/vault/${k}</span>. O protótipo só carregou o conteúdo de algumas; os links e as menções abaixo são os reais.</p></div>`;
+  const repoFeats = k.startsWith('repos/')&&name==='bots-api' ? FEATS.filter(f=>f.kind!=='ws'&&f.id!=='main') : [];
+  el.innerHTML=`<div class="mrh"><div class="l1"><h2>${esc(name)}</h2><span class="mono muted">~/vault/${k}</span></div>
+    <div class="l2"><span class="sp"></span><button class="btn" id="vG">◎ Ver no grafo</button>${VAULT[k]&&!ed?'<button class="btn" id="vEd">Editar</button>':''}</div></div>`+
+    wrap(body+`
+    ${repoFeats.length?`<div class="card2"><h4>No contexto das features</h4><p class="muted">Toda feature de bots-api abre o Claude com esta nota e o que ela linka. Ativas agora: ${repoFeats.map(f=>`<button class="btn" data-vf="${f.id}">⎇ ${esc(f.branch)}</button>`).join(' ')}</p></div>`:''}
+    <div class="card2"><h4>Links desta nota <span class="mono" style="letter-spacing:0">${ol.length}</span></h4><p>${ol.length?ol.map(wl).join(' · '):'<span class="muted">Nenhum.</span>'}</p></div>
+    <div class="card2"><h4>Mencionado em <span class="mono" style="letter-spacing:0">${bl.length}</span></h4><p>${bl.length?bl.map(x=>wl(x.n)).join(' · '):'<span class="muted">Nenhuma nota aponta para esta.</span>'}</p></div>`);
+  bindVaultMain(el);
+}
+function bindVaultMain(el){
+  const k=S.vnote||'repos/bots-api.md', name=k.replace(/^.*\//,'').replace(/\.md$/,'');
+  el.querySelectorAll('[data-wl]').forEach(x=>x.onclick=()=>{ const n=findNote(x.dataset.wl); if(!n){ toast(`[[${x.dataset.wl}]] ainda não existe: link quebrado é TODO. No app: “Criar nota” a partir do template.`); return; } openVault(n.k); });
+  el.querySelectorAll('[data-vf]').forEach(b=>b.onclick=()=>selectFeat(b.dataset.vf));
+  const b=(id,fn)=>{ const e=el.querySelector('#'+id); if(e) e.onclick=fn; };
+  b('vG',()=>{ GOPT.q=name; GOPT.local=false; openVault(null,'graph'); });
+  b('vEd',()=>{ S.vedit=k; renderCenter(); $('#vT').focus(); });
+  b('vSv',()=>{ const old=VAULT[k]; VAULT[k]=$('#vT').value; S.vedit=null; vlog(`${k} editado por você`,()=>VAULT[k]=old); });
+  b('vCn',()=>{ S.vedit=null; renderCenter(); });
+  el.querySelectorAll('[data-dt]').forEach(c=>c.onchange=()=>{ DAILY.tasks[+c.dataset.dt].done=c.checked; renderCenter(); renderLeft(); renderFrame(); });
+  b('vSum',()=>{ DAILY.summary=FEATS.filter(f=>f.kind!=='ws'&&f.id!=='main').map(f=>`- ${f.branch}: ${ST[f.st].l}${f.mr?` · MR !${f.mr.iid}${f.mr.merged?' mergeado':''}`:''} · US$ ${f.cost.toFixed(2).replace('.',',')}`).join('\n')+`\n- auditoria: ${AU.last.when==='agora'?'incremental rodada hoje':'não rodou'}`; renderCenter(); });
+  b('vSumOk',()=>{ DAILY.summary=null; vlog(`${DKEY} · Resumo do dia salvo`); });
+  b('vSumNo',()=>{ DAILY.summary=null; renderCenter(); });
+}
+function markDaily(fid){ const t=DAILY.tasks.find(x=>x.fid===fid&&!x.done); if(t){ t.done=true; vlog(`daily/${TODAY}.md · [x] ${t.t}`,()=>t.done=false); } }
+
+/* ---------- grafo do vault (estilo Obsidian): [[links]] reais do ~/vault + notas do protótipo ---------- */
+const VAULT_REAL=`.|CLAUDE|nome
+daily|2026-09-18|CLAUDE
+decisions|claude-hook-input-stdin|processos,survey-service
+decisions|cloudrun-prd-revision-vars|ultimateai-webhook,webhook-gitlab
+decisions|ctbz-check-sonar-vitest|email-service,survey-service
+decisions|logging-metric-label-forces-replace|ultimateai-webhook
+decisions|monorepo-guardrails-por-lint|processos
+decisions|node-24-dimensiona-a-heap-pelo-cgroup|email-service,env-vars-ficam-no-k8s-configmap
+decisions|pipeline-componente-versionado|ci-fica-no-repo-pipeline,email-service,survey-service
+decisions|pnpm11-always-auth-403|email-service,survey-service
+decisions|portar-legado-da-origin-master|survey-service
+decisions|survey-service-arquitetura|experts-ms-nps,experts-service,monorepo-guardrails-por-lint,survey-service
+decisions|terraform-resources-invalid-jwt|ultimateai-webhook
+repos|bots-api|atendimento-zendesk
+repos|email-service|node-24-dimensiona-a-heap-pelo-cgroup,pipeline-componente-versionado
+repos|experts-service|
+repos|survey-service|claude-hook-input-stdin,contato-service,ctbz-check-sonar-vitest,email-service,experts-ms-nps,experts-service,monorepo-guardrails-por-lint,pnpm11-always-auth-403,survey-service-arquitetura
+repos|ultimateai-webhook|cloudrun-prd-revision-vars,logging-metric-label-forces-replace
+daily|${TODAY}|bots-api,email-service`.split('\n').map(l=>{ const [d,n,ls]=l.split('|'); return [d,n,ls?ls.split(',').filter(Boolean):[]]; });
+const GOPT={local:false,ghosts:true,feats:true,q:''};
+function vaultGraph(o){
+  const N=new Map(), E=new Set();
+  const add=(id,dir)=>{ if(!N.has(id)) N.set(id,{id,dir:'ghost',exists:false,deg:0}); const n=N.get(id); if(dir){ n.dir=dir; n.exists=true; } return n; };
+  const link=(a,b)=>{ if(a!==b) E.add(a<b?a+'\u0000'+b:b+'\u0000'+a); };
+  VAULT_REAL.forEach(([d,n,ls])=>{ add(n,d); ls.forEach(l=>{ add(l); link(n,l); }); });
+  Object.keys(VAULT).forEach(k=>{ const [d,f]=k.split('/'), n=f.replace(/\.md$/,''); add(n,d); [...VAULT[k].matchAll(/\[\[([^\]]+)\]\]/g)].forEach(m=>{ add(m[1]); link(n,m[1]); }); });
+  if(o.feats) FEATS.filter(f=>f.kind!=='ws'&&f.id!=='main').forEach(f=>{ const id='⎇ '+f.branch; add(id,'feature').fid=f.id; link(id,'bots-api'); if(f.mr) { add('!'+f.mr.iid,'mr').fid=f.id; link('!'+f.mr.iid,id); } });
+  let edges=[...E].map(e=>e.split('\u0000'));
+  if(!o.ghosts){ edges=edges.filter(([a,b])=>N.get(a).exists&&N.get(b).exists); [...N.values()].filter(n=>!n.exists).forEach(n=>N.delete(n.id)); }
+  if(o.local){ const keep=new Set(['bots-api']); for(let i=0;i<2;i++) edges.forEach(([a,b])=>{ if(keep.has(a)) keep.add(b); else if(keep.has(b)) keep.add(a); });
+    [...N.keys()].filter(k=>!keep.has(k)).forEach(k=>N.delete(k)); edges=edges.filter(([a,b])=>N.has(a)&&N.has(b)); }
+  edges.forEach(([a,b])=>{ N.get(a).deg++; N.get(b).deg++; });
+  return {nodes:[...N.values()],edges};
+}
+function noteKey(n){ return n.dir==='repos'||n.dir==='decisions'||n.dir==='daily'?`${n.dir}/${n.id}.md`:n.dir==='.'?`${n.id}.md`:null; }
+function mountGraph(box){
+  const cv=document.createElement('canvas'); cv.tabIndex=0; cv.setAttribute('role','img'); cv.style.cssText='width:100%;height:100%;display:block;cursor:grab;border-radius:6px';
+  box.innerHTML=''; box.appendChild(cv);
+  const G=vaultGraph(GOPT), css=getComputedStyle(document.documentElement), tok=k=>css.getPropertyValue(k).trim();
+  const COL={repos:tok('--accent'),decisions:tok('--ok'),daily:tok('--yellow'),'.':tok('--cyan'),feature:tok('--orange'),mr:tok('--pink'),ghost:tok('--comment')};
+  cv.setAttribute('aria-label',`Grafo do vault: ${G.nodes.length} notas e ${G.edges.length} links`);
+  const prev=box._pos||{}; G.nodes.forEach((n,i)=>{ const p=prev[n.id]; const a=i*2.4; n.x=p?p.x:Math.cos(a)*(60+i*6); n.y=p?p.y:Math.sin(a)*(60+i*6); n.vx=n.vy=0; });
+  const byId=Object.fromEntries(G.nodes.map(n=>[n.id,n])), E=G.edges.map(([a,b])=>[byId[a],byId[b]]);
+  const nb=new Map(G.nodes.map(n=>[n,new Set()])); E.forEach(([a,b])=>{ nb.get(a).add(b); nb.get(b).add(a); });
+  let W=0,H=0,dpr=1,view={x:0,y:0,k:1},alpha=1,hover=null,drag=null,pan=null,moved=false;
+  const R=n=>3+Math.sqrt(n.deg)*2.4;
+  function size(){ const r=box.getBoundingClientRect(); dpr=devicePixelRatio||1; W=r.width; H=r.height; cv.width=W*dpr; cv.height=H*dpr; }
+  function tick(){
+    for(const a of G.nodes){ for(const b of G.nodes){ if(a===b) continue; let dx=a.x-b.x, dy=a.y-b.y, d2=dx*dx+dy*dy||1; if(d2<90000){ const f=900/d2; a.vx+=dx*f*.02; a.vy+=dy*f*.02; } } a.vx-=a.x*.004; a.vy-=a.y*.004; }
+    for(const [a,b] of E){ const dx=b.x-a.x, dy=b.y-a.y, d=Math.sqrt(dx*dx+dy*dy)||1, f=(d-70)*.012; a.vx+=dx/d*f; a.vy+=dy/d*f; b.vx-=dx/d*f; b.vy-=dy/d*f; }
+    for(const n of G.nodes){ if(n===drag) continue; n.vx*=.82; n.vy*=.82; n.x+=n.vx*alpha*4; n.y+=n.vy*alpha*4; }
+    alpha=Math.max(0,alpha*.985);
+  }
+  const toS=(x,y)=>[W/2+(x+view.x)*view.k, H/2+(y+view.y)*view.k], toW=(sx,sy)=>[(sx-W/2)/view.k-view.x,(sy-H/2)/view.k-view.y];
+  function draw(){
+    const c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
+    const q=GOPT.q.trim().toLowerCase(), hit=n=>!q||n.id.toLowerCase().includes(q), focus=hover||null, cur=(S.vnote||'').replace(/^.*\//,'').replace(/\.md$/,'');
+    const lit=n=>focus?(n===focus||nb.get(focus).has(n)):hit(n);
+    c.lineWidth=1;
+    for(const [a,b] of E){ const on=focus&&(a===focus||b===focus); c.strokeStyle=on?COL[focus.dir]||tok('--accent'):tok('--line'); c.globalAlpha=focus&&!on?.15:q&&!(hit(a)||hit(b))?.12:.9;
+      const [x1,y1]=toS(a.x,a.y),[x2,y2]=toS(b.x,b.y); if(!a.exists||!b.exists) c.setLineDash([3,3]); c.beginPath(); c.moveTo(x1,y1); c.lineTo(x2,y2); c.stroke(); c.setLineDash([]); }
+    for(const n of G.nodes){ const [x,y]=toS(n.x,n.y), r=R(n)*Math.min(1.6,Math.max(.7,view.k)); c.globalAlpha=lit(n)?1:.2;
+      c.beginPath(); c.arc(x,y,r,0,7); if(n.exists){ c.fillStyle=COL[n.dir]||COL.ghost; c.fill(); } else { c.strokeStyle=COL.ghost; c.setLineDash([2,2]); c.stroke(); c.setLineDash([]); }
+      if(n.id===cur){ c.strokeStyle=tok('--fg'); c.lineWidth=2; c.beginPath(); c.arc(x,y,r+3,0,7); c.stroke(); c.lineWidth=1; }
+      const show=n===focus||(focus&&nb.get(focus).has(n))||(q&&hit(n))||view.k>1.25||n.deg>=4||n.id===cur;
+      if(show){ c.globalAlpha=lit(n)?1:.3; c.fillStyle=n.exists?tok('--fg'):tok('--muted'); c.font=`${n===focus?600:400} 11.5px ${tok('--sans')}`; c.textAlign='center'; c.fillText(n.id,x,y+r+13); } }
+    c.globalAlpha=1;
+  }
+  let fitted=false, touched=false;
+  function fit(){ if(!G.nodes.length||!W) return; let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; G.nodes.forEach(n=>{ x0=Math.min(x0,n.x); y0=Math.min(y0,n.y); x1=Math.max(x1,n.x); y1=Math.max(y1,n.y); });
+    view.k=Math.max(.3,Math.min(2.2,Math.min(W/(x1-x0+120),H/(y1-y0+120)))); view.x=-(x0+x1)/2; view.y=-(y0+y1)/2; }
+  function loop(){ if(!fitted&&!touched&&alpha<.25){ fit(); fitted=true; }
+    if(!cv.isConnected){ box._pos=Object.fromEntries(G.nodes.map(n=>[n.id,{x:n.x,y:n.y}])); return; } if(alpha>.01||drag) tick(); draw(); requestAnimationFrame(loop); }
+  function pick(ev){ const r=cv.getBoundingClientRect(), [wx,wy]=toW(ev.clientX-r.left,ev.clientY-r.top); let best=null,bd=1e9; for(const n of G.nodes){ const d=Math.hypot(n.x-wx,n.y-wy); if(d<R(n)+6/view.k&&d<bd){ best=n; bd=d; } } return best; }
+  cv.onpointerdown=ev=>{ touched=true; cv.setPointerCapture(ev.pointerId); moved=false; const n=pick(ev); if(n){ drag=n; alpha=Math.max(alpha,.3); } else pan={x:ev.clientX,y:ev.clientY,vx:view.x,vy:view.y}; cv.style.cursor='grabbing'; };
+  cv.onpointermove=ev=>{ if(drag){ const r=cv.getBoundingClientRect(); [drag.x,drag.y]=toW(ev.clientX-r.left,ev.clientY-r.top); moved=true; return; }
+    if(pan){ view.x=pan.vx+(ev.clientX-pan.x)/view.k; view.y=pan.vy+(ev.clientY-pan.y)/view.k; moved=true; return; }
+    const n=pick(ev); if(n!==hover){ hover=n; cv.style.cursor=n?'pointer':'grab'; cv.title=n?`${n.id}${n.exists?` · ${n.dir==='feature'?'feature ativa':n.dir==='mr'?'MR':n.dir+'/'} · ${n.deg} link${n.deg!==1?'s':''}`:' · link quebrado (TODO)'}`:''; } };
+  cv.onpointerup=ev=>{ const n=drag; drag=null; pan=null; cv.style.cursor=hover?'pointer':'grab'; if(n&&!moved) openNode(n); };
+  cv.onpointerleave=()=>{ if(!drag&&!pan){ hover=null; } };
+  cv.onwheel=ev=>{ ev.preventDefault(); touched=true; const r=cv.getBoundingClientRect(), sx=ev.clientX-r.left, sy=ev.clientY-r.top, [wx,wy]=toW(sx,sy); view.k=Math.min(3,Math.max(.3,view.k*(ev.deltaY<0?1.12:1/1.12))); const [nx,ny]=toW(sx,sy); view.x+=nx-wx; view.y+=ny-wy; };
+  cv.onkeydown=ev=>{ const st=40/view.k; if(ev.key==='+'||ev.key==='=') view.k=Math.min(3,view.k*1.15); else if(ev.key==='-') view.k=Math.max(.3,view.k/1.15); else if(ev.key==='ArrowLeft') view.x+=st; else if(ev.key==='ArrowRight') view.x-=st; else if(ev.key==='ArrowUp') view.y+=st; else if(ev.key==='ArrowDown') view.y-=st; else if(ev.key==='0'){ fit(); } else return; ev.preventDefault(); ev.stopPropagation(); };
+  new ResizeObserver(()=>size()).observe(box); size();
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches){ for(let i=0;i<300;i++) tick(); alpha=0; }
+  else if(Object.keys(prev).length) alpha=.05;
+  else { for(let i=0;i<240;i++) tick(); alpha=.08; }
+  if(W){ fit(); fitted=true; }
+  new ResizeObserver(()=>{ if(!touched) fitted=false; }).observe(box);
+  loop();
+  return G;
+}
+function openNode(n){
+  if(n.fid){ closeOverlay(); if(n.dir==='mr'){ selectFeat(n.fid,false); S.right=true; S.rtab='mr'; renderFrame(); renderRight(); } else selectFeat(n.fid); return; }
+  const k=noteKey(n);
+  if(k&&n.exists){ closeOverlay(); openVault(k); return; }
+  if(n.exists) toast(`Abriria ${n.id}`);
+  else toast(`[[${n.id}]] ainda não existe: link quebrado é TODO. No app: “Criar nota” a partir do template.`);
+}
+function graphCard(full){
+  return `<div class="card2" style="${full?'height:100%;':''}grid-template-rows:auto auto 1fr auto"><h4>Grafo do vault<span class="sp"></span>${full?`<span class="muted" style="text-transform:none;letter-spacing:0;font-size:12px"></span>`:''}</h4>
+    <div class="acts" style="font-size:12px"><input id="gQ" placeholder="buscar nota…" value="${esc(GOPT.q)}" aria-label="Buscar nota no grafo" style="background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:2px 8px;font:12px var(--sans);width:140px">
+      <label><input type="checkbox" data-go="local" ${GOPT.local?'checked':''}> só bots-api (2 saltos)</label><label><input type="checkbox" data-go="ghosts" ${GOPT.ghosts?'checked':''}> links quebrados</label><label><input type="checkbox" data-go="feats" ${GOPT.feats?'checked':''}> features e MRs</label></div>
+    <div id="gBox" style="min-height:${full?0:340}px;height:100%;background:var(--win);border-radius:6px"></div>
+    <div class="acts" style="font-size:11.5px;color:var(--muted)">${[['--accent','repos'],['--ok','decisions'],['--yellow','daily'],['--orange','feature'],['--pink','MR']].map(([c,l])=>`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(${c})"></span> ${l}</span>`).join('')}<span>◌ link quebrado</span><span style="margin-left:auto">arraste · roda do mouse = zoom · clique abre</span></div></div>`;
+}
+function bindGraph(root){
+  const G=mountGraph(root.querySelector('#gBox'));
+  const q=root.querySelector('#gQ'); q.oninput=()=>{ GOPT.q=q.value; };
+  root.querySelectorAll('[data-go]').forEach(c=>c.onchange=()=>{ GOPT[c.dataset.go]=c.checked; bindGraph(root); });
+  const f=root.querySelector('#gFull'); if(f) f.onclick=()=>{ OV={type:'help'};
+    $('#overlay').innerHTML=`<div class="scrim" id="gS" style="padding:24px"><div class="help" style="width:min(1200px,100%);height:100%;max-height:none;grid-template-rows:1fr auto">${graphCard(true)}<div class="acts" style="justify-content:flex-end"><button class="btn" id="gC">Fechar <kbd>Esc</kbd></button></div></div></div>`;
+    $('#gC').onclick=closeOverlay; $('#gS').onclick=e=>{ if(e.target.id==='gS') closeOverlay(); }; bindGraph($('#overlay')); };
+  return G;
+}
+
+/* ---------- ciclo de vida do MR da feature ---------- */
+const mrSum=m=>m?` · !${m.iid} ${m.merged?'<span class="ok">mergeado</span>':`<span class="${m.pipe==='success'?'ok':m.pipe==='failed'?'bad':'run'}">CI${m.pipe==='success'?'✓':m.pipe==='failed'?'✗':'⟳'}</span> <span class="${m.sonar==='ok'?'ok':m.sonar==='fail'?'bad':'run'}">Sonar${m.sonar==='ok'?'✓':m.sonar==='fail'?'✗':'⟳'}</span>${m.comments.filter(c=>!c.sent).length?` <span class="w8">${m.comments.filter(c=>!c.sent).length} coment.</span>`:''}`}`:'';
+function renderMRTab(f){
+  const m=f.mr;
+  if(!m) return `<div class="empty"><h3>${f.branch} ainda não tem MR</h3><p>O <span class="mono">/mr</span> commita, faz push e abre o MR em draft. Depois disso o pipeline, o Sonar e os comentários aparecem aqui.</p><div><button class="btn pri" id="mrOpen">Abrir MR draft com /mr</button></div></div>`;
+  const pend=m.comments.filter(c=>!c.sent);
+  return `<div class="diff" style="font-family:var(--sans);padding:12px;display:grid;gap:12px;align-content:start">
+    <div class="card2"><h4>!${m.iid} · ${esc(f.branch)} → main<span class="sp"></span><button class="btn" id="mrWeb">Abrir no GitLab</button></h4>${m.merged?'<p class="okc2">Mergeado. Histórico do vault atualizado.</p>':''}</div>
+    <div class="card2"><h4>Pipeline</h4><p class="${m.pipe==='success'?'okc2':m.pipe==='failed'?'badc2':'runc2'}">${m.pipe==='success'?'✓ passou':m.pipe==='failed'?`✗ falhou no job <span class="mono">${m.job}</span>`:'⟳ rodando'}</p>${m.pipe==='failed'?`<div class="acts"><button class="btn pri" id="mrPipe">Diagnosticar com /pipe</button><span class="muted">o Claude lê o log do job; nada é alterado sem você</span></div>`:''}</div>
+    <div class="card2"><h4>Sonar · quality gate</h4><p class="${m.sonar==='ok'?'okc2':m.sonar==='fail'?'badc2':'runc2'}">${m.sonar==='ok'?'✓ passou':m.sonar==='fail'?'✗ '+esc(m.sonarMsg):'⟳ aguardando análise'}</p>${m.sonar==='fail'?'<div class="acts"><button class="btn" id="mrSonar">Pedir ao Claude para cobrir</button></div>':''}</div>
+    <div class="card2"><h4>Comentários de revisores<span class="sp"></span>${pend.length?`<button class="btn pri" id="mrCom">Mandar ${pend.length} pro Claude (/comentario)</button>`:''}</h4>${m.comments.length?m.comments.map(c=>`<div class="thr ${c.sent?'sent':''}" style="margin:0;max-width:none"><div class="th"><b>${c.who}</b><span class="mono">${c.where}</span><span class="sp"></span>${c.sent?'enviado ao Claude':''}</div><div class="bd"><p>${md(c.body)}</p></div></div>`).join(''):'<p class="muted">Nenhum ainda.</p>'}</div>
+    ${m.merged?`<div class="acts"><button class="btn danger" id="mrRm">Remover worktree</button></div>`:`<div class="acts"><button class="btn" id="mrMerge">Simular merge</button><span class="muted">protótipo: no app isso vem do GitLab</span></div>`}</div>`;
+}
+function bindMRTab(el,f){
+  const b=(id,fn)=>{ const e=el.querySelector('#'+id); if(e) e.onclick=fn; };
+  b('mrOpen',()=>{ f.tab=0; push(f,'u','> /mr'); setSt(f,'working','abrindo MR'); f.verb='Commitando';
+    run(f,[[800,'dot','⏺ Skill(mr)'],[900,'out','  ⎿  commit "feat: healthcheck com checagem do banco" · push origin '+f.branch],[900,'out','  ⎿  MR !149 aberto em draft']],()=>{ f.mr={iid:149,pipe:'running',sonar:'pending',comments:[]}; setSt(f,'done','MR !149 aberto'); renderRight();
+      vlog('repos/bots-api.md · Histórico: MR !149 aberto',null);
+      setTimeout(()=>{ f.mr.pipe='success'; f.mr.sonar='ok'; renderLeft(); renderRight(); renderFrame(); },5000); }); renderRight(); });
+  b('mrWeb',()=>toast(`Abriria gitlab.com/ctbz/experts/bots/bots-api/-/merge_requests/${f.mr.iid}`));
+  b('mrPipe',()=>{ f.tab=0; push(f,'u',`> /pipe https://gitlab.com/ctbz/experts/bots/bots-api/-/jobs/91822041`); setSt(f,'working','diagnosticando o CI'); f.verb='Lendo o log';
+    run(f,[[900,'dot','⏺ Skill(pipe)'],[1000,'out','  ⎿  job test:unit: "Option --testPathPattern was replaced by --testPathPatterns"'],[800,'dotw','⏺ O jest 30 renomeou --testPathPattern para --testPathPatterns. O script test:unit do package.json usa o nome antigo. Quer que eu corrija?']],()=>{
+      setSt(f,'done','diagnóstico pronto');
+      const k='decisions/jest-30-testpathpatterns.md'; VAULT[k]=`---\ntipo: decisao\ndata: ${TODAY}\n---\n# jest 30: \`--testPathPattern\` virou \`--testPathPatterns\`\n\nO job \`test:unit\` quebra com "Option --testPathPattern was replaced". Trocar o flag no script do package.json. Visto em [[bots-api]] !148.`;
+      vlog(`${k} criada (gotcha do debug do CI)`,()=>delete VAULT[k]); }); renderRight(); });
+  b('mrSonar',()=>{ f.tab=0; ask(f,'cria testes para cobrir o código novo até o gate do Sonar passar (80%)'); renderRight(); });
+  b('mrCom',()=>{ const pend=f.mr.comments.filter(c=>!c.sent); pend.forEach(c=>c.sent=true); f.tab=0; push(f,'u',`> /comentario !${f.mr.iid}`); setSt(f,'working','respondendo comentários'); f.verb='Avaliando comentários';
+    run(f,[[900,'dot','⏺ Skill(comentario)'],[900,'dot','⏺ Update(README.md)'],[700,'dot','⏺ Bash(glab mr note 147 …)'],[600,'out','  ⎿  respondido na thread de @ana.lima']],()=>{ setSt(f,'done','comentários respondidos'); markDaily(f.id); }); renderRight(); renderLeft(); });
+  b('mrMerge',()=>{ f.mr.merged=true; f.mr.pipe='success'; f.mr.sonar='ok'; const k='repos/bots-api.md', old=VAULT[k];
+    VAULT[k]=old+`\n- ${TODAY}: MR !${f.mr.iid} \`${f.branch}\`: timeout do client do Slack configurável por SLACK_TIMEOUT_MS.`;
+    vlog(`${k} · Histórico: !${f.mr.iid} mergeado`,()=>VAULT[k]=old); markDaily(f.id); renderLeft(); renderRight();
+    setTimeout(()=>confirmDlg(`!${f.mr.iid} foi mergeado. Remover a worktree ${f.branch}?`,'Nada pendente nela. A branch remota já foi apagada pelo merge.','Remover worktree',()=>removeNow(f)),400); });
+  b('mrRm',()=>removeFeatureDlg(f));
+}
+function removeNow(f){ const i=FEATS.indexOf(f); FEATS.splice(i,1); if(S.fid===f.id) S.fid=FEATS[Math.max(0,i-1)].id; render(); toast(`Worktree ${f.branch} removida`); }
+
+/* ---------- checkpoints por turno ---------- */
+function rewindTo(f,n){
+  const gone=f.changes.filter(c=>(c.turn||1)>=n);
+  confirmDlg(`Voltar ${f.branch} para antes do turno ${n}?`,`Restaura o checkpoint refs/maestro/${f.id}/t${n-1}: ${gone.length} arquivo${gone.length!==1?'s':''} (${gone.map(c=>c.path).join(', ')}) voltam ao estado anterior. A conversa do Claude continua; dá para desfazer.`,'Voltar',()=>{
+    const keep=f.changes.slice(); f.changes=f.changes.filter(c=>(c.turn||1)<n); S.turn='all';
+    push(f,'dim',`  ⏪ checkpoint restaurado: antes do turno ${n} (git restore --source=refs/maestro/${f.id}/t${n-1})`); renderLeft(); renderRight();
+    toast(`Voltou para antes do turno ${n}`,{label:'Desfazer',run:()=>{ f.changes=keep; push(f,'dim','  ⏩ checkpoint desfeito'); renderLeft(); renderRight(); }}); },true);
+}
+function newTurn(f,p){ f.turns=f.turns||[]; f.turns.push({n:f.turns.length+1,p}); return f.turns.length; }
+
+/* ---------- testes afetados ---------- */
+function runAffected(f){
+  const src=f.changes.filter(c=>c.path.startsWith('src/')).map(c=>c.path);
+  if(f.tabs.length<2) f.tabs.push({k:'shell',lines:[],cwd:f.dir,hist:[]});
+  f.split=f.split||'h'; f.tab=1; sh(f,1,`npx jest --findRelatedTests ${src.join(' ')}`); renderCenter(); toast(`Rodando só os testes que tocam ${src.length} arquivo${src.length!==1?'s':''} (ripwire + --findRelatedTests)`);
+}
+
+/* ---------- permissões que aprendem ---------- */
+const PERM={'npm test':13}, PERM_ASKED={};
+function learnPerm(cmd){
+  const k=cmd.split(' ').slice(0,2).join(' '); PERM[k]=(PERM[k]||0)+1;
+  if(PERM[k]>=14&&!PERM_ASKED[k]){ PERM_ASKED[k]=true; setTimeout(()=>choiceDlg(`Você aprovou \`${k}\` ${PERM[k]} vezes em bots-api`,`Em 4 features nesta semana. Sempre permitir \`Bash(${k}:*)\` neste repo?`,[
+    {label:'Agora não'},{label:'Só pra mim (.claude/settings.local.json)',run:()=>toast(`Permitido para você: Bash(${k}:*)`)},
+    {label:'Para o time (.claude/settings.json, vai no git)',pri:true,run:()=>toast(`Bash(${k}:*) adicionado ao .claude/settings.json. Entra no próximo commit.`)}]),600); }
+}
+function choiceDlg(title,text,opts){
+  OV={type:'dlg',ok:()=>{ const o=opts.find(x=>x.pri); closeOverlay(); o&&o.run&&o.run(); }};
+  $('#overlay').innerHTML=`<div class="scrim"><div class="dlg" role="alertdialog" aria-label="${esc(title)}"><h3>${md(title)}</h3><p>${md(text)}</p><div class="acts" style="flex-direction:column;align-items:stretch">${opts.map((o,i)=>`<button class="btn ${o.pri?'pri':''}" data-ch="${i}">${esc(o.label)}</button>`).join('')}</div></div></div>`;
+  $('#overlay').querySelectorAll('[data-ch]').forEach(b=>b.onclick=()=>{ const o=opts[+b.dataset.ch]; closeOverlay(); o.run&&o.run(); });
+  $('#overlay').querySelector('.pri').focus();
+}
+
+/* ---------- melhor de N ---------- */
+function compareDlg(f){
+  const sib=FEATS.filter(x=>x.group&&x.group===f.group);
+  OV={type:'help'};
+  $('#overlay').innerHTML=`<div class="scrim" id="cS"><div class="help" role="dialog" aria-label="Comparar tentativas"><h3>Comparar tentativas · ${esc(f.group)}</h3>
+    <p>Mesmo prompt, worktrees separadas${sib.some(x=>x.model!==sib[0].model)?', modelos diferentes':''}. Escolha uma; as outras worktrees são removidas.</p>
+    <div class="cmp">${sib.map(x=>{ const {a,r}=x.changes.reduce((s,c)=>{ const k=counts(c); return {a:s.a+k.a,r:s.r+k.r}; },{a:0,r:0});
+      return `<div class="col"><b>${x.branch}</b><dl><dt>modelo</dt><dd>${x.model}</dd><dt>estado</dt><dd class="st-${x.st}">${ST[x.st].l}</dd><dt>arquivos</dt><dd>${x.changes.length} · +${a} −${r}</dd><dt>testes</dt><dd>${x.st==='done'?x.tests:'—'}</dd><dt>custo</dt><dd>US$ ${x.cost.toFixed(2).replace('.',',')}</dd></dl><p class="muted" style="font-size:12px">${esc(x.approach)}</p>
+        <div class="acts"><button class="btn" data-cv="${x.id}">Ver diff</button><button class="btn pri" data-keep="${x.id}" ${x.st!=='done'?'disabled':''}>Ficar com esta</button></div></div>`; }).join('')}</div>
+    <div class="acts" style="justify-content:flex-end"><button class="btn" id="cC">Fechar</button></div></div></div>`;
+  $('#cC').onclick=closeOverlay; $('#cS').onclick=e=>{ if(e.target.id==='cS') closeOverlay(); };
+  $('#overlay').querySelectorAll('[data-cv]').forEach(b=>b.onclick=()=>{ closeOverlay(); selectFeat(b.dataset.cv,false); openReview(); });
+  $('#overlay').querySelectorAll('[data-keep]').forEach(b=>b.onclick=()=>{ const keep=feat(b.dataset.keep), rest=sib.filter(x=>x!==keep);
+    closeOverlay(); confirmDlg(`Ficar com ${keep.branch}?`,`Remove ${rest.map(x=>x.branch).join(', ')} (worktrees e branches locais).`,'Ficar com esta',()=>{ rest.forEach(x=>FEATS.splice(FEATS.indexOf(x),1)); keep.group=null; S.fid=keep.id; render(); toast(`Ficou ${keep.branch}; ${rest.length} tentativa${rest.length>1?'s':''} removida${rest.length>1?'s':''}`); }); });
+}
+
+/* ---------- fila de atenção ---------- */
+function attention(){
+  const q=[], go=(id,tab)=>()=>{ selectFeat(id,!tab); if(tab){ S.right=true; S.rtab=tab; renderFrame(); renderRight(); } };
+  FEATS.forEach(f=>{ if(f.kind==='ws') return;
+    if(f.st==='blocked') q.push({p:0,tag:'permissão',t:`${f.branch}: ${f.msg}`,run:go(f.id)});
+    if(f.mr&&f.mr.pipe==='failed'&&!f.mr.merged) q.push({p:1,tag:'CI',t:`CI falhou em !${f.mr.iid} (${f.branch})`,run:go(f.id,'mr')});
+    if(f.mr&&f.mr.sonar==='fail'&&!f.mr.merged) q.push({p:1,tag:'Sonar',t:`Quality gate reprovado em !${f.mr.iid}`,run:go(f.id,'mr')});
+    const pc=f.mr?f.mr.comments.filter(c=>!c.sent).length:0; if(pc) q.push({p:2,tag:'MR',t:`${pc} comentário${pc>1?'s':''} novo${pc>1?'s':''} em !${f.mr.iid}`,run:go(f.id,'mr')});
+    if(f.st==='done'&&f.unseen) q.push({p:2,tag:'revisar',t:`${f.branch} pronta pra revisar`,run:go(f.id,'review')});
+    if(f.group&&FEATS.filter(x=>x.group===f.group).every(x=>x.st==='done')&&FEATS.find(x=>x.group===f.group)===f) q.push({p:2,tag:'comparar',t:`Tentativas de ${f.group} prontas para comparar`,run:()=>compareDlg(f)});
+    if((f.ctx||0)>=80) q.push({p:3,tag:'contexto',t:`${f.branch} com ${f.ctx}% do contexto: perto de compactar`,run:go(f.id)}); });
+  MRS.filter(m=>m.g==='rev'&&m.st==='new'&&!S.reviewed[m.proj+m.iid]).forEach(m=>q.push({p:3,tag:'MR alheio',t:`${m.proj} !${m.iid} de ${m.who} aguarda sua revisão`,run:()=>openMR(m)}));
+  if(AU.phase==='done'&&!AU.seen) q.push({p:3,tag:'auditoria',t:'Auditoria pronta com achados para revisar',run:()=>{ AU.seen=true; setMode('audit'); }});
+  DAILY.tasks.filter(t=>!t.done).forEach(t=>q.push({p:4,tag:'daily',t:t.t,run:()=>{ if(t.fid) selectFeat(t.fid); else openVault(DKEY); }}));
+  return q.sort((a,b)=>a.p-b.p);
+}
+function nextAttention(){ const q=attention(); if(!q.length){ toast('Fila vazia: nada esperando você'); return; } q[0].run(); toast(`Fila: ${q[0].t}${q.length>1?` · faltam ${q.length-1}`:''}`); }
+
+/* ---------- tutorial interativo (primeira vez em cada área) ---------- */
+const TOURS={
+  feat:[{sel:'#qBtn',t:'A <b>Fila</b> junta tudo que espera por você: permissões, CI vermelho, comentários, revisões, a daily. <kbd>Ctrl+Shift+Espaço</kbd> leva ao próximo.'},
+    {sel:'#left .feats[role=listbox]',t:'Cada linha é uma <b>feature</b>: uma worktree com o próprio Claude, porta própria e custo. O símbolo mostra o estado.'},
+    {sel:'#center .term',t:'Terminal de verdade (herdr). Aba 1 é o Claude, aba 2 é zsh. <b>Ctrl+tecla</b> vai para o terminal; <b>Ctrl+Shift+tecla</b> é do Maestro.'},
+    {sel:'#newF',t:'Crie uma feature: branch, issue do Jira, até 3 tentativas em paralelo. Clique para ver.',wait:true}],
+  review:[{sel:'#right .rtool',t:'Escolha o <b>turno</b> do Claude para ver só o que mudou naquele passo, e volte para antes dele se precisar.'},
+    {sel:'#right .hunkacts',t:'Cada bloco tem <b>Aceitar</b> e <b>Desfazer</b>. As linhas são editáveis aqui mesmo: é um multibuffer, como no Zed.'},
+    {sel:'#right #send',t:'Comentários (tecla <kbd>C</kbd>) e suas edições vão juntos para o Claude desta feature.'}],
+  mrtab:[{sel:'#right .card2',t:'O MR da feature: pipeline, Sonar e comentários. Cada problema tem um botão que chama a skill certa (<span class="mono">/pipe</span>, <span class="mono">/comentario</span>).'}],
+  vault:[{sel:'#left [data-vgo="graph"]',t:'O <b>Grafo</b> mostra todas as notas e [[links]] do seu vault, como no Obsidian, mais as features e MRs ativos ligados aos repos.'},{sel:'#left [data-vgo="today"]',t:'<b>Hoje</b> é a daily: a fila do dia, que o Maestro marca com [x] quando a tarefa termina.'},{sel:'#center .card2',t:'A nota, editável, com os links dela e onde ela é mencionada. A nota do repo entra no contexto de toda feature.'}],
+  audit:[{sel:'#auNew',t:'A auditoria nunca roda sozinha. Aqui você escolhe incremental ou completa e vê o custo antes.'}],
+  mrs:[{sel:'#center .list',t:'MRs de outras pessoas. <kbd>⇧R</kbd> roda o revisor; os achados viram rascunhos que só você vê até publicar.'}],
+};
+const TSEEN={}; const tSeen=id=>{ try{ return TSEEN[id]||localStorage.getItem('maestro.tour.'+id)==='1'; }catch(e){ return !!TSEEN[id]; } };
+const tMark=id=>{ TSEEN[id]=true; try{ localStorage.setItem('maestro.tour.'+id,'1'); }catch(e){} };
+let TOUR=null;
+function tour(id,force){
+  if(TOUR||(!force&&tSeen(id))||!TOURS[id]) return false;
+  TOUR={id,i:0,steps:TOURS[id].filter(s=>document.querySelector(s.sel))}; if(!TOUR.steps.length){ TOUR=null; return false; }
+  tMark(id); paintTour(); return true;
+}
+function paintTour(){
+  let slot=$('#tourSlot'); if(!slot){ slot=document.createElement('div'); slot.id='tourSlot'; $('#app').appendChild(slot); }
+  if(!TOUR){ slot.innerHTML=''; return; }
+  const st=TOUR.steps[TOUR.i], el=document.querySelector(st.sel); if(!el){ endTour(); return; }
+  const A=$('#app').getBoundingClientRect(), r=el.getBoundingClientRect(), x=r.left-A.left-4, y=r.top-A.top-4, w=r.width+8, h=Math.min(r.height+8,A.height-y-8);
+  const below = y+h+170 < A.height, px=Math.max(12,Math.min(x,A.width-312)), py= below? y+h+10 : Math.max(12,y-170);
+  slot.innerHTML=`<div class="tour-spot" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"></div>
+    <div class="tour-pop" role="dialog" aria-label="Tutorial" style="left:${px}px;top:${py}px"><p>${st.t}</p>${st.wait?'<span class="wait">↳ clique no destaque para continuar</span>':''}
+    <div class="acts"><span class="n">${TOUR.i+1}/${TOUR.steps.length}</span><span><button class="btn" id="tSkip">Pular tutorial</button> ${st.wait?'':`<button class="btn pri" id="tNext">${TOUR.i+1<TOUR.steps.length?'Próximo':'Entendi'}</button>`}</span></div></div>`;
+  $('#tSkip').onclick=endTour; if($('#tNext')){ $('#tNext').onclick=nextTour; $('#tNext').focus(); }
+  if(st.wait) el.addEventListener('click',()=>{ if(TOUR&&TOUR.steps[TOUR.i]===st) setTimeout(()=>{ endTour(); },0); },{once:true});
+}
+function nextTour(){ if(!TOUR) return; TOUR.i++; if(TOUR.i>=TOUR.steps.length) endTour(); else paintTour(); }
+function endTour(){ const cb=TOUR&&TOUR.after; TOUR=null; paintTour(); if(cb) cb(); if(S.afterTour){ const f=S.afterTour; S.afterTour=null; f(); } }
+addEventListener('resize',()=>TOUR&&paintTour());
+
+/* ---------- dicas e status ---------- */
+const HINTS={
+  feat:[['Ctrl+Shift+Espaço','próximo da fila'],['Ctrl+Shift+1…9','feature'],['Ctrl+Shift+E','revisar mudanças'],['Ctrl+Shift+\\','dividir'],['Ctrl+Shift+Enter','empilhar'],['Ctrl+Shift+←→','trocar pane'],['Ctrl+A','herdr'],['Ctrl+Shift+L','seleção → Claude'],['Alt+N','nova feature'],['?','atalhos']],
+  mrs:[['j k','navegar'],['Enter','abrir'],['⇧R','revisar com Claude'],['/','filtrar']],
+  vault:[['clique','abrir nota'],['[[link]]','navegar'],['◎ Grafo','visão geral'],['Hoje','daily'],['?','atalhos']],
+  audit:[['Nova auditoria…','incremental ou completa'],['espaço','marcar achado'],['?','atalhos']],
+  mr:[['C','comentar linha'],['⇧R','revisar com Claude'],['Ctrl+⏎','publicar'],['Ctrl+Z','desfazer descarte'],['Esc','voltar']],
+};
+function renderHints(){ $('#hints').innerHTML=HINTS[S.mode].map(([k,v])=>`<span><kbd>${k}</kbd> ${v}</span>`).join(''); }
+function renderStatus(){
+  const f=feat(); const att=FEATS.filter(x=>x.st==='blocked'), work=FEATS.filter(x=>x.st==='working').length;
+  const dr=S.drafts.filter(d=>d.state==='draft').length;
+  $('#status').innerHTML=`<span>herdr: conectado</span>${att.length?`<button class="att" id="stAtt">! ${att.length} precisa${att.length>1?'m':''} de você</button>`:''}<span>${work} trabalhando</span><span title="soma das features">hoje: US$ ${FEATS.reduce((a,x)=>a+(x.cost||0),0).toFixed(2).replace('.',',')}</span>
+    ${S.mode==='feat'&&f?`<span>⎇ ${f.branch}</span>`:''}${dr?`<span class="drafts">${dr} comentário${dr>1?'s':''} pendente${dr>1?'s':''}</span>`:''}${RV&&RV.phase==='run'?'<span>Claude: revisando MR</span>':''}${AU.phase==='run'?`<span>auditoria: US$ ${AU.spent.toFixed(2).replace('.',',')}</span>`:''}
+    <span class="sp"></span>${S.mode==='feat'&&S.right&&S.rtab==='file'?`<span>Ln ${S.ln}, Col ${S.col}</span>`:''}<span title="lido de ~/.config/ghostty/config">ghostty: Dracula · JetBrains Mono 13</span>`;
+  const a=$('#stAtt'); if(a) a.onclick=()=>selectFeat(att[0].id);
+}
+
+/* ---------- overlays ---------- */
+let OV=null;
+function closeOverlay(){ OV=null; $('#overlay').innerHTML=''; }
+function confirmDlg(title,text,okLabel,ok,danger){
+  OV={type:'dlg',ok:()=>{ closeOverlay(); ok(); }};
+  $('#overlay').innerHTML=`<div class="scrim"><div class="dlg" role="alertdialog" aria-label="${esc(title)}"><h3>${esc(title)}</h3><p>${esc(text)}</p><div class="acts"><button class="btn" id="dNo">Cancelar</button><button class="btn ${danger?'danger':'pri'}" id="dOk">${esc(okLabel)}</button></div></div></div>`;
+  $('#dNo').onclick=closeOverlay; $('#dOk').onclick=OV.ok; (danger?$('#dNo'):$('#dOk')).focus();
+}
+const CMDS=[
+  ['Fila: Ir para o próximo item','Ctrl+Shift+Espaço',nextAttention],
+  ['Fila: Ver tudo que espera por você','',()=>openPal('att')],
+  ['Feature: Nova…','Alt+N',newFeatureDlg],
+  ['Feature: Rodar testes afetados','',()=>{ S.mode='feat'; render(); runAffected(feat()); }],
+  ['Feature: Comparar tentativas','',()=>{ const f=FEATS.find(x=>x.group); f?compareDlg(f):toast('Nenhuma feature com várias tentativas. Crie uma com Tentativas: 2.'); }],
+  ['Feature: Ver MR da feature','',()=>{ S.mode='feat'; S.right=true; S.rtab='mr'; render(); }],
+  ['Vault: Grafo de notas','',()=>openVault(null,'graph')],
+  ['Vault: Nota do repo (bots-api)','',()=>openVault('repos/bots-api.md')],
+  ['Vault: Daily de hoje','',()=>openVault(DKEY)],
+  ['Vault: Atividade','',()=>openVault(null,'log')],
+  ['Ir para: Vault','',()=>openVault()],
+  ['Ajuda: Rever tutorial desta tela','',()=>{ const id=S.mode==='feat'?(S.right?{review:'review',mr:'mrtab'}[S.rtab]:'feat'):S.mode==='audit'?'audit':S.mode==='vault'?'vault':'mrs'; tour(id,true); }],
+  ['Feature: Remover a atual…','',()=>removeFeatureDlg()],
+  ['Feature: Ir para a que precisa de você','',()=>{ const f=FEATS.find(x=>x.st==='blocked')||FEATS.find(x=>x.unseen); f?selectFeat(f.id):toast('Nenhuma feature esperando você'); }],
+  ['Feature: Revisar mudanças','Ctrl+Shift+E',()=>{ S.mode='feat'; S.right=true; S.rtab='review'; render(); }],
+  ['Feature: Enviar comentários ao Claude','Ctrl+⏎',sendToClaude],
+  ['Claude: Enviar seleção para o terminal','Ctrl+Shift+L',sendSel],
+  ['Terminal: Dividir lado a lado','Ctrl+Shift+\\',()=>{ S.mode='feat'; render(); herdr(feat(),'v'); }],
+  ['Terminal: Dividir empilhado','Ctrl+Shift+Enter',()=>{ S.mode='feat'; render(); herdr(feat(),'-'); }],
+  ['Terminal: Nova aba zsh','Ctrl+A c',()=>{ S.mode='feat'; render(); herdr(feat(),'c'); }],
+  ['Terminal: Juntar splits (zoom)','Ctrl+Shift+Z',()=>herdr(feat(),'z')],
+  ['Terminal: Abrir terminal da home','',()=>selectFeat('home')],
+  ['Claude: Interromper','Esc / Ctrl+C',()=>interrupt(feat())],
+  ['Arquivo: Abrir…','Ctrl+Shift+O',()=>openPal('file')],
+  ['Arquivo: Salvar','Ctrl+S',save],
+  ['Layout: Mostrar/ocultar lateral','Ctrl+Shift+B',()=>{ S.left=!S.left; renderFrame(); }],
+  ['Auditoria: Abrir relatório','',()=>setMode('audit')],
+  ['Auditoria: Nova auditoria incremental','',()=>{ AU.kind='inc'; AU.phase='setup'; setMode('audit'); }],
+  ['Ir para: Features','',()=>setMode('feat')],
+  ['Ir para: MRs','',()=>setMode('mrs')],
+  ['MR: Revisar com Claude','⇧R',()=>startReview(MRS[0])],
+  ['Ajuda: Atalhos e decisões de UX','?',()=>openHelp()],
+  ['Simular: feature de fundo pede permissão','',()=>{ const f=FEATS.find(x=>x.id!==S.fid&&x.id!=='main'&&x.kind!=='ws'&&x.st!=='blocked'&&x.st!=='working')||FEATS.find(x=>x.id!==S.fid&&x.kind!=='ws'&&x.st!=='blocked'); if(!f){ toast('Todas as outras já estão esperando você'); return; } f.ask='npm run migrate'; f.tab=0; f.term.push({c:'dotw',t:'⏺ Preciso rodar a migration.'}); setSt(f,'blocked','pediu permissão: npm run migrate'); }],
+];
+let PAL={mode:'cmd',q:'',i:0,items:[]};
+function fuzzy(q,s){ q=q.toLowerCase(); s=s.toLowerCase(); let j=0,sc=0,last=-2; for(let i=0;i<s.length&&j<q.length;i++){ if(s[i]===q[j]){ sc+=i===last+1?3:1; last=i; j++; } } return j===q.length?sc:-1; }
+function palItems(){ const q=PAL.q.trim();
+  if(PAL.mode==='att') return attention().filter(x=>!q||fuzzy(q,x.t+' '+x.tag)>=0).map(x=>({t:x.t,tag:x.tag,p:x.p,run:x.run}));
+  if(PAL.mode==='file') return Object.keys(F).map(p=>({t:p,g:'',run:()=>{ if(S.mode!=='feat'){ S.mode='feat'; render(); } openFile(p); },s:q?fuzzy(q,p):0})).filter(x=>x.s>=0).sort((a,b)=>b.s-a.s);
+  const feats=FEATS.map((f,i)=>({t:`Feature: ${f.branch}`,g:`Ctrl+Shift+${i+1}`,run:()=>selectFeat(f.id),s:q?fuzzy(q,'feature '+f.branch):-1})).filter(x=>x.s>=0);
+  return CMDS.map(([t,k,run])=>({t,g:k,run,s:q?fuzzy(q,t):0})).filter(x=>x.s>=0).concat(feats).sort((a,b)=>b.s-a.s); }
+function openPal(mode){
+  OV={type:'pal'}; PAL={mode,q:'',i:0};
+  const ph=mode==='file'?'Nome do arquivo…':mode==='att'?'Fila de atenção: filtrar…':'Comando ou nome da feature…';
+  $('#overlay').innerHTML=`<div class="scrim" id="pS"><div class="pal" role="dialog" aria-label="Paleta"><input id="pIn" placeholder="${ph}" autocomplete="off" aria-label="${ph}"><ul id="pL" role="listbox"></ul></div></div>`;
+  $('#pS').onclick=e=>{ if(e.target.id==='pS') closeOverlay(); };
+  const i=$('#pIn'); i.oninput=()=>{ PAL.q=i.value; PAL.i=0; paintPal(); }; i.focus(); paintPal();
+}
+function paintPal(){ PAL.items=palItems(); const ul=$('#pL');
+  ul.innerHTML=PAL.items.length?PAL.items.map((x,i)=>`<li class="${i===PAL.i?'on':''}" data-i="${i}" role="option">${x.tag?`<span class="pr pr${x.p}">${x.tag}</span>`:''}<span>${esc(x.t)}</span><span class="sp"></span>${x.g?`<kbd>${x.g}</kbd>`:''}</li>`).join(''):(PAL.mode==='att'?'<div class="none">Fila vazia. Nada esperando você.</div>':'<div class="none">Nada encontrado</div>');
+  ul.querySelectorAll('li').forEach(li=>li.onclick=()=>{ PAL.i=+li.dataset.i; runPal(); }); const on=ul.querySelector('.on'); if(on) on.scrollIntoView({block:'nearest'}); }
+function runPal(){ const x=PAL.items[PAL.i]; closeOverlay(); if(x) x.run(); }
+function openHelp(){
+  OV={type:'help'};
+  const N=[['Status visível','Cada feature mostra o estado do agente (precisa de você, trabalhando, pronto, parado); a barra de status conta quantos esperam por você.'],
+    ['Linguagem do mundo real','“Feature” em vez de “worktree”; termos do GitLab nos MRs.'],
+    ['Controle e liberdade','Esc interrompe o Claude; comentários se descartam e se desfazem; nada vai ao Claude ou ao GitLab sem o seu clique.'],
+    ['Consistência','Terminal com o mesmo visual e os mesmos atalhos do seu Ghostty; o mesmo diff para revisar o Claude e MRs; nenhum atalho do Maestro rouba Ctrl+tecla do shell.'],
+    ['Prevenção de erros','Remover feature avisa sobre arquivos não commitados; nome de branch repetido é barrado no formulário.'],
+    ['Reconhecer, não lembrar','A lateral substitui decorar qual aba do herdr é qual feature; a paleta acha feature pelo nome.'],
+    ['Eficiência','Ctrl+Shift+1…9 troca de feature, Ctrl+Shift+L manda a seleção, os binds de split do seu Ghostty funcionam igual, Alt+N cria worktree com .env e npm ci prontos.'],
+    ['Minimalismo','O terminal ocupa o centro; o editor só aparece quando você pede para revisar.'],
+    ['Recuperação de erros','Erros do formulário dizem o que fazer; comentário que falhou no GitLab mostra o motivo e uma saída.'],
+    ['Ajuda','Esta tela; dicas da faixa inferior mudam por modo.']];
+  $('#overlay').innerHTML=`<div class="scrim" id="hS"><div class="help" role="dialog" aria-label="Ajuda"><h3>Como usar o protótipo</h3>
+    <div class="cols"><div><h4>Experimente</h4><table>
+      <tr><td>1</td><td>O mascote aparece porque <span class="mono">fix/timeout-slack</span> pediu permissão. Clique nele e responda <kbd>1</kbd>.</td></tr>
+      <tr><td>2</td><td>Fique em outra feature e espere <span class="mono">feat/healthcheck</span> terminar.</td></tr>
+      <tr><td>3</td><td>Em <span class="mono">feat/healthcheck</span>: <kbd>Ctrl+E</kbd>, comente a linha do <span class="mono">ping()</span>, Enviar ao Claude.</td></tr>
+      <tr><td>4</td><td><kbd>Alt+N</kbd> cria uma feature nova com prompt.</td></tr>
+      <tr><td>5</td><td>Aba <b>2 zsh</b>: <span class="mono">ls</span>, <span class="mono">git status</span>, <span class="mono">git diff</span>, <span class="mono">npm test</span>, <span class="mono">cat src/app.ts</span>, ↑ para histórico.</td></tr>
+      <tr><td>6</td><td><kbd>Ctrl+Shift+\</kbd> divide claude | zsh lado a lado; <kbd>Ctrl+A</kbd> <kbd>c</kbd> abre outra aba.</td></tr>
+      <tr><td>7</td><td>Em “Terminais”, <span class="mono">~</span> é um terminal comum, sem Claude.</td></tr></table></div>
+    <div><h4>Atalhos desta tela</h4><table>${HINTS[S.mode].concat([['Ctrl+P','abrir arquivo'],['Ctrl+Shift+P','comandos']]).map(([k,v])=>`<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table>
+      <p style="margin-top:8px"><b>Regra dos atalhos:</b> com o foco no terminal, Ctrl+tecla vai para o terminal (Ctrl+A herdr, Ctrl+C, Ctrl+L, Ctrl+R, Ctrl+E de readline). Ctrl+Shift+tecla é do Maestro, como no seu Ghostty, e os binds de split do seu ghostty/config viram ações do herdr.</p>
+      <p style="margin-top:6px">Visual: fonte, paleta, padding, opacidade e cursor vêm do ghostty/config; o prompt vem do starship.toml; <span class="mono">ls</span>/<span class="mono">cat</span> seguem seus aliases eza/bat. No navegador, os ícones Nerd Font só aparecem porque a JetBrainsMono Nerd Font está instalada na sua máquina. Alt+N aqui é o Ctrl+Shift+N do app (o navegador reserva esse).</p></div></div>
+    <h4>Heurísticas de Nielsen aplicadas</h4><table>${N.map(([a,b],i)=>`<tr><td>${i+1}. ${a}</td><td>${b}</td></tr>`).join('')}</table>
+    <div class="acts" style="justify-content:flex-end"><button class="btn" id="hT">Rever tutorial desta tela</button><button class="btn" id="hC">Fechar <kbd>Esc</kbd></button></div></div></div>`;
+  $('#hT').onclick=()=>{ closeOverlay(); const id=S.mode==='feat'?(S.right?{review:'review',mr:'mrtab'}[S.rtab]:'feat'):S.mode==='audit'?'audit':S.mode==='vault'?'vault':'mrs'; tour(id,true); };
+  $('#hC').onclick=closeOverlay; $('#hS').onclick=e=>{ if(e.target.id==='hS') closeOverlay(); };
+}
+function toast(msg,action){ const t=document.createElement('div'); t.className='toast'; t.innerHTML=`<span>${esc(msg)}</span>`;
+  if(action){ const b=document.createElement('button'); b.textContent=action.label; b.onclick=()=>{ action.run(); t.remove(); }; t.appendChild(b); }
+  $('#toasts').appendChild(t); setTimeout(()=>t.remove(),action?6000:2800); }
+function sendSel(){
+  let ref=null; const ta=$('#code');
+  if(S.mode==='feat'&&S.right&&S.rtab==='file'&&ta){ const a=ta.value.slice(0,ta.selectionStart).split('\n').length, b=ta.value.slice(0,ta.selectionEnd).split('\n').length; ref=`@${S.file}:${a===b?a:a+'-'+b}`; }
+  else if(S.sel) ref=`@${S.sel.file}:${S.sel.n}`;
+  if(!ref){ toast('Selecione linhas no editor ou no diff'); return; }
+  if(S.mode!=='feat'){ S.mode='feat'; render(); }
+  const f=feat(); if(f.kind==='ws'){ toast('Este terminal não tem Claude; escolha uma feature'); return; }
+  if(f.tab!==0&&!f.split){ f.tab=0; } else if(f.split) f.tab=0; renderCenter();
+  const i=document.querySelector('.tin-in[data-t="0"]'); i.value=(i.value?i.value+' ':'')+ref+' '; i.focus();
+}
+
+/* ---------- teclado: Ctrl+tecla é do terminal; Ctrl+Shift+tecla é do Maestro (igual ao Ghostty) ---------- */
+document.addEventListener('keydown',e=>{
+  const k=e.key, ctrl=e.ctrlKey||e.metaKey, inField=e.target.matches('input,textarea,select')||e.target.isContentEditable;
+  const inTerm=!!(e.target.classList&&e.target.classList.contains('tin-in'));
+  if(k==='Escape'){
+    if(TOUR){ endTour(); return; }
+    if(OV){ e.preventDefault(); closeOverlay(); return; }
+    if(S.prefix){ S.prefix=false; renderCenter(); return; }
+    if(S.editing){ cancelEdit(S.editing); return; }
+    if(RV&&RV.phase!=='run'){ closeDrawer(); return; }
+    if(S.mascot&&!S.mascot.leaving){ dismissMascot(); return; }
+    if(inTerm){ const f=feat(); if(f.tabs[+e.target.dataset.t].k==='claude'){ if(f.st==='blocked'){ answer(f,3); return; } interrupt(f); } return; }
+    if(S.mode==='mr'){ setMode('mrs'); return; }
+    if(inField) e.target.blur(); return;
+  }
+  if(OV&&OV.type==='pal'){ if(k==='ArrowDown'){ e.preventDefault(); PAL.i=Math.min(PAL.i+1,PAL.items.length-1); paintPal(); } else if(k==='ArrowUp'){ e.preventDefault(); PAL.i=Math.max(PAL.i-1,0); paintPal(); } else if(k==='Enter'){ e.preventDefault(); runPal(); } return; }
+  if(OV&&OV.type==='dlg'){ if(ctrl&&k==='Enter'){ e.preventDefault(); OV.ok(); } return; }
+  if(OV) return;
+  if(ctrl&&e.shiftKey){
+    const c=e.code, f=feat(), act={
+      KeyP:()=>openPal('cmd'), KeyO:()=>openPal('file'), KeyE:()=>{ if(S.mode!=='feat'){ S.mode='feat'; S.right=true; render(); } else toggleRight(); },
+      KeyB:()=>{ S.left=!S.left; renderFrame(); }, KeyL:sendSel, KeyN:newFeatureDlg, Space:nextAttention,
+      Enter:()=>S.mode==='feat'&&herdr(f,'-'), Backslash:()=>S.mode==='feat'&&herdr(f,'v'), KeyZ:()=>S.mode==='feat'&&herdr(f,'z'), KeyT:()=>S.mode==='feat'&&herdr(f,'c'),
+      ArrowLeft:()=>herdr(f,'ArrowLeft'), ArrowRight:()=>herdr(f,'ArrowRight'), ArrowUp:()=>herdr(f,'ArrowUp'), ArrowDown:()=>herdr(f,'ArrowDown'),
+    }[c];
+    if(c.startsWith('Arrow')&&inField&&!inTerm) return;
+    const dg=/^Digit([1-9])$/.exec(c);
+    if(dg){ const x=FEATS[+dg[1]-1]; if(x){ e.preventDefault(); selectFeat(x.id); } return; }
+    if(act){ e.preventDefault(); act(); return; }
+  }
+  if(e.altKey&&k.toLowerCase()==='n'){ e.preventDefault(); newFeatureDlg(); return; }
+  if(inTerm) return;
+  if(ctrl&&!e.shiftKey&&k==='p'){ e.preventDefault(); openPal('file'); return; }
+  if(ctrl&&k==='k'){ e.preventDefault(); openPal('cmd'); return; }
+  if(ctrl&&k==='Enter'){
+    if(S.editing&&e.target.id==='dt-'+S.editing){ e.preventDefault(); saveDraft(S.editing); return; }
+    if(S.mode==='mr'){ e.preventDefault(); askPublish(); return; }
+    if(S.mode==='feat'&&S.right){ e.preventDefault(); sendToClaude(); return; }
+  }
+  if(ctrl&&k==='s'){ e.preventDefault(); save(); return; }
+  if(inField) return;
+  if(ctrl&&k==='z'){ e.preventDefault(); undo(); return; }
+  if(ctrl||e.altKey) return;
+  if(k==='?'){ openHelp(); return; }
+  if(RV&&RV.phase==='setup'&&k==='Enter'){ e.preventDefault(); runReview(); return; }
+  if(k==='R'&&e.shiftKey&&S.mode!=='feat'){ startReview(); return; }
+  if(S.mode==='mrs'){ const rows=inboxRows();
+    if(k==='j'||k==='ArrowDown'){ e.preventDefault(); S.isel=Math.min(S.isel+1,rows.length-1); renderCenter(); }
+    else if(k==='k'||k==='ArrowUp'){ e.preventDefault(); S.isel=Math.max(S.isel-1,0); renderCenter(); }
+    else if(k==='Enter') openMR(rows[S.isel]);
+    else if(k==='/'){ e.preventDefault(); $('#iq').focus(); }
+    return; }
+  if((k==='c'||k==='C')&&(S.mode==='mr'||(S.mode==='feat'&&S.right&&S.rtab==='review'))){ e.preventDefault(); newDraft(); return; }
+  if(S.mode==='feat'&&k.length===1&&!(e.target.closest&&e.target.closest('#right'))){ focusTerm(); }
+});
+$('#mVault').onclick=()=>openVault(); $('#mFeat').onclick=()=>setMode('feat'); $('#mMrs').onclick=()=>setMode('mrs');
+$('#qBtn').onclick=()=>openPal('att'); $('#hFile').onclick=()=>openPal('file'); $('#hCmd').onclick=()=>openPal('cmd'); $('#hHelp').onclick=()=>openHelp();
+if(innerWidth<760){ S.left=false; }
+render();
+
+/* roteiro: o mascote aparece para a feature bloqueada; a healthcheck termina sozinha */
+const scenario=()=>{ const f=feat('slack'); if(f&&f.st==='blocked'&&!(S.mode==='feat'&&S.fid==='slack')){ f.unseen=true; if(!S.mq.find(x=>x.fid==='slack')) S.mq.push({fid:'slack',kind:'ask'}); if(!S.mascot) nextMascot(); renderLeft(); } };
+if(tour('feat')) S.afterTour=()=>setTimeout(scenario,800); else setTimeout(scenario,1500);
+const H=feat('health');
+run(H,[[4000,'dot','⏺ Update(src/app.ts)','Escrevendo'],[600,'out','  ⎿  Updated src/app.ts with 2 additions'],[1500,'dot','⏺ Bash(npm test)','Testando'],[1800,'out','  ⎿  Tests: 14 passed, 14 total'],
+  [800,'dotw','⏺ Pronto: GET /health responde 200 com o banco ok e 503 sem ele.']],()=>setSt(H,'done','pronto pra revisar'));
+</script>
+
+</body>
+</html>
