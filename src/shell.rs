@@ -146,6 +146,39 @@ impl Shell {
             }
         })
         .detach();
+        // o vault é observado sempre, com ou sem o modo Vault aberto: o que mudar fora do Maestro
+        // (o Claude seguindo o contrato, você no Obsidian) vai para a Atividade com desfazer
+        cx.spawn(async move |this, cx| {
+            let (mut last, mut notes) = (0u64, None::<Vec<crate::vault::Note>>);
+            loop {
+                let (sig, new) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let root = crate::vault::dir();
+                        let sig = vault_view::signature(&root);
+                        (sig, (sig != last).then(|| crate::vault::load(&root)))
+                    })
+                    .await;
+                last = sig;
+                if let Some(new) = new {
+                    let changes = notes
+                        .as_ref()
+                        .map(|old| crate::vault::external(old, &new))
+                        .unwrap_or_default();
+                    notes = Some(new);
+                    let alive = this.update(cx, |this, cx| {
+                        for w in changes {
+                            this.toast_undo(format!("vault: {}", w.desc), Some(Redo::Vault(w)), cx);
+                        }
+                    });
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+            }
+        })
+        .detach();
         Self {
             sidebar,
             terminal,

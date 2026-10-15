@@ -34,7 +34,12 @@ pub struct FeatureRef {
     pub branch: String,
     pub repo: String,
     pub pane: Option<String>,
+    /// MR ainda aberto (o grafo só liga esses)
     pub mr: Option<u64>,
+    /// para o resumo do dia: (estado, MR com "mergeado", custo)
+    pub status: String,
+    pub merged: Option<u64>,
+    pub cost: f64,
 }
 
 /// O modo Vault do protótipo (`renderVaultTree` + `renderVaultMain`).
@@ -112,7 +117,7 @@ pub fn inline(src: &str) -> (String, Vec<(Range<usize>, Span)>) {
     (out, spans)
 }
 
-fn signature(root: &std::path::Path) -> u64 {
+pub fn signature(root: &std::path::Path) -> u64 {
     let mut sig = 0u64;
     let mut walk = vec![root.to_path_buf()];
     while let Some(d) = walk.pop() {
@@ -335,18 +340,26 @@ impl VaultView {
         if feats.is_empty() {
             return "- nenhuma feature ativa hoje".into();
         }
-        feats
+        // o formato do `vSum` do protótipo
+        let mut lines: Vec<String> = feats
             .iter()
             .map(|f| {
+                let mr = match (f.mr, f.merged) {
+                    (Some(m), _) => format!(" · MR !{m}"),
+                    (None, Some(m)) => format!(" · MR !{m} mergeado"),
+                    _ => String::new(),
+                };
                 format!(
-                    "- {}: {}{}",
+                    "- {}: {}{mr} · US$ {}",
                     f.branch,
-                    f.repo,
-                    f.mr.map_or(String::new(), |m| format!(" · MR !{m}"))
+                    f.status,
+                    crate::sidebar::brl(f.cost)
                 )
             })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect();
+        // ponytail: a auditoria é a Etapa 9
+        lines.push("- auditoria: não rodou".into());
+        lines.join("\n")
     }
 
     fn text(&self, src: &str, id: ElementId, cx: &mut Context<Self>) -> AnyElement {
@@ -1149,12 +1162,23 @@ pub fn features_from(
     inventories: &[crate::feature::Inventory],
     agents: &[crate::herdr::Agent],
     mrs: &HashMap<std::path::PathBuf, crate::mr::Mr>,
+    usage: &HashMap<String, crate::session::Usage>,
 ) -> Vec<FeatureRef> {
     inventories
         .iter()
         .map(|i| {
             let wt = &i.worktrees[0].path;
+            let agent = agents
+                .iter()
+                .find(|a| std::path::Path::new(&a.cwd).starts_with(wt));
             FeatureRef {
+                status: agent
+                    .map_or("sem Claude", |a| crate::sidebar::glyph(a.agent_status).1)
+                    .into(),
+                merged: mrs.get(wt).filter(|m| m.merged).map(|m| m.iid),
+                cost: agent
+                    .and_then(|a| usage.get(&a.pane_id))
+                    .map_or(0., |u| u.cost),
                 branch: i.branch.clone(),
                 repo: i
                     .repo

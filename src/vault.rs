@@ -187,9 +187,19 @@ pub struct Write {
     pub before: Option<String>,
 }
 
+/// O que o próprio Maestro acabou de gravar: o observador não conta como "fora do Maestro".
+static OURS: std::sync::Mutex<Vec<(PathBuf, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+
+fn ours(path: &Path, text: Option<&str>) {
+    if let Ok(mut o) = OURS.lock() {
+        o.push((path.to_path_buf(), text.map(String::from)));
+    }
+}
+
 pub fn write(rel: &str, text: &str, desc: String) -> Result<Write, String> {
     let path = dir().join(rel);
     let before = std::fs::read_to_string(&path).ok();
+    ours(&path, Some(text));
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
@@ -204,6 +214,7 @@ pub fn write(rel: &str, text: &str, desc: String) -> Result<Write, String> {
 }
 
 pub fn undo(w: &Write) -> Result<(), String> {
+    ours(&w.path, w.before.as_deref());
     let r = match &w.before {
         Some(t) => std::fs::write(&w.path, t),
         None => std::fs::remove_file(&w.path),
@@ -212,13 +223,25 @@ pub fn undo(w: &Write) -> Result<(), String> {
     r.map_err(|e| e.to_string())
 }
 
+/// Um log por vault: o de uma cópia de teste (`MAESTRO_VAULT`) nunca cai na Atividade do vault real.
 fn log_file() -> PathBuf {
+    let name = match std::env::var_os("MAESTRO_VAULT") {
+        Some(v) => format!(
+            "vault-activity-{}.log",
+            crate::feature::slug(&v.to_string_lossy())
+        ),
+        None => "vault-activity.log".into(),
+    };
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-        .join(".local/share/maestro/vault-activity.log")
+        .join(".local/share/maestro")
+        .join(name)
 }
 
 fn log(desc: &str) {
     use std::io::Write;
+    if cfg!(test) {
+        return;
+    }
     let t = std::process::Command::new("date")
         .arg("+%Y-%m-%d %H:%M")
         .output()
@@ -231,6 +254,64 @@ fn log(desc: &str) {
     {
         let _ = writeln!(f, "{t}\t{desc}");
     }
+}
+
+/// Notas criadas, mudadas ou apagadas por outro (o Claude seguindo o contrato, você no Obsidian):
+/// cada uma vai para a Atividade com o texto de antes, para o Desfazer.
+pub fn external(old: &[Note], new: &[Note]) -> Vec<Write> {
+    let root = dir();
+    let mut taken = OURS
+        .lock()
+        .map(|mut o| std::mem::take(&mut *o))
+        .unwrap_or_default();
+    let mut mine = |path: &Path, text: Option<&str>| {
+        let i = taken
+            .iter()
+            .position(|(p, t)| p == path && t.as_deref() == text);
+        i.map(|i| taken.remove(i)).is_some()
+    };
+    let mut out = Vec::new();
+    for n in new {
+        let before = old.iter().find(|o| o.key == n.key);
+        if before.is_some_and(|b| b.text == n.text) {
+            continue;
+        }
+        let path = root.join(&n.key);
+        if mine(&path, Some(&n.text)) {
+            continue;
+        }
+        let what = if before.is_some() {
+            "alterada"
+        } else {
+            "criada"
+        };
+        out.push(Write {
+            at: SystemTime::now(),
+            desc: format!("{} {what} (fora do Maestro)", n.key),
+            path,
+            before: before.map(|b| b.text.clone()),
+        });
+    }
+    for o in old.iter().filter(|o| !new.iter().any(|n| n.key == o.key)) {
+        let path = root.join(&o.key);
+        if mine(&path, None) {
+            continue;
+        }
+        out.push(Write {
+            at: SystemTime::now(),
+            desc: format!("{} apagada (fora do Maestro)", o.key),
+            path,
+            before: Some(o.text.clone()),
+        });
+    }
+    // o que não casou ainda pode estar a caminho do disco: volta para a próxima leitura
+    if let Ok(mut o) = OURS.lock() {
+        o.extend(taken);
+    }
+    for w in &out {
+        log(&w.desc);
+    }
+    out
 }
 
 /// A Atividade do vault: (quando, o quê), da mais nova para a mais antiga.
@@ -320,6 +401,30 @@ mod tests {
         assert_eq!(with_history(&t2, 150, &merged), None);
         let sem = with_history("# x\n", 1, "- l").unwrap();
         assert!(sem.ends_with("## Histórico\n\n- l\n"));
+    }
+
+    #[test]
+    fn mudanca_fora_do_maestro() {
+        use super::{Note, dir, external, ours};
+        let n = |k: &str, t: &str| Note {
+            key: k.into(),
+            dir: "decisions".into(),
+            name: k.into(),
+            text: t.into(),
+        };
+        let old = vec![n("decisions/a.md", "1"), n("decisions/b.md", "x")];
+        let new = vec![n("decisions/a.md", "2"), n("decisions/c.md", "novo")];
+        ours(&dir().join("decisions/a.md"), Some("2"));
+        let w = external(&old, &new);
+        let d: Vec<&str> = w.iter().map(|w| w.desc.as_str()).collect();
+        assert_eq!(
+            d,
+            vec![
+                "decisions/c.md criada (fora do Maestro)",
+                "decisions/b.md apagada (fora do Maestro)"
+            ]
+        );
+        assert_eq!(w[1].before.as_deref(), Some("x"));
     }
 
     #[test]

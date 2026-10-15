@@ -764,6 +764,9 @@ mod tests {
             repo: "bots-api".into(),
             pane: Some("w1:p1".into()),
             mr: Some(7),
+            status: String::new(),
+            merged: None,
+            cost: 0.,
         }];
         let all = Opts {
             local: false,
