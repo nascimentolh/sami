@@ -1597,7 +1597,11 @@ impl Render for Shell {
                     || this.confirm.is_some()
                     || this.cleanup.is_some()
                     || this.compare.is_some()
-                    || this.choice.is_some();
+                    || this.choice.is_some()
+                    || this
+                        .review
+                        .as_ref()
+                        .is_some_and(|r| r.read(cx).editing_open());
                 if this.tour.is_some() {
                     this.end_tour(cx);
                 } else if !overlay && this.mascot.as_ref().is_some_and(|m| !m.2) {

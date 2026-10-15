@@ -179,6 +179,11 @@ impl Review {
         cx.notify();
     }
 
+    /// Um comentário ou uma linha em edição: o Esc é dele antes do mascote.
+    pub fn editing_open(&self) -> bool {
+        self.editing.is_some() || self.drafts.iter().any(|d| d.field.is_some())
+    }
+
     pub fn on_mr(&self) -> bool {
         self.tab == Tab::Mr
     }

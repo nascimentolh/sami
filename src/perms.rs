@@ -50,7 +50,26 @@ pub fn record(id: &str, stdin: &str) -> Result<(), String> {
         .append(true)
         .open(dir().join("perms.log"))
         .map_err(|e| e.to_string())?;
-    writeln!(f, "{}\t{}\t{id}\t{rule}", now(), inv.repo.display()).map_err(|e| e.to_string())
+    let what = hook["tool_input"]["command"]
+        .as_str()
+        .map_or(rule.clone(), |c| c.chars().take(60).collect::<String>())
+        .replace(['\t', '\n'], " ");
+    writeln!(f, "{}\t{}\t{id}\t{rule}\t{what}", now(), inv.repo.display())
+        .map_err(|e| e.to_string())
+}
+
+/// O último pedido desta feature nos últimos 2 min: o "pediu permissão: npm test" do card e do mascote.
+pub fn last_ask(id: &str) -> Option<String> {
+    let log = std::fs::read_to_string(dir().join("perms.log")).ok()?;
+    let t = now();
+    log.lines().rev().find_map(|l| {
+        let p: Vec<&str> = l.splitn(5, '\t').collect();
+        let [ts, _, fid, _, what] = p[..] else {
+            return None;
+        };
+        (fid == id && ts.parse::<u64>().is_ok_and(|ts| t.saturating_sub(ts) < 120))
+            .then(|| format!("pediu permissão: {what}"))
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,8 +86,8 @@ pub struct Suggestion {
 pub fn suggestions(log: &str, asked: &HashSet<(String, String)>, now: u64) -> Vec<Suggestion> {
     let mut seen: HashMap<(String, String), (usize, HashSet<String>, String)> = HashMap::new();
     for l in log.lines() {
-        let p: Vec<&str> = l.splitn(4, '\t').collect();
-        let [ts, repo, id, rule] = p[..] else {
+        let p: Vec<&str> = l.split('\t').collect();
+        let [ts, repo, id, rule, ..] = p[..] else {
             continue;
         };
         if ts
@@ -172,7 +191,8 @@ pub fn allow_personal(s: &Suggestion) -> Result<(), String> {
     }
     std::fs::write(personal_file(&s.repo), json!(rules).to_string()).map_err(|e| e.to_string())?;
     for inv in feature::inventories().iter().filter(|i| i.repo == s.repo) {
-        for w in &inv.worktrees {
+        // só a worktree deste repo: a de um repo irmão pode não ter o settings.local.json no info/exclude
+        for w in inv.worktrees.iter().filter(|w| w.repo == s.repo) {
             add_allow(&w.path.join(".claude/settings.local.json"), &s.rule)?;
         }
     }

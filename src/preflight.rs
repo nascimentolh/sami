@@ -39,12 +39,17 @@ fn check(state: State, detail: impl Into<String>) -> Check {
     }
 }
 
+/// Com teto de tempo: o que travar vira "não deu para checar" em vez de prender o pré-voo.
 fn sh(root: &Path, cmd: &str) -> Check {
-    match Command::new("sh")
-        .args(["-c", cmd])
+    let secs = 600;
+    let out = Command::new("timeout")
+        .args([&secs.to_string(), "sh", "-c", cmd])
         .current_dir(root)
-        .output()
-    {
+        .output();
+    match out {
+        Ok(o) if o.status.code() == Some(124) => {
+            check(State::Skip, format!("{cmd}: passou de {secs} s"))
+        }
         Ok(o) if o.status.success() => check(State::Pass, cmd),
         Ok(o) => {
             let out = String::from_utf8_lossy(if o.stderr.is_empty() {
@@ -73,8 +78,8 @@ fn behind(root: &Path, base: &str) -> Check {
     if !has_remote {
         return check(State::Skip, "sem remoto origin");
     }
-    let fetched = Command::new("git")
-        .args(["fetch", "-q", "origin", base])
+    let fetched = Command::new("timeout")
+        .args(["30", "git", "fetch", "-q", "origin", base])
         .current_dir(root)
         .output()
         .is_ok_and(|o| o.status.success());
@@ -163,15 +168,17 @@ fn sonar(root: &Path, files: &[String]) -> Check {
         .collect::<Vec<_>>()
         .join(", ");
     let prompt = format!(
-        "Para cada arquivo ({list}): leia com Read e chame mcp__sonarqube__analyze_code_snippet com o conteúdo e a linguagem. \
-         Responda SOMENTE um JSON {{\"issues\":[{{\"file\":\"\",\"line\":0,\"message\":\"\"}}]}} com os problemas encontrados; \
-         se a ferramenta der erro, {{\"error\":\"<mensagem>\"}}."
+        "Para cada arquivo ({list}): leia com Read e chame mcp__sonarqube__analyze_code_snippet com o conteúdo, a linguagem e o caminho relativo em filePath. \
+         Responda SOMENTE um JSON {{\"issues\":[{{\"file\":\"\",\"line\":0,\"severity\":\"\",\"type\":\"\",\"message\":\"\"}}]}} \
+         com os problemas encontrados (severity e type como o Sonar devolve); se a ferramenta der erro, {{\"error\":\"<mensagem>\"}}."
     );
-    let out = Command::new("claude")
-        .arg("-p")
-        .arg(prompt)
+    // na worktree (o container do MCP monta o diretório atual), mas sem os hooks dela
+    // (`--setting-sources user`) e sem JSONL (senão vira um turno e entra no custo do card)
+    let out = Command::new("timeout")
+        .args(["180", "claude", "-p", &prompt])
         .args(["--model", "haiku", "--output-format", "json"])
         .arg("--allowedTools=Read,mcp__sonarqube__analyze_code_snippet")
+        .args(["--setting-sources", "user", "--no-session-persistence"])
         .current_dir(root)
         .output();
     let Ok(out) = out else {
@@ -191,17 +198,40 @@ fn sonar_reply(result: &str) -> Check {
         return check(State::Skip, format!("MCP do Sonar: {e}"));
     }
     let issues = v["issues"].as_array().cloned().unwrap_or_default();
-    match issues.first() {
-        None => check(State::Pass, "nenhum problema nos arquivos mudados"),
+    // barra o que o gate do Sonar barra: bug, vulnerabilidade, bloqueante ou crítico; o resto é aviso
+    let serious = |i: &&Value| {
+        let up = |k: &str| i[k].as_str().unwrap_or_default().to_uppercase();
+        ["BLOCKER", "CRITICAL", "HIGH"].contains(&up("severity").as_str())
+            || ["BUG", "VULNERABILITY"].contains(&up("type").as_str())
+    };
+    let bad: Vec<&Value> = issues.iter().filter(serious).collect();
+    let n = |k: usize| if k > 1 { "s" } else { "" };
+    match bad.first() {
         Some(i) => check(
             State::Fail,
             format!(
-                "{} problema{} · {}:{} {}",
-                issues.len(),
-                if issues.len() > 1 { "s" } else { "" },
-                i["file"].as_str().unwrap_or_default(),
+                "{} problema{} sério{} · {}:{} {}",
+                bad.len(),
+                n(bad.len()),
+                n(bad.len()),
+                i["file"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default(),
                 i["line"],
                 i["message"].as_str().unwrap_or_default()
+            ),
+        ),
+        None if issues.is_empty() => check(State::Pass, "nenhum problema nos arquivos mudados"),
+        None => check(
+            State::Pass,
+            format!(
+                "{} aviso{} menor{} (não barra)",
+                issues.len(),
+                n(issues.len()),
+                if issues.len() > 1 { "es" } else { "" }
             ),
         ),
     }
@@ -410,5 +440,9 @@ mod tests {
         );
         assert!(is_mr("/mr") && is_mr("  /mr draft") && !is_mr("/mrx") && !is_mr("faz o /mr"));
         assert_eq!(sonar_reply("{\"issues\":[]}").state, super::State::Pass);
+        let minor = "{\"issues\":[{\"file\":\"a.ts\",\"line\":3,\"severity\":\"MINOR\",\"type\":\"CODE_SMELL\",\"message\":\"x\"}]}";
+        assert_eq!(sonar_reply(minor).state, super::State::Pass);
+        let bug = minor.replace("CODE_SMELL", "BUG");
+        assert_eq!(sonar_reply(&bug).state, super::State::Fail);
     }
 }

@@ -399,6 +399,9 @@ pub fn conclude(herdr: &Herdr, inv: &Inventory) -> Result<Vec<String>, String> {
     let _ = std::fs::remove_file(data_dir().join(format!("{}.json", inv.id)));
     let _ = std::fs::remove_file(turns_file(&inv.id));
     let _ = std::fs::remove_file(preflight_file(&inv.id));
+    for ext in ["merged", "sent"] {
+        let _ = std::fs::remove_file(data_dir().join(format!("{}.{ext}", inv.id)));
+    }
     Ok(done)
 }
 
@@ -473,6 +476,26 @@ pub struct Turn {
 
 fn turns_file(id: &str) -> PathBuf {
     data_dir().join(format!("{id}.turns"))
+}
+
+/// Uma lista que sobrevive ao reinício (`<id>.merged`: MRs já oferecidos; `<id>.sent`: comentários já enviados).
+pub fn state_lines(id: &str, ext: &str) -> Vec<String> {
+    std::fs::read_to_string(data_dir().join(format!("{id}.{ext}")))
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+pub fn add_state_line(id: &str, ext: &str, line: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(data_dir().join(format!("{id}.{ext}")))
+    {
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 /// A árvore dos arquivos que passaram no pré-voo (ou tiveram override).

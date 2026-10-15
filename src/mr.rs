@@ -84,7 +84,14 @@ pub fn failed_job(jobs: &Value) -> Option<(String, String)> {
         })
 }
 
+/// GitLab Duo e os bots de grupo/projeto (`group_…_bot_…`, como o da "Revisão automática").
+fn is_bot(user: &str) -> bool {
+    user == "GitLabDuo"
+        || ((user.starts_with("group_") || user.starts_with("project_")) && user.contains("_bot_"))
+}
+
 /// Comentários de revisores: o primeiro de cada discussão aberta que não é do autor nem do sistema.
+/// Nota solta de bot (o resumo "nada a comentar") fica de fora; o comentário de linha dele, aberto, entra.
 pub fn comments(discussions: &Value, author: &str) -> Vec<Comment> {
     discussions
         .as_array()
@@ -94,7 +101,8 @@ pub fn comments(discussions: &Value, author: &str) -> Vec<Comment> {
             let n = &d["notes"][0];
             let open = n["resolvable"] != true || n["resolved"] != true;
             let who = n["author"]["username"].as_str().unwrap_or_default();
-            (open && n["system"] != true && who != author).then(|| Comment {
+            let bot_note = is_bot(who) && n["resolvable"] != true;
+            (open && !bot_note && n["system"] != true && who != author).then(|| Comment {
                 id: n["id"].as_u64().unwrap_or_default(),
                 who: format!("@{who}"),
                 at: match n["position"]["new_path"].as_str() {
@@ -207,7 +215,9 @@ mod tests {
             {"notes": [{"id": 2, "author": {"username": "eu"}, "body": "meu"}]},
             {"notes": [{"id": 3, "author": {"username": "ana"}, "body": "ok", "resolvable": true, "resolved": true}]},
             {"notes": [{"id": 4, "author": {"username": "ana"}, "body": "timeout?", "resolvable": true, "resolved": false,
-                "position": {"new_path": "src/a.ts", "new_line": 12}}]}
+                "position": {"new_path": "src/a.ts", "new_line": 12}}]},
+            {"notes": [{"id": 6, "author": {"username": "GitLabDuo"}, "body": "I finished my review", "resolvable": false}]},
+            {"notes": [{"id": 7, "author": {"username": "group_1_bot_ab"}, "body": "Revisão automática", "resolvable": false}]}
         ]);
         let m = parse(&detail, &jobs, &disc);
         assert_eq!(m.pipe, Status::Fail);

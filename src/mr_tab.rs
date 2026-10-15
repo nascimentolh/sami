@@ -76,6 +76,12 @@ impl MrTab {
             }
         });
         let inv = feature::find_by_path(&root);
+        let sent = inv.as_ref().map_or_else(HashSet::new, |i| {
+            feature::state_lines(&i.id, "sent")
+                .iter()
+                .filter_map(|l| l.parse().ok())
+                .collect()
+        });
         Self {
             base: inv.as_ref().map_or("main".into(), |i| i.base.clone()),
             feature_id: inv.map(|i| i.id),
@@ -83,7 +89,7 @@ impl MrTab {
             branch,
             fetch: None,
             checks: None,
-            sent: HashSet::new(),
+            sent,
             theme,
             anchors,
             _poll: poll,
@@ -311,6 +317,11 @@ impl MrTab {
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.sent.extend(ids.iter().copied());
+                            if let Some(id) = &this.feature_id {
+                                for c in &ids {
+                                    feature::add_state_line(id, "sent", &c.to_string());
+                                }
+                            }
                             cx.emit(Event::Ask(
                                 format!("/comentario !{iid}"),
                                 "Comentários enviados ao Claude".into(),

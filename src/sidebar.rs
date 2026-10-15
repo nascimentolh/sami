@@ -50,8 +50,11 @@ pub struct Sidebar {
     files: Option<Vec<String>>,
     /// MR de cada feature (pela worktree), o `mrSum` do card
     mrs: HashMap<PathBuf, Mr>,
-    asked: HashSet<(PathBuf, u64)>,
     learned: HashSet<(PathBuf, String)>,
+    /// comentários já mandados ao Claude, por worktree (`<id>.sent`)
+    sent: HashMap<PathBuf, HashSet<u64>>,
+    /// o pedido de permissão de cada pane bloqueado ("pediu permissão: npm test")
+    asks: HashMap<String, String>,
     /// (arquivo do editor, sujo, aba do editor à frente)
     open: Option<(String, bool, bool)>,
     sessions: Arc<Mutex<Sessions>>,
@@ -157,11 +160,32 @@ impl Sidebar {
                             )
                         })
                         .await;
+                    let Ok(invs) = this.read_with(cx, |this, _| this.inventories.clone()) else {
+                        break;
+                    };
+                    let sent: HashMap<PathBuf, HashSet<u64>> = cx
+                        .background_executor()
+                        .spawn(async move {
+                            invs.iter()
+                                .map(|i| {
+                                    let ids = feature::state_lines(&i.id, "sent")
+                                        .iter()
+                                        .filter_map(|l| l.parse().ok())
+                                        .collect();
+                                    (i.worktrees[0].path.clone(), ids)
+                                })
+                                .collect()
+                        })
+                        .await;
                     let _ = this.update(cx, |this, cx| {
                         for s in learn {
                             if this.learned.insert((s.repo.clone(), s.rule.clone())) {
                                 cx.emit(SidebarEvent::Learn(s));
                             }
+                        }
+                        if this.sent != sent {
+                            this.sent = sent;
+                            cx.notify();
                         }
                         if this.usage != usage
                             || this.changes != changes
@@ -197,14 +221,20 @@ impl Sidebar {
                         .await;
                     let _ = this.update(cx, |this, cx| {
                         for (wt, m) in &mrs {
-                            if m.merged && this.asked.insert((wt.clone(), m.iid)) {
-                                let branch = this
-                                    .inventories
-                                    .iter()
-                                    .find(|i| i.worktrees[0].path == *wt)
-                                    .map(|i| i.branch.clone())
-                                    .unwrap_or_default();
-                                cx.emit(SidebarEvent::Merged(wt.clone(), m.iid, branch));
+                            let Some(inv) =
+                                this.inventories.iter().find(|i| i.worktrees[0].path == *wt)
+                            else {
+                                continue;
+                            };
+                            // uma vez por MR, mesmo depois de reiniciar
+                            let iid = m.iid.to_string();
+                            if m.merged && !feature::state_lines(&inv.id, "merged").contains(&iid) {
+                                feature::add_state_line(&inv.id, "merged", &iid);
+                                cx.emit(SidebarEvent::Merged(
+                                    wt.clone(),
+                                    m.iid,
+                                    inv.branch.clone(),
+                                ));
                             }
                         }
                         if this.mrs != mrs {
@@ -230,8 +260,9 @@ impl Sidebar {
             changes: None,
             files: None,
             mrs: HashMap::new(),
-            asked: HashSet::new(),
             learned: HashSet::new(),
+            sent: HashMap::new(),
+            asks: HashMap::new(),
             open: None,
             sessions: Arc::default(),
             anchors,
@@ -263,22 +294,28 @@ impl Sidebar {
                 };
                 if let Some(kind) = kind {
                     let wt = herdr::repo_root(Path::new(&a.cwd)).map(Path::to_path_buf);
-                    let branch = self
+                    let inv = self
                         .inventories
                         .iter()
-                        .find(|i| i.worktrees.iter().any(|w| Some(&w.path) == wt.as_ref()))
+                        .find(|i| i.worktrees.iter().any(|w| Some(&w.path) == wt.as_ref()));
+                    let branch = inv
                         .map(|i| i.branch.clone())
                         .or_else(|| branch_of(a))
                         .unwrap_or_else(|| title(a));
+                    let text = if kind == Kind::Ask {
+                        let ask = inv
+                            .and_then(|i| perms::last_ask(&i.id))
+                            .unwrap_or_else(|| title(a));
+                        self.asks.insert(a.pane_id.clone(), ask.clone());
+                        ask
+                    } else {
+                        "terminou, pronto pra revisar".into()
+                    };
                     notes.push(Note {
                         pane: a.pane_id.clone(),
                         kind,
                         branch,
-                        text: if kind == Kind::Ask {
-                            title(a)
-                        } else {
-                            "terminou, pronto pra revisar".into()
-                        },
+                        text,
                     });
                 }
             }
@@ -449,10 +486,11 @@ impl Sidebar {
             };
             let item = |p, tag, text: String, go| AttItem { p, tag, text, go };
             if a.agent_status == Status::Blocked {
+                let msg = self.asks.get(&pane).cloned().unwrap_or_else(|| title(a));
                 q.push(item(
                     0,
                     "permissão",
-                    format!("{}: {}", branch(), title(a)),
+                    format!("{}: {msg}", branch()),
                     Go::Pane(pane.clone()),
                 ));
             }
@@ -474,7 +512,12 @@ impl Sidebar {
                         go.clone(),
                     ));
                 }
-                let n = m.comments.len();
+                let sent = self.sent.get(&wt);
+                let n = m
+                    .comments
+                    .iter()
+                    .filter(|c| sent.is_none_or(|s| !s.contains(&c.id)))
+                    .count();
                 if n > 0 {
                     let s = if n > 1 { "s" } else { "" };
                     q.push(item(
@@ -575,7 +618,16 @@ impl Sidebar {
             },
             m_color: if attention { color } else { t.muted },
             m2,
-            mr: wt.as_ref().and_then(|w| self.mrs.get(w)).cloned(),
+            mr: wt
+                .as_ref()
+                .and_then(|w| self.mrs.get(w))
+                .cloned()
+                .map(|mut m| {
+                    let sent = wt.as_ref().and_then(|w| self.sent.get(w));
+                    m.comments
+                        .retain(|c| sent.is_none_or(|s| !s.contains(&c.id)));
+                    m
+                }),
             on: a.focused,
             unseen: attention.then_some(color),
             dim: false,
