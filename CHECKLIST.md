@@ -136,23 +136,25 @@ Conferido numa cópia do vault (`MAESTRO_VAULT`): a feature nova de um repo `bot
 
 ## Etapa 8: MRs de outras pessoas + revisor
 
-- [ ] inbox: para revisar, meus e grupo; badge de CI; "novo", "revisado" e "+N commits"
-- [ ] diff do MR com as threads; rascunho manual
-- [ ] revisor (port do `~/mr-review.sh`), com as 11 armadilhas cobertas por teste:
-  - [ ] `old_line` em linha de contexto
-  - [ ] header `Content-Type`
-  - [ ] sucesso = status ok **e** `.id`
-  - [ ] fetch de `refs/merge-requests/N/head`
-  - [ ] colisão de basename
-  - [ ] gate de pipeline
-  - [ ] dedup pelas notas existentes
-  - [ ] fallback para nota geral quando a linha está fora do diff
-  - [ ] MR fechado ou merged em dry-run
-  - [ ] pular sha já revisado
-  - [ ] rubrica + ferramentas restritas
-- [ ] saída via `--json-schema`, progresso por `stream-json`, achados como rascunhos
-- [ ] publicar como uma review só (Draft Notes API + `bulk_publish`)
-- [ ] tutorial da área
+- [x] inbox (o `renderInbox` do protótipo, modo MRs no título e "Ir para: MRs"): Para revisar (`reviewer_username`), Meus e o grupo (`MAESTRO_MR_GROUP`, padrão `ctbz/experts`, paginado); selo de CI lido do detalhe de cada MR; "novo", "revisado" e "commits novos" pelo `~/.mr-review-seen` (o mesmo do script, então as revisões do cron contam); `j`/`k`, Enter, `/`, `R`; relê a cada 60 s. Conferido lendo o GitLab de verdade. `ponytail:` "+N commits" sem o N (precisaria de uma chamada de compare por MR)
+- [x] diff do MR com as threads (resolver/reabrir) e rascunho manual (`C` ou `+` na linha, Editar/Descartar), "Arquivos do MR" na lateral, "Descartar todos" e "Publicar review" com a confirmação do protótipo
+- [x] revisor (port do `~/mr-review.sh`), com as 11 armadilhas cobertas por teste (`mrs::tests::armadilhas_do_script`):
+  - [x] `old_line` em linha de contexto (o awk do script, com `\ No newline`)
+  - [x] header `Content-Type` (toda escrita passa por `mrs::write`)
+  - [x] sucesso = status ok **e** `.id`
+  - [x] fetch de `refs/merge-requests/N/head`
+  - [x] colisão de basename
+  - [x] gate de pipeline (aviso na gaveta)
+  - [x] dedup por todas as notas existentes, GitLab Duo e bots inclusive
+  - [x] fallback para nota geral quando a linha está fora do diff (achado desmarcado, `arquivo:linha` no corpo)
+  - [x] MR fechado ou merged não publica
+  - [x] pular sha já revisado (e "Só commits novos desde a última revisão" quando o sha mudou)
+  - [x] rubrica + ferramentas restritas
+- [x] saída via `--json-schema` (`result.structured_output`), progresso por `stream-json --verbose` na gaveta "Revisão Claude", achados marcáveis viram rascunhos. Worktree do MR em `~/.cache/maestro/wt/<path>/<iid>`, clone base em `MAESTRO_REPOS` (padrão `~/repos-ctbz`). O parser foi conferido com uma saída real gravada em `src/fixtures/`; a gaveta não rodou de ponta a ponta num MR (custa uma revisão de verdade)
+- [x] publicar como uma review só: cada rascunho vira draft note e um `bulk_publish` solta tudo; se algum falha, nada é publicado e os que entraram não são reenviados na próxima tentativa; commit novo no MR depois do rascunho deixa ele vermelho com "Publicar como nota geral"; avisa se você tem rascunhos seus no GitLab feitos fora do Maestro (o `bulk_publish` leva junto); "Descartar todos" apaga os draft notes já criados. Testado contra um `glab` falso que grava cada escrita (`publica_como_uma_review`)
+- [x] tutorial da área: o passo do `TOURS.mrs` na lista
+
+**Falta (precisa de você):** o "Pronto quando" mexe no GitLab de verdade e notifica gente, então não rodei. Para conferir: abrir um MR de teste seu, comentar com `C` numa linha adicionada e numa de contexto, Publicar, e ver no GitLab os dois inline e uma notificação só.
 
 **Pronto quando:** num MR de teste, um comentário em linha adicionada e outro em linha de contexto aparecem inline no GitLab, e a review gera uma notificação só.
 

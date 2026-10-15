@@ -39,6 +39,8 @@ pub enum Cmd {
     SendReview,
     OpenMr,
     AttentionMenu,
+    Mrs,
+    MrReview,
     Vault(VaultGo),
     Go(crate::sidebar::Go),
 }
@@ -127,8 +129,8 @@ pub fn commands() -> Vec<Item> {
         c("Auditoria: Abrir relatório", "", None),
         c("Auditoria: Nova auditoria incremental", "", None),
         c("Ir para: Features", "", Some(Features)),
-        c("Ir para: MRs", "", None),
-        c("MR: Revisar com Claude", "⇧R", None),
+        c("Ir para: MRs", "", Some(Mrs)),
+        c("MR: Revisar com Claude", "⇧R", Some(MrReview)),
         c("Ajuda: Atalhos e decisões de UX", "?", None),
     ]
 }

@@ -17,6 +17,8 @@ mod mascot;
 mod mouse;
 mod mr;
 mod mr_tab;
+mod mrs;
+mod mrs_view;
 mod new_feature;
 mod palette;
 mod palette_cmd;

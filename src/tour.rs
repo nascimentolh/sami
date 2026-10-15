@@ -118,6 +118,17 @@ pub const REVIEW: &[Step] = &[
     },
 ];
 
+/// O `TOURS.mrs` do protótipo.
+pub const MRS: &[Step] = &[Step {
+    target: "ilist",
+    text: &[
+        T("MRs de outras pessoas."),
+        K("⇧R"),
+        T("roda o revisor; os achados viram rascunhos que só você vê até publicar."),
+    ],
+    wait: false,
+}];
+
 /// O `TOURS.vault` do protótipo.
 pub const VAULT: &[Step] = &[
     Step {

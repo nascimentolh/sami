@@ -11,6 +11,7 @@ use crate::{
     herdr::{self, Status},
     keys,
     mascot::{self, Note},
+    mrs_view::{self, MrsView},
     new_feature::{self, NewFeature},
     palette_cmd::{self, Cmd, CommandPalette},
     review::{self, Redo, Review},
@@ -50,6 +51,10 @@ pub struct Shell {
     /// o modo Vault do título (Features · MRs · Vault)
     vault: Option<Entity<VaultView>>,
     in_vault: bool,
+    /// o modo MRs (inbox, MR e revisor)
+    mrs: Option<Entity<MrsView>>,
+    in_mrs: bool,
+    want_publish: Option<(String, String)>,
     mascot: Option<(Note, usize, bool)>,
     mascot_seq: usize,
     mascot_frame: u64,
@@ -59,6 +64,21 @@ pub struct Shell {
     want_dialog: bool,
     left: bool,
 }
+
+/// As dicas da inbox e do MR (`HINTS.mrs`/`HINTS.mr` do protótipo).
+const MRS_HINTS: &[(&str, &str, bool)] = &[
+    ("j k", "navegar", true),
+    ("Enter", "abrir", true),
+    ("⇧R", "revisar com Claude", true),
+    ("/", "filtrar", true),
+];
+const MR_HINTS: &[(&str, &str, bool)] = &[
+    ("C", "comentar linha", true),
+    ("⇧R", "revisar com Claude", true),
+    ("Ctrl+⏎", "publicar", true),
+    ("Ctrl+Z", "desfazer descarte", false),
+    ("Esc", "voltar", true),
+];
 
 /// As dicas do modo Vault (`HINTS.vault` do protótipo).
 const VAULT_HINTS: &[(&str, &str, bool)] = &[
@@ -203,6 +223,9 @@ impl Shell {
             choice: None,
             vault: None,
             in_vault: false,
+            mrs: None,
+            in_mrs: false,
+            want_publish: None,
             mascot: None,
             mascot_seq: 0,
             mascot_frame: 0,
@@ -677,6 +700,24 @@ impl Shell {
         cx.notify();
     }
 
+    fn mrs_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<MrsView> {
+        if let Some(m) = &self.mrs {
+            return m.clone();
+        }
+        let m = cx.new(|cx| MrsView::new(self.theme.clone(), self.anchors.clone(), cx));
+        cx.subscribe_in(&m, window, |this, _, e: &mrs_view::Event, _, cx| match e {
+            mrs_view::Event::Toast(t) => this.toast(t.clone(), cx),
+            mrs_view::Event::AskPublish(a, b) => {
+                this.want_publish = Some((a.clone(), b.clone()));
+                cx.notify();
+            }
+        })
+        .detach();
+        cx.observe(&m, |_, _, cx| cx.notify()).detach();
+        self.mrs = Some(m.clone());
+        m
+    }
+
     fn vault_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<VaultView> {
         if let Some(v) = &self.vault {
             return v.clone();
@@ -1033,7 +1074,24 @@ impl Shell {
             Cmd::Herdr(a) => self.terminal.update(cx, |t, _| t.herdr_action(a)),
             Cmd::Interrupt => self.terminal.update(cx, |t, _| t.send(b"\x1b")),
             Cmd::ToggleLeft => self.left = !self.left,
-            Cmd::Features => self.in_vault = false,
+            Cmd::Features => {
+                self.in_vault = false;
+                self.in_mrs = false;
+            }
+            Cmd::Mrs | Cmd::MrReview => {
+                let m = self.mrs_view(window, cx);
+                self.in_mrs = true;
+                self.in_vault = false;
+                if cmd == Cmd::MrReview {
+                    m.update(cx, |m, cx| m.start_review(cx));
+                }
+                let f = m.read(cx).focus_handle();
+                window.focus(&f, cx);
+                if self.tour.is_none() && !tour::seen("mrs") {
+                    self.tour = Some((tour::MRS, "mrs", 0));
+                }
+                return cx.notify();
+            }
             Cmd::Vault(to) => {
                 let repo = self
                     .sidebar
@@ -1043,6 +1101,7 @@ impl Shell {
                 let v = self.vault_view(window, cx);
                 v.update(cx, |v, cx| v.go(&to, repo, cx));
                 self.in_vault = true;
+                self.in_mrs = false;
                 let f = v.read(cx).focus_handle();
                 window.focus(&f, cx);
                 if self.tour.is_none() && !tour::seen("vault") {
@@ -1310,8 +1369,21 @@ impl Shell {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Features, w, cx))),
                     )
-                    // ponytail: MRs é a Etapa 8; até lá fica visível e apagado
-                    .child(mode("MRs", false, None).opacity(0.45))
+                    .child(
+                        mode(
+                            "MRs",
+                            self.in_mrs,
+                            self.mrs
+                                .as_ref()
+                                .map(|m| m.read(cx).waiting())
+                                .filter(|n| *n > 0)
+                                .map(|n| n.to_string()),
+                        )
+                        .id("m-mrs")
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Mrs, w, cx))),
+                    )
                     .child(
                         mode("Vault", self.in_vault, None)
                             .id("m-vault")
@@ -1484,7 +1556,7 @@ impl Shell {
         }
     }
 
-    fn hints(&self) -> Div {
+    fn hints(&self, cx: &App) -> Div {
         let t = &self.theme;
         let mut bar = div()
             .h(px(22.))
@@ -1500,7 +1572,17 @@ impl Shell {
             .border_color(t.line)
             .overflow_hidden()
             .whitespace_nowrap();
-        for (k, label, ready) in if self.in_vault { VAULT_HINTS } else { HINTS } {
+        let mr_open = self.mrs.as_ref().is_some_and(|m| m.read(cx).in_mr());
+        let hints = if self.in_vault {
+            VAULT_HINTS
+        } else if self.in_mrs && mr_open {
+            MR_HINTS
+        } else if self.in_mrs {
+            MRS_HINTS
+        } else {
+            HINTS
+        };
+        for (k, label, ready) in hints {
             bar = bar.child(
                 div()
                     .flex()
@@ -1669,6 +1751,25 @@ impl Render for Shell {
             self.ask_learn(s, window, cx);
         }
         if self.confirm.is_none()
+            && let Some((title, text)) = self.want_publish.take()
+        {
+            let theme = self.theme.clone();
+            let c = cx.new(|cx| Confirm::new(theme, title, text, "Publicar", false, window, cx));
+            cx.subscribe_in(&c, window, |this, _, a: &Answer, window, cx| {
+                this.confirm = None;
+                if matches!(a, Answer::Ok)
+                    && let Some(m) = &this.mrs
+                {
+                    m.update(cx, |m, cx| m.publish(cx));
+                    let f = m.read(cx).focus_handle();
+                    window.focus(&f, cx);
+                }
+                cx.notify();
+            })
+            .detach();
+            self.confirm = Some(c);
+        }
+        if self.confirm.is_none()
             && let Some((wt, iid, branch)) = self.want_merged.take()
         {
             let title = format!("!{iid} foi mergeado. Remover a worktree {branch}?");
@@ -1743,8 +1844,13 @@ impl Render for Shell {
                     .when_some(self.vault.clone().filter(|_| self.in_vault), |d, v| {
                         d.child(v)
                     })
-                    .children(self.sidebar.clone().filter(|_| self.left && !self.in_vault))
-                    .when(!self.in_vault, |d| {
+                    .when_some(self.mrs.clone().filter(|_| self.in_mrs), |d, m| d.child(m))
+                    .children(
+                        self.sidebar
+                            .clone()
+                            .filter(|_| self.left && !self.in_vault && !self.in_mrs),
+                    )
+                    .when(!self.in_vault && !self.in_mrs, |d| {
                         d.child(
                             div()
                                 .flex_1()
@@ -1759,18 +1865,23 @@ impl Render for Shell {
                                 .child(div().flex_1().min_h_0().child(self.terminal.clone())),
                         )
                     })
-                    .children(self.review.clone().filter(|_| !self.in_vault).map(|r| {
-                        div()
-                            .w(relative(0.46))
-                            .max_w(px(640.))
-                            .flex_none()
-                            .h_full()
-                            .border_l_1()
-                            .border_color(t.line)
-                            .child(r)
-                    })),
+                    .children(
+                        self.review
+                            .clone()
+                            .filter(|_| !self.in_vault && !self.in_mrs)
+                            .map(|r| {
+                                div()
+                                    .w(relative(0.46))
+                                    .max_w(px(640.))
+                                    .flex_none()
+                                    .h_full()
+                                    .border_l_1()
+                                    .border_color(t.line)
+                                    .child(r)
+                            }),
+                    ),
             )
-            .child(self.hints())
+            .child(self.hints(cx))
             .child(self.status(cx))
             .children(overlay)
             .children(self.compare.clone().map(|d| {
