@@ -8,6 +8,8 @@ use crate::theme::Theme;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cmd {
     NextAttention,
+    NewFeature,
+    RemoveFeature,
     Blocked,
     Tutorial,
     Herdr(&'static str),
@@ -40,7 +42,7 @@ pub fn commands() -> Vec<Item> {
             Some(NextAttention),
         ),
         c("Fila: Ver tudo que espera por você", "", None),
-        c("Feature: Nova…", "Alt+N", None),
+        c("Feature: Nova…", "Alt+N", Some(NewFeature)),
         c("Feature: Rodar testes afetados", "", None),
         c("Feature: Comparar tentativas", "", None),
         c("Feature: Ver MR da feature", "", None),
@@ -50,7 +52,7 @@ pub fn commands() -> Vec<Item> {
         c("Vault: Atividade", "", None),
         c("Ir para: Vault", "", None),
         c("Ajuda: Rever tutorial desta tela", "", Some(Tutorial)),
-        c("Feature: Remover a atual…", "", None),
+        c("Feature: Remover a atual…", "", Some(RemoveFeature)),
         c("Feature: Ir para a que precisa de você", "", Some(Blocked)),
         c("Feature: Revisar mudanças", "Ctrl+Shift+E", None),
         c("Feature: Enviar comentários ao Claude", "Ctrl+⏎", None),

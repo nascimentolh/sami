@@ -9,11 +9,18 @@ use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
     changes::{self, Changes},
+    feature::{self, Inventory},
     herdr::{self, Agent, Herdr, Status, Tab, Workspace},
     session::{Sessions, Usage},
     theme::Theme,
     tour::{self, Anchors},
 };
+
+pub enum SidebarEvent {
+    NewFeature,
+}
+
+impl EventEmitter<SidebarEvent> for Sidebar {}
 
 /// Lateral "Features" do protótipo: agentes por repositório e, embaixo, os workspaces ("Terminais").
 pub struct Sidebar {
@@ -24,6 +31,7 @@ pub struct Sidebar {
     pub offline: bool,
     since: HashMap<String, (Status, Instant)>,
     pub usage: HashMap<String, Usage>,
+    pub inventories: Vec<Inventory>,
     changes: Option<Changes>,
     sessions: Arc<Mutex<Sessions>>,
     anchors: Anchors,
@@ -34,7 +42,6 @@ pub struct Sidebar {
 pub struct Repo {
     pub name: String,
     pub path: String,
-    pub branch: Option<String>,
     pub agents: Vec<Agent>,
 }
 
@@ -81,11 +88,11 @@ impl Sidebar {
                             .iter()
                             .map(|a| (a.pane_id.clone(), a.cwd.clone(), title(a)))
                             .collect();
-                        (jobs, this.top_repo(), this.sessions.clone())
+                        (jobs, this.top_worktree(), this.sessions.clone())
                     }) else {
                         break;
                     };
-                    let (usage, changes) = cx
+                    let (usage, changes, inventories) = cx
                         .background_executor()
                         .spawn(async move {
                             let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
@@ -96,13 +103,21 @@ impl Sidebar {
                                     Some((pane.clone(), s.usage(&home, &pane, &cwd, &title)?))
                                 })
                                 .collect();
-                            (usage, root.and_then(|r| changes::changes(&r)))
+                            (
+                                usage,
+                                root.and_then(|r| changes::changes(&r)),
+                                feature::inventories(),
+                            )
                         })
                         .await;
                     let _ = this.update(cx, |this, cx| {
-                        if this.usage != usage || this.changes != changes {
+                        if this.usage != usage
+                            || this.changes != changes
+                            || this.inventories != inventories
+                        {
                             this.usage = usage;
                             this.changes = changes;
+                            this.inventories = inventories;
                             cx.notify();
                         }
                     });
@@ -120,6 +135,7 @@ impl Sidebar {
             offline: false,
             since: HashMap::new(),
             usage: HashMap::new(),
+            inventories: Vec::new(),
             changes: None,
             sessions: Arc::default(),
             anchors,
@@ -157,10 +173,11 @@ impl Sidebar {
         let mut repos: Vec<Repo> = Vec::new();
         let mut loose = Vec::new();
         for a in &self.agents {
-            let Some(root) = herdr::repo_root(Path::new(&a.cwd)) else {
+            let Some(root) = herdr::repo_root(Path::new(&a.cwd)).map(herdr::main_repo) else {
                 loose.push(a);
                 continue;
             };
+            let root = root.as_path();
             let path = root.to_string_lossy().into_owned();
             match repos.iter_mut().find(|r| r.path == path) {
                 Some(r) => r.agents.push(a.clone()),
@@ -168,7 +185,6 @@ impl Sidebar {
                     name: root
                         .file_name()
                         .map_or(path.clone(), |n| n.to_string_lossy().into()),
-                    branch: herdr::branch(root),
                     path,
                     agents: vec![a.clone()],
                 }),
@@ -178,14 +194,19 @@ impl Sidebar {
         (repos, loose)
     }
 
-    /// Repositório do agente em foco (ou o primeiro): o do cabeçalho da lateral e o de "Mudanças".
-    pub fn top_repo(&self) -> Option<PathBuf> {
+    /// Worktree do agente em foco (ou do primeiro em git): a de "Mudanças".
+    pub fn top_worktree(&self) -> Option<PathBuf> {
         let focused = self.agents.iter().find(|a| a.focused);
         focused
             .into_iter()
             .chain(&self.agents)
             .find_map(|a| herdr::repo_root(Path::new(&a.cwd)))
             .map(Path::to_path_buf)
+    }
+
+    /// Repositório principal dessa worktree: o do cabeçalho e o da "Nova feature".
+    pub fn top_repo(&self) -> Option<PathBuf> {
+        self.top_worktree().map(|w| herdr::main_repo(&w))
     }
 
     pub fn today_cost(&self) -> f64 {
@@ -207,8 +228,9 @@ impl Sidebar {
         let label = |pane: &str| -> String {
             repos
                 .iter()
-                .find(|r| r.agents.iter().any(|a| a.pane_id == pane))
-                .and_then(|r| r.branch.clone())
+                .flat_map(|r| &r.agents)
+                .find(|a| a.pane_id == pane)
+                .and_then(branch_of)
                 .or_else(|| loose.iter().find(|a| a.pane_id == pane).map(|a| title(a)))
                 .unwrap_or_default()
         };
@@ -235,6 +257,10 @@ impl Sidebar {
     }
 
     // uma chamada curta ao socket; thread própria para não segurar a UI nem o contexto
+    pub fn herdr(&self) -> Arc<Herdr> {
+        self.herdr.clone()
+    }
+
     pub fn focus(&self, pane_id: String) {
         let h = self.herdr.clone();
         std::thread::spawn(move || h.focus(&pane_id));
@@ -280,10 +306,15 @@ impl Sidebar {
             Status::Idle | Status::Unknown => t.comment,
         };
         let attention = matches!(a.agent_status, Status::Blocked | Status::Done);
-        // ponytail: sem a porta (:3001) até a Etapa 3 dar uma porta por feature
+        let wt = herdr::repo_root(Path::new(&a.cwd)).map(Path::to_path_buf);
+        let port = self
+            .inventories
+            .iter()
+            .find(|i| i.worktrees.iter().any(|w| Some(&w.path) == wt.as_ref()))
+            .map_or(String::new(), |i| format!(":{} · ", i.port));
         let m2 = self.usage.get(&a.pane_id).map(|u| {
             (
-                format!("US$ {}", brl(u.cost)),
+                format!("{port}US$ {}", brl(u.cost)),
                 format!("ctx {}%{}", u.ctx, if u.ctx >= 80 { " ⚠" } else { "" }),
                 u.ctx >= 80,
             )
@@ -530,6 +561,10 @@ pub fn glyph(s: Status) -> (&'static str, &'static str) {
     }
 }
 
+fn branch_of(a: &Agent) -> Option<String> {
+    herdr::repo_root(Path::new(&a.cwd)).and_then(herdr::branch)
+}
+
 fn title(a: &Agent) -> String {
     let t = a.terminal_title_stripped.as_deref().unwrap_or(&a.agent);
     // o claude põe o spinner no começo do título
@@ -646,7 +681,7 @@ impl Render for Sidebar {
             for a in &repo.agents {
                 let pane = a.pane_id.clone();
                 let this = this.clone();
-                let row = self.agent_row(a, repo.branch.as_deref());
+                let row = self.agent_row(a, branch_of(a).as_deref());
                 list = list.child(self.row(row, move |cx| this.read(cx).focus(pane.clone())));
             }
         }
@@ -654,9 +689,12 @@ impl Render for Sidebar {
             list.relative()
                 .child(tour::anchor(&self.anchors, "features")),
         );
-        // ponytail: "Nova feature" é a Etapa 3; apagado até lá
         col = col.child(
             div()
+                .id("newf")
+                .cursor_pointer()
+                .hover(|d| d.text_color(t.fg).border_color(t.accent))
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::NewFeature)))
                 .relative()
                 .child(tour::anchor(&self.anchors, "newf"))
                 .mx(px(6.))
@@ -672,7 +710,6 @@ impl Render for Sidebar {
                 .justify_between()
                 .items_center()
                 .text_color(t.muted)
-                .opacity(0.45)
                 .child("+ Nova feature")
                 .child(
                     div()

@@ -1,10 +1,15 @@
 mod binds;
 mod braille;
 mod changes;
+mod confirm;
+mod feature;
+mod form;
 mod ghostty;
 mod herdr;
+mod jira;
 mod keys;
 mod mouse;
+mod new_feature;
 mod palette;
 mod palette_cmd;
 mod session;
@@ -33,6 +38,12 @@ fn main() {
     let herdr = Herdr::from_env().map(Arc::new);
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        cx.bind_keys([
+            KeyBinding::new("tab", terminal::SendTab, Some("Terminal")),
+            KeyBinding::new("shift-tab", terminal::SendBackTab, Some("Terminal")),
+            KeyBinding::new("tab", new_feature::NextField, Some("NewFeature")),
+            KeyBinding::new("shift-tab", new_feature::PrevField, Some("NewFeature")),
+        ]);
         // a sans do chrome do protótipo vai embutida: não depende de a máquina ter a fonte
         let _ = cx.text_system().add_fonts(vec![
             include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").into(),

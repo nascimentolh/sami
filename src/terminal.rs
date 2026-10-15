@@ -77,6 +77,9 @@ struct Frame {
     braille: Vec<(usize, usize, char, Hsla)>,
 }
 
+// o Root do gpui-kit liga Tab à navegação de foco; no terminal o Tab é do shell (autocomplete)
+actions!(terminal, [SendTab, SendBackTab]);
+
 /// O que rodar no PTY no lugar do `$SHELL`.
 pub struct Launch {
     pub program: String,
@@ -666,6 +669,15 @@ impl Render for TerminalView {
 
         div()
             .track_focus(&self.focus)
+            .key_context("Terminal")
+            .on_action(cx.listener(|this, _: &SendTab, _, cx| {
+                this.input(b"\t".to_vec());
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SendBackTab, _, cx| {
+                this.input(b"\x1b[Z".to_vec());
+                cx.notify();
+            }))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))

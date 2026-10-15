@@ -38,6 +38,7 @@ Regras:
 - [x] ligaduras e glifos da Nerd Font
 - [x] regra de atalhos: com o foco no terminal, Ctrl+tecla vai para o PTY; Ctrl+Shift+letra (e enter, `\`, setas) é do Maestro. Ctrl+Shift+- e Ctrl+Shift+2 seguem como `^_` e `^@`. Conferido com uma sonda de bytes no PTY
 - [x] `herdr`, `vim`, `btop` e `lazygit` rodam sem artefato visual (screenshot contra um Ghostty isolado; o braille do btop é desenhado como no Ghostty, não pela fonte)
+- [x] Tab e Shift+Tab chegam ao shell (o Root do gpui-kit ligava o Tab à navegação de foco e o autocomplete não funcionava)
 - [x] respostas ao app: cores (OSC 10/11/4), tamanho em pixels (CSI 14 t), cópia por OSC 52 (só escrita); variáveis `HERDR_*` removidas para o herdr rodar mesmo com o Maestro aberto de dentro de um pane
 - [ ] (por último, opcional) aproximação do `cursor_blaze`
 
@@ -63,13 +64,13 @@ Regras:
 
 ## Etapa 3: Features em worktrees, multi-repo e limpeza
 
-- [ ] Nova feature: branch, base e prompt → `herdr worktree create` → copiar os `.env*` ignorados → setup do repo (`.maestro.toml`) → `claude` com o prompt
-- [ ] **inventário da feature** em `~/.local/share/maestro/features/<id>.json`: worktrees, branches, refs, porta, projeto do compose e MRs que ela criou
-- [ ] `PORT` e `docker compose -p <repo>-<slug>` únicos por worktree
-- [ ] issue do Jira opcional preenche a branch e o prompt
+- [x] Nova feature (Alt+N, botão da lateral ou paleta), com o diálogo do protótipo: branch, base e prompt → `git worktree add` em `<repo>.wt/<slug>` → copiar os `.env*` ignorados → `workspace.create` no herdr (abas `claude` e `zsh`) → setup do repo (`.maestro.toml` ou lockfile) → `claude` com o prompt. O `worktree.create` do herdr não aceita env, por isso a worktree é do Maestro
+- [x] **inventário da feature** em `~/.local/share/maestro/features/<id>.json`: worktrees, branches (e se foram criadas pela feature), porta, projeto do compose e workspace. Gravado antes do herdr, para a Limpeza achar a worktree mesmo se algo falhar. MRs entram na Etapa 5
+- [x] `PORT` (3001…) e `COMPOSE_PROJECT_NAME=<repo>-<slug>` únicos por worktree, no env do workspace do herdr; a porta aparece no card
+- [x] issue do Jira opcional preenche a branch e o prompt, lida pelo MCP do Atlassian num `claude -p --model haiku` (~US$ 0,01, ~7 s)
 - [ ] melhor de N: 2 ou 3 tentativas `-a/-b/-c`, comparação e "ficar com esta" (remove as outras pelo inventário)
 - [ ] **multi-repo sob demanda:** "+ repo" (ex.: `k8s-configmap`, `vault-roleset`, `pipeline`) cria a worktree só quando pedido, manda `/add-dir` ao agente e registra no inventário; os MRs ficam ligados entre si
-- [ ] **concluir feature:** remove worktrees, branches locais mergeadas, `refs/maestro/<feature>/*`, para o compose e libera a porta. Avisa antes se houver algo não commitado ou não mergeado. Volume de banco do compose só sai com confirmação à parte
+- [x] **concluir feature** ("Feature: Remover a atual…", com o `confirmDlg` do protótipo): fecha o workspace, para o compose (sem `-v`: volume fica), remove a worktree, apaga a branch se mergeada na base, apaga `refs/maestro/<id>/*` e o inventário (libera a porta). Avisa antes do que não está commitado. Conferido num repo descartável: `worktree list` e `branch` voltaram ao estado de antes
 - [ ] worktree extra que terminou sem nenhuma mudança é removida na conclusão sem perguntar (está limpa)
 - [ ] comando **Limpeza**: lista órfãos (worktree sem feature, `refs/maestro` de feature removida, compose parado, branch local já mergeada) e apaga com confirmação
 - [ ] tutorial da área

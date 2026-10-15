@@ -32,6 +32,8 @@ use Part::*;
 pub struct Step {
     pub target: &'static str,
     pub text: &'static [Part],
+    /// o passo termina com o clique no próprio alvo (sem "Próximo")
+    pub wait: bool,
 }
 
 /// Os passos do `TOURS.feat` do protótipo.
@@ -47,6 +49,7 @@ pub const FEAT: &[Step] = &[
             K("Ctrl+Shift+Espaço"),
             T("leva ao próximo."),
         ],
+        wait: false,
     },
     Step {
         target: "features",
@@ -57,6 +60,7 @@ pub const FEAT: &[Step] = &[
                 "uma worktree com o próprio Claude, porta própria e custo. O símbolo mostra o estado.",
             ),
         ],
+        wait: false,
     },
     Step {
         target: "term",
@@ -67,12 +71,14 @@ pub const FEAT: &[Step] = &[
             B("Ctrl+Shift+tecla"),
             T("é do Maestro."),
         ],
+        wait: false,
     },
     Step {
         target: "newf",
         text: &[T(
-            "Crie uma feature: branch, issue do Jira, até 3 tentativas em paralelo.",
+            "Crie uma feature: branch, issue do Jira, até 3 tentativas em paralelo. Clique para ver.",
         )],
+        wait: true,
     },
 ];
 
@@ -215,6 +221,14 @@ pub fn overlay(
                     .rounded(px(8.))
                     .shadow_lg()
                     .child(words)
+                    .when(step.wait, |d| {
+                        d.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(t.accent)
+                                .child("↳ clique no destaque para continuar"),
+                        )
+                    })
                     .child(
                         div()
                             .flex()
@@ -235,14 +249,16 @@ pub fn overlay(
                                         btn("tour-skip", "Pular tutorial", false)
                                             .on_click(move |_, w, cx| on_skip(w, cx)),
                                     )
-                                    .child(
-                                        btn(
-                                            "tour-next",
-                                            if last { "Concluir" } else { "Próximo" },
-                                            true,
+                                    .when(!step.wait, |d| {
+                                        d.child(
+                                            btn(
+                                                "tour-next",
+                                                if last { "Concluir" } else { "Próximo" },
+                                                true,
+                                            )
+                                            .on_click(move |_, w, cx| on_next(w, cx)),
                                         )
-                                        .on_click(move |_, w, cx| on_next(w, cx)),
-                                    ),
+                                    }),
                             ),
                     ),
             )

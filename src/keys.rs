@@ -4,7 +4,9 @@ use gpui_kit::Keystroke;
 /// Ctrl+Shift+- fica de fora: é o ^_ (desfazer) do readline e do nano.
 pub fn is_app_shortcut(k: &Keystroke) -> bool {
     let m = &k.modifiers;
-    feature_digit(k).is_some()
+    // Alt+N: nova feature, como no protótipo
+    (m.alt && !m.control && !m.shift && k.key == "n")
+        || feature_digit(k).is_some()
         || m.control
             && m.shift
             && !m.alt
@@ -129,5 +131,7 @@ mod tests {
         assert!(is_app_shortcut(&ks("ctrl-shift-space")));
         assert!(!is_app_shortcut(&ks("ctrl-shift--")));
         assert!(!is_app_shortcut(&ks("ctrl-alt-shift-t")));
+        assert!(is_app_shortcut(&ks("alt-n")));
+        assert!(!is_app_shortcut(&ks("alt-b")));
     }
 }

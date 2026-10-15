@@ -210,6 +210,18 @@ pub fn repo_root(cwd: &Path) -> Option<&Path> {
     cwd.ancestors().find(|d| d.join(".git").exists())
 }
 
+/// O repositório principal de uma worktree (`.git` é um arquivo apontando para `<repo>/.git/worktrees/…`).
+pub fn main_repo(root: &Path) -> PathBuf {
+    std::fs::read_to_string(root.join(".git"))
+        .ok()
+        .and_then(|f| {
+            let dir = f.strip_prefix("gitdir:")?.trim().to_string();
+            let i = dir.find("/.git/worktrees/")?;
+            Some(PathBuf::from(&dir[..i]))
+        })
+        .unwrap_or_else(|| root.to_path_buf())
+}
+
 /// Branch atual lendo `.git/HEAD` direto (worktree: `.git` é um arquivo `gitdir: …`).
 pub fn branch(root: &Path) -> Option<String> {
     let dot = root.join(".git");
@@ -273,6 +285,8 @@ mod tests {
         .unwrap();
         assert_eq!(branch(&repo).as_deref(), Some("main"));
         assert_eq!(branch(&wt).as_deref(), Some("0123456"));
+        assert_eq!(main_repo(&wt), repo);
+        assert_eq!(main_repo(&repo), repo);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

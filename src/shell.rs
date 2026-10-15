@@ -1,10 +1,13 @@
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
+    confirm::{self, Answer, Confirm},
+    feature,
     herdr::{self, Status},
     keys,
+    new_feature::{self, NewFeature},
     palette_cmd::{self, Cmd, CommandPalette},
-    sidebar::Sidebar,
+    sidebar::{Sidebar, SidebarEvent},
     terminal::TerminalView,
     theme::Theme,
     tour::{self, Anchors},
@@ -20,6 +23,11 @@ pub struct Shell {
     tour: Option<usize>,
     anchors: Anchors,
     palette: Option<Entity<CommandPalette>>,
+    dialog: Option<Entity<NewFeature>>,
+    confirm: Option<Entity<Confirm>>,
+    toasts: Vec<(usize, String)>,
+    toast_seq: usize,
+    want_dialog: bool,
     left: bool,
 }
 
@@ -49,6 +57,12 @@ impl Shell {
         let sidebar_present = sidebar.is_some();
         if let Some(s) = &sidebar {
             cx.observe(s, |_, _, cx| cx.notify()).detach();
+            // o botão da lateral não tem a janela; o diálogo abre no próximo render
+            cx.subscribe(s, |this: &mut Self, _, _: &SidebarEvent, cx| {
+                this.want_dialog = true;
+                cx.notify();
+            })
+            .detach();
         }
         // o terminal notifica a cada saída do PTY; o chrome só redesenha quando o modo PREFIX muda
         cx.observe(&terminal, |this: &mut Self, t, cx| {
@@ -69,6 +83,11 @@ impl Shell {
             tour: (sidebar_present && !tour::seen("feat")).then_some(0),
             anchors,
             palette: None,
+            dialog: None,
+            confirm: None,
+            toasts: Vec::new(),
+            toast_seq: 0,
+            want_dialog: false,
             left: true,
         }
     }
@@ -76,6 +95,9 @@ impl Shell {
     fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         let m = &k.modifiers;
+        if m.alt && !m.control && !m.shift && k.key == "n" {
+            return self.open_new_feature(window, cx);
+        }
         if m.control && m.shift && !m.alt {
             match k.key.as_str() {
                 "p" => return self.toggle_palette(window, cx),
@@ -137,6 +159,119 @@ impl Shell {
         cx.notify();
     }
 
+    fn open_new_feature(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // o passo 4 do tutorial termina com este clique, como no protótipo
+        if self.tour == Some(tour::FEAT.len() - 1) {
+            self.end_tour(cx);
+        }
+        let Some(sidebar) = &self.sidebar else { return };
+        let s = sidebar.read(cx);
+        let (Some(repo), herdr) = (s.top_repo(), s.herdr()) else {
+            return;
+        };
+        let theme = self.theme.clone();
+        let d = cx.new(|cx| NewFeature::new(herdr, repo, theme, window, cx));
+        cx.subscribe_in(&d, window, |this, _, _: &new_feature::Event, window, cx| {
+            this.dialog = None;
+            window.focus(&this.terminal.read(cx).focus_handle(), cx);
+            cx.notify();
+        })
+        .detach();
+        self.dialog = Some(d);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    pub fn toast(&mut self, msg: String, cx: &mut Context<Self>) {
+        self.toast_seq += 1;
+        let id = self.toast_seq;
+        self.toasts.push((id, msg));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(2800))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.toasts.retain(|(i, _)| *i != id);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// O `removeFeatureDlg` do protótipo, apagando o que o inventário registrou.
+    fn remove_feature(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sidebar) = self.sidebar.clone() else {
+            return;
+        };
+        let s = sidebar.read(cx);
+        let focused = s.agents.iter().find(|a| a.focused).cloned();
+        let wt = s.top_worktree();
+        let herdr = s.herdr();
+        let Some(inv) = wt.as_deref().and_then(feature::find_by_path) else {
+            let main = wt.as_ref().is_some_and(|w| herdr::main_repo(w) == *w);
+            return self.toast(
+                if main {
+                    "A main é o checkout principal e não pode ser removida".into()
+                } else {
+                    "Este terminal não é uma feature criada pelo Maestro".into()
+                },
+                cx,
+            );
+        };
+        let p = feature::pending(&inv);
+        let working = focused.is_some_and(|a| a.agent_status == Status::Working);
+        let warn = if p.uncommitted > 0 {
+            format!(
+                "{} arquivo{} não commitado{} vai ser apagado junto com a worktree.",
+                p.uncommitted,
+                if p.uncommitted > 1 { "s" } else { "" },
+                if p.uncommitted > 1 { "s" } else { "" }
+            )
+        } else if working {
+            "O Claude ainda está trabalhando nela e vai ser encerrado.".into()
+        } else if p.merged {
+            format!(
+                "Nada pendente. A branch já foi mergeada em {} e sai junto com a pasta.",
+                inv.base
+            )
+        } else {
+            "Nada pendente. A branch local continua existindo; só a pasta da worktree sai.".into()
+        };
+        let text = format!(
+            "{warn} Pasta: {}",
+            crate::sidebar::tilde(&inv.worktrees[0].path.to_string_lossy())
+        );
+        let theme = self.theme.clone();
+        let title = format!("Remover a feature {}?", inv.branch);
+        let danger = p.uncommitted > 0 || working;
+        let c =
+            cx.new(|cx| Confirm::new(theme, title, text, "Remover worktree", danger, window, cx));
+        cx.subscribe_in(&c, window, move |this, _, a: &Answer, window, cx| {
+            this.confirm = None;
+            window.focus(&this.terminal.read(cx).focus_handle(), cx);
+            if matches!(a, Answer::Ok) {
+                let (herdr, inv) = (herdr.clone(), inv.clone());
+                cx.spawn(async move |this, cx| {
+                    let branch = inv.branch.clone();
+                    let r = cx
+                        .background_executor()
+                        .spawn(async move { feature::conclude(&herdr, &inv) })
+                        .await;
+                    let _ = this.update(cx, |this, cx| match r {
+                        Ok(_) => this.toast(format!("Worktree {branch} removida"), cx),
+                        Err(e) => this.toast(format!("Não deu para remover: {e}"), cx),
+                    });
+                })
+                .detach();
+            }
+            cx.notify();
+        })
+        .detach();
+        self.confirm = Some(c);
+        cx.notify();
+    }
+
     fn run(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
         let sidebar = self.sidebar.clone();
         let focus = |pane: Option<String>, cx: &mut Context<Self>| {
@@ -159,6 +294,8 @@ impl Shell {
             Cmd::Interrupt => self.terminal.update(cx, |t, _| t.send(b"\x1b")),
             Cmd::ToggleLeft => self.left = !self.left,
             Cmd::Features => {}
+            Cmd::NewFeature => return self.open_new_feature(window, cx),
+            Cmd::RemoveFeature => return self.remove_feature(window, cx),
         }
         window.focus(&self.terminal.read(cx).focus_handle(), cx);
         cx.stop_propagation();
@@ -621,6 +758,9 @@ fn resize_edges() -> impl Iterator<Item = Div> {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme.clone();
+        if std::mem::take(&mut self.want_dialog) {
+            self.open_new_feature(window, cx);
+        }
         let overlay = self.tour.and_then(|i| {
             let root = self.anchors.borrow().get("root").copied()?;
             let next = cx.listener(|this: &mut Self, _: &(), _, cx| this.advance_tour(cx));
@@ -681,6 +821,49 @@ impl Render for Shell {
             .child(self.hints())
             .child(self.status(cx))
             .children(overlay)
+            .children(self.confirm.clone().map(|d| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .pt(px(60.))
+                    .px(px(16.))
+                    .bg(rgba(0x0a0a1080))
+                    .child(d)
+            }))
+            .when(!self.toasts.is_empty(), |d| {
+                let mut col = div()
+                    .absolute()
+                    .bottom(px(56.))
+                    .left_0()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(8.));
+                for (_, m) in &self.toasts {
+                    col = col.child(confirm::toast(&t, m));
+                }
+                d.child(col)
+            })
+            .children(self.dialog.clone().map(|d| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .pt(px(60.))
+                    .px(px(16.))
+                    .bg(rgba(0x0a0a1080))
+                    .child(d)
+            }))
             .children(self.palette.clone().map(|p| {
                 // o `.scrim` do protótipo: clique fora fecha
                 div()
