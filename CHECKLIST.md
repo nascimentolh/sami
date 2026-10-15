@@ -14,8 +14,9 @@ Regras:
 
 ## Etapa 0: Fundação
 
-- [ ] `rustup` estável instalado
-- [ ] libs de sistema do GPUI instaladas (vulkan, xkbcommon, wayland/x11, fontconfig); `vulkaninfo` responde
+- [x] `rustup` estável instalado (rustc 1.99.0)
+- [x] ambiente reproduzível: `scripts/deps.sh` aqui + `install.sh` do [dotfiles](https://github.com/rafaelmaestro/dotfiles)
+- [ ] libs de sistema do GPUI instaladas (`scripts/deps.sh`); `vulkaninfo` responde
 - [ ] `cargo new` com `gpui` e `gpui-component`, ambos no mesmo rev de gpui
 - [ ] janela vazia abre com o tema Dracula
 - [ ] baseline medido: tempo até a primeira janela e RAM ociosa
