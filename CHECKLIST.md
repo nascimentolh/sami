@@ -84,10 +84,10 @@ Regras:
 - [x] aceitar e desfazer por bloco (`git apply -R` do bloco), com "Desfazer" no toast (reaplica o patch)
 - [x] comentários por linha (`C` ou o `+`) + suas edições → "Enviar ao Claude" (`agent.prompt`) num prompt só, no formato do protótipo. Conferido com `pane.read` no pane do agente
 - [x] checkpoints por turno: hook `UserPromptSubmit` só na worktree (`.claude/settings.local.json`, fora do git pelo `info/exclude`; o settings global fica intacto) chama `maestro checkpoint <id>`, que grava uma foto de todos os arquivos em `refs/maestro/<id>/t<n>` sem tocar no índice; seletor de turno no painel; "⏪ Voltar para antes do turno N" com Desfazer. Conferido byte a byte (arquivo novo, apagado e sem newline final)
-- [ ] testes afetados (ripwire + `--findRelatedTests`) num split
+- [x] testes afetados num split do herdr embaixo do Claude: `jest --findRelatedTests`, `vitest related` ou `cargo test` com os arquivos mudados (`ponytail:` sem o ripwire por enquanto; entra quando a lista de arquivos ficar grande)
 - [ ] editor de arquivo simples (gpui-component) e `Ctrl+Shift+L` (seleção → `@arquivo:linhas` no Claude)
 - [ ] arquivo alterado pelo Claude recarrega; com edição local, banner de conflito
-- [ ] tutorial da área
+- [x] tutorial da área: os 3 passos do `TOURS.review` do protótipo na primeira vez que o painel abre
 
 **Pronto quando:** você comenta 2 linhas e edita 1 e o prompt chega no pane certo (conferir com `herdr agent read`), e "voltar turno" restaura os arquivos byte a byte.
 

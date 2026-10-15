@@ -24,7 +24,8 @@ pub struct Shell {
     pub theme: Theme,
     pub font: String,
     prefix: bool,
-    tour: Option<usize>,
+    /// (passos, id do tutorial, passo atual)
+    tour: Option<(&'static [tour::Step], &'static str, usize)>,
     anchors: Anchors,
     palette: Option<Entity<CommandPalette>>,
     dialog: Option<Entity<NewFeature>>,
@@ -92,7 +93,7 @@ impl Shell {
             font,
             prefix: false,
             // tutorial da área na primeira vez, como no protótipo
-            tour: (sidebar_present && !tour::seen("feat")).then_some(0),
+            tour: (sidebar_present && !tour::seen("feat")).then_some((tour::FEAT, "feat", 0)),
             anchors,
             palette: None,
             dialog: None,
@@ -192,7 +193,7 @@ impl Shell {
 
     fn open_new_feature(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // o passo 4 do tutorial termina com este clique, como no protótipo
-        if self.tour == Some(tour::FEAT.len() - 1) {
+        if matches!(self.tour, Some((_, "feat", i)) if i == tour::FEAT.len() - 1) {
             self.end_tour(cx);
         }
         let Some(sidebar) = &self.sidebar else { return };
@@ -443,7 +444,8 @@ impl Shell {
         if !same {
             let branch = herdr::branch(&root).unwrap_or_default();
             let theme = self.theme.clone();
-            let r = cx.new(|cx| Review::new(root.clone(), branch.clone(), theme, cx));
+            let anchors = self.anchors.clone();
+            let r = cx.new(|cx| Review::new(root.clone(), branch.clone(), theme, anchors, cx));
             cx.subscribe_in(
                 &r,
                 window,
@@ -454,6 +456,27 @@ impl Shell {
                         cx.notify();
                     }
                     review::Event::Toast(m, redo) => this.toast_undo(m.clone(), redo.clone(), cx),
+                review::Event::RunTests(cmd) => {
+                    let root = r.read(cx).root.clone();
+                    let Some(s) = this.sidebar.clone() else { return };
+                    let s = s.read(cx);
+                    let target = s
+                        .agents
+                        .iter()
+                        .find(|a| std::path::Path::new(&a.cwd).starts_with(&root))
+                        .map(|a| a.pane_id.clone());
+                    let (herdr, cmd) = (s.herdr(), cmd.clone());
+                    // um split embaixo do Claude da feature, como no protótipo
+                    std::thread::spawn(move || {
+                        let p = herdr.call(
+                            "pane.split",
+                            serde_json::json!({ "direction": "down", "cwd": root, "target_pane_id": target, "focus": false }),
+                        )?;
+                        let pane = p["pane"]["pane_id"].as_str().unwrap_or_default().to_string();
+                        herdr.call("pane.send_text", serde_json::json!({ "pane_id": pane, "text": format!("{cmd}\r") }))
+                    });
+                    this.toast("Testes afetados rodando num split".into(), cx);
+                }
                     review::Event::Send(text) => {
                         let root = r.read(cx).root.clone();
                         let Some(s) = this.sidebar.clone() else {
@@ -500,6 +523,9 @@ impl Shell {
             )
             .detach();
             self.review = Some(r);
+            if self.tour.is_none() && !tour::seen("review") {
+                self.tour = Some((tour::REVIEW, "review", 0));
+            }
         }
         if let (Some(p), Some(r)) = (path, &self.review) {
             r.update(cx, |r, cx| r.show_file(p, cx));
@@ -527,7 +553,13 @@ impl Shell {
                 cx,
             ),
             Cmd::Feature(p) => focus(Some(p), cx),
-            Cmd::Tutorial => self.tour = Some(0),
+            Cmd::Tutorial => {
+                self.tour = Some(if self.review.is_some() {
+                    (tour::REVIEW, "review", 0)
+                } else {
+                    (tour::FEAT, "feat", 0)
+                })
+            }
             Cmd::Herdr(a) => self.terminal.update(cx, |t, _| t.herdr_action(a)),
             Cmd::Interrupt => self.terminal.update(cx, |t, _| t.send(b"\x1b")),
             Cmd::ToggleLeft => self.left = !self.left,
@@ -626,15 +658,16 @@ impl Shell {
 
     fn advance_tour(&mut self, cx: &mut Context<Self>) {
         match self.tour {
-            Some(i) if i + 1 < tour::FEAT.len() => self.tour = Some(i + 1),
+            Some((steps, id, i)) if i + 1 < steps.len() => self.tour = Some((steps, id, i + 1)),
             _ => return self.end_tour(cx),
         }
         cx.notify();
     }
 
     fn end_tour(&mut self, cx: &mut Context<Self>) {
-        self.tour = None;
-        tour::mark("feat");
+        if let Some((_, id, _)) = self.tour.take() {
+            tour::mark(id);
+        }
         cx.notify();
     }
 
@@ -1086,12 +1119,12 @@ impl Render for Shell {
         if let Some(p) = self.want_review.take() {
             self.toggle_review(p, window, cx);
         }
-        let overlay = self.tour.and_then(|i| {
+        let overlay = self.tour.and_then(|(steps, _, i)| {
             let root = self.anchors.borrow().get("root").copied()?;
             let next = cx.listener(|this: &mut Self, _: &(), _, cx| this.advance_tour(cx));
             let skip = cx.listener(|this: &mut Self, _: &(), _, cx| this.end_tour(cx));
             let o = tour::overlay(
-                tour::FEAT,
+                steps,
                 i,
                 &self.relative_anchors(root.origin),
                 root.size,

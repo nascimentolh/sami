@@ -7,6 +7,7 @@ use crate::{
     feature,
     form::{FieldEvent, TextField, button},
     theme::Theme,
+    tour::{self, Anchors},
 };
 
 /// Como desfazer o que o painel acabou de fazer (o "Desfazer" do toast).
@@ -21,6 +22,8 @@ pub enum Event {
     /// texto pronto para o Claude desta worktree
     Send(String),
     Toast(String, Option<Redo>),
+    /// comando de testes para rodar num split do herdr
+    RunTests(String),
 }
 
 struct Draft {
@@ -53,13 +56,20 @@ pub struct Review {
     scroll_to: Option<String>,
     focus: FocusHandle,
     theme: Theme,
+    anchors: Anchors,
     _poll: Task<()>,
 }
 
 impl EventEmitter<Event> for Review {}
 
 impl Review {
-    pub fn new(root: PathBuf, branch: String, theme: Theme, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        root: PathBuf,
+        branch: String,
+        theme: Theme,
+        anchors: Anchors,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // ponytail: relê o diff a cada 2 s com o painel aberto; `notify` quando ficar lento em repo grande
         let poll = cx.spawn({
             let root = root.clone();
@@ -128,6 +138,7 @@ impl Review {
             scroll_to: None,
             focus: cx.focus_handle(),
             theme,
+            anchors,
             _poll: poll,
         }
     }
@@ -621,6 +632,9 @@ impl Review {
                             .flex()
                             .gap(px(4.))
                             .font_family(t.sans)
+                            .when(fi == 0 && hi == 0, |x| {
+                                x.relative().child(tour::anchor(&self.anchors, "hunkacts"))
+                            })
                             .when(ok, |x| x.child("✓ aceito"))
                             .when(!ok, |x| {
                                 x.child(small(("acc", fi * 1000 + hi), "✓ Aceitar").on_click(
@@ -864,6 +878,8 @@ impl Render for Review {
                     .bg(t.panel)
                     .border_b_1()
                     .border_color(t.line)
+                    .relative()
+                    .child(tour::anchor(&self.anchors, "rtool"))
                     .child(self.turn_select(n, cx))
                     .when_some(self.turn, |x, tn| {
                         x.child(
@@ -872,7 +888,16 @@ impl Render for Review {
                         )
                     })
                     .child(div().flex_1())
-                    .child(div().opacity(0.45).child(button(&t, "aff", "▶ Testes afetados", false)))
+                    .child({
+                        let files: Vec<String> = self.files.iter().flatten().map(|f| f.path.clone()).collect();
+                        let cmd = diff::affected_tests(&self.root, &files);
+                        let ready = cmd.is_some() && !files.is_empty();
+                        button(&t, "aff", "▶ Testes afetados", false)
+                            .when(!ready, |x| x.opacity(0.45))
+                            .when_some(cmd.filter(|_| ready), |x, cmd| {
+                                x.on_click(cx.listener(move |_, _, _, cx| cx.emit(Event::RunTests(cmd.clone()))))
+                            })
+                    })
                     .when(n > 0, |x| {
                         x.child(button(&t, "acc-all", "✓ Aceitar tudo", false).on_click(cx.listener(|this, _, _, cx| {
                             for f in this.files.iter().flatten() {
@@ -916,6 +941,8 @@ impl Render for Review {
                     )
                     .child(
                         button(&t, "send", "Enviar ao Claude", true)
+                            .relative()
+                            .child(tour::anchor(&self.anchors, "send"))
                             .when(pend == 0 && edits == 0, |x| x.opacity(0.45))
                             .on_click(cx.listener(|this, _, _, cx| this.send(cx)))
                             .child(

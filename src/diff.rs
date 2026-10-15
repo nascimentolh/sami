@@ -161,6 +161,25 @@ pub fn worktree(root: &Path) -> Option<(String, Vec<FileDiff>)> {
     Some((base.into(), files))
 }
 
+/// "Testes afetados": o runner do repo com os arquivos mudados (o protótipo usa ripwire + `--findRelatedTests`).
+pub fn affected_tests(root: &Path, files: &[String]) -> Option<String> {
+    let pkg = std::fs::read_to_string(root.join("package.json")).unwrap_or_default();
+    let list = files
+        .iter()
+        .map(|f| format!("'{f}'"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if pkg.contains("\"vitest\"") {
+        Some(format!("npx vitest related --run {list}"))
+    } else if pkg.contains("\"jest\"") {
+        Some(format!("npx jest --findRelatedTests {list}"))
+    } else if root.join("Cargo.toml").exists() {
+        Some("cargo test".into())
+    } else {
+        None
+    }
+}
+
 /// O que mudou entre duas fotos (um turno do Claude).
 pub fn between(root: &Path, a: &str, b: &str) -> Vec<FileDiff> {
     parse(&git(root, &["diff", "--no-color", "--no-ext-diff", a, b]).unwrap_or_default())

@@ -82,6 +82,41 @@ pub const FEAT: &[Step] = &[
     },
 ];
 
+/// Os passos do `TOURS.review` do protótipo.
+pub const REVIEW: &[Step] = &[
+    Step {
+        target: "rtool",
+        text: &[
+            T("Escolha o"),
+            B("turno"),
+            T(
+                "do Claude para ver só o que mudou naquele passo, e volte para antes dele se precisar.",
+            ),
+        ],
+        wait: false,
+    },
+    Step {
+        target: "hunkacts",
+        text: &[
+            T("Cada bloco tem"),
+            B("Aceitar"),
+            T("e"),
+            B("Desfazer."),
+            T("As linhas são editáveis aqui mesmo: é um multibuffer, como no Zed."),
+        ],
+        wait: false,
+    },
+    Step {
+        target: "send",
+        text: &[
+            T("Comentários (tecla"),
+            K("C"),
+            T(") e suas edições vão juntos para o Claude desta feature."),
+        ],
+        wait: false,
+    },
+];
+
 fn state_path() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config/maestro/state.toml")
 }
