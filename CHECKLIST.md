@@ -47,14 +47,16 @@ Regras:
 
 ## Etapa 2: herdr + lateral de Features + paleta
 
-- [ ] cliente do socket do herdr (protocolo 19): requests e `events.subscribe`
-- [ ] lateral com workspaces e status do agente (precisa de você, trabalhando, pronto, parado); o clique faz `workspace.focus`
-- [ ] seção "Terminais" para workspaces fora de git
-- [ ] herdr com a lateral dele oculta dentro do Maestro
-- [ ] binds de split do `ghostty/config` viram ações do herdr
-- [ ] reconexão quando o server do herdr reinicia
+- [x] cliente do socket do herdr (protocolo 19): uma conexão por request (o servidor fecha depois de responder). Status de agente não tem evento global, só `pane.agent_status_changed` por pane; a lateral faz polling de `agent.list` a cada 500 ms (`ponytail:`), o que já cobre a reconexão
+- [x] shell igual ao protótipo aprovado: título com modos e Fila, lateral, dicas e status; o que ainda não existe aparece apagado no lugar dele
+- [x] lateral: um card por agente (o seu uso real é um workspace com vários Claudes em abas), agrupado por repo, com branch, glifo de status, tempo, linha de status e filete de atenção; o clique faz `agent.focus`. Ctrl+Shift+1…9 e Ctrl+Shift+Espaço (próximo da fila)
+- [x] "Terminais" = workspaces do herdr (`$ ~ · N abas · só terminal`), clique faz `workspace.focus`
+- [ ] herdr com a lateral dele oculta dentro do Maestro: o estado da lateral é do servidor, compartilhado com o herdr do Ghostty (decisão sua)
+- [x] binds de split do `ghostty/config` viram as teclas do herdr (prefixo do seu `config.toml`) escritas no PTY, para valer no cliente do Maestro
+- [ ] reconexão quando o server do herdr reinicia: a lateral retoma sozinha ("herdr: fora do ar" no status), mas o cliente herdr no PTY sai junto com o servidor e o Maestro fecha; falta reabrir o cliente em vez de fechar
 - [ ] paleta de comandos (`Ctrl+Shift+P`) com o atalho ao lado de cada item
 - [ ] tutorial da área (primeira vez)
+- [x] testes sempre na sessão `MAESTRO_HERDR_SESSION=maestro-test`, nunca na `default`
 
 **Pronto quando:** um `claude` pedindo permissão muda o status na lateral em menos de 1 s, e o clique leva ao pane certo.
 

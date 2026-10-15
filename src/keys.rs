@@ -1,17 +1,32 @@
 use gpui_kit::Keystroke;
 
-/// Ctrl+Shift+letra e os binds de split do ghostty/config são do Maestro, nunca do PTY.
-/// Ctrl+Shift+- e Ctrl+Shift+2 ficam de fora: são o ^_ e o ^@ do readline e do emacs.
+/// Ctrl+Shift+letra/dígito/espaço e os binds de split do ghostty/config são do Maestro, nunca do PTY.
+/// Ctrl+Shift+- fica de fora: é o ^_ (desfazer) do readline e do nano.
 pub fn is_app_shortcut(k: &Keystroke) -> bool {
     let m = &k.modifiers;
-    m.control
-        && m.shift
-        && !m.alt
-        && (k.key.len() == 1 && k.key.as_bytes()[0].is_ascii_alphabetic()
-            || matches!(
-                k.key.as_str(),
-                "enter" | "\\" | "up" | "down" | "left" | "right"
-            ))
+    feature_digit(k).is_some()
+        || m.control
+            && m.shift
+            && !m.alt
+            && (k.key.len() == 1 && k.key.as_bytes()[0].is_ascii_alphanumeric()
+                || matches!(
+                    k.key.as_str(),
+                    "enter" | "space" | "\\" | "up" | "down" | "left" | "right"
+                ))
+}
+
+/// Ctrl+Shift+1…9. No X11 o GPUI entrega o símbolo do layout US sem o Shift (Ctrl+`!` em vez de Ctrl+Shift+1).
+pub fn feature_digit(k: &Keystroke) -> Option<usize> {
+    let m = &k.modifiers;
+    if !m.control || m.alt || k.key.len() != 1 {
+        return None;
+    }
+    let i = match "123456789".find(&k.key) {
+        Some(i) if m.shift => i,
+        Some(_) => return None,
+        None => "!@#$%^&*(".find(&k.key)?,
+    };
+    Some(i + 1)
 }
 
 pub fn to_bytes(k: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
@@ -106,6 +121,12 @@ mod tests {
         assert!(is_app_shortcut(&ks("ctrl-shift-enter")));
         assert!(is_app_shortcut(&ks("ctrl-shift-left")));
         assert!(!is_app_shortcut(&ks("ctrl-t")));
+        assert!(is_app_shortcut(&ks("ctrl-shift-1")));
+        assert!(is_app_shortcut(&ks("ctrl-!")));
+        assert_eq!(feature_digit(&ks("ctrl-!")), Some(1));
+        assert_eq!(feature_digit(&ks("ctrl-shift-9")), Some(9));
+        assert_eq!(feature_digit(&ks("ctrl-1")), None);
+        assert!(is_app_shortcut(&ks("ctrl-shift-space")));
         assert!(!is_app_shortcut(&ks("ctrl-shift--")));
         assert!(!is_app_shortcut(&ks("ctrl-alt-shift-t")));
     }

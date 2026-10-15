@@ -3873,6 +3873,8 @@ dependencies = [
  "alacritty_terminal",
  "futures",
  "gpui-kit",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

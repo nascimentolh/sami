@@ -1,6 +1,7 @@
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 
+#[derive(Clone)]
 pub struct Palette {
     pub ansi: [Rgb; 16],
     pub foreground: Rgb,

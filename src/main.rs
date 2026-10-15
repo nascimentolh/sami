@@ -1,13 +1,24 @@
+mod binds;
 mod braille;
 mod ghostty;
+mod herdr;
 mod keys;
 mod mouse;
 mod palette;
+mod shell;
+mod sidebar;
 mod terminal;
+mod theme;
+
+use std::sync::Arc;
 
 use ghostty::GhosttyConfig;
 use gpui_kit::*;
+use herdr::Herdr;
+use shell::Shell;
+use sidebar::Sidebar;
 use terminal::TerminalView;
+use theme::Theme;
 
 fn main() {
     // aberto de dentro de um pane do herdr, o herdr do Maestro se recusaria a rodar ("nested herdr")
@@ -15,7 +26,8 @@ fn main() {
         // SAFETY: ainda não há outras threads
         unsafe { std::env::remove_var(key) };
     }
-    gpui_kit::application().run(|cx| {
+    let herdr = Herdr::from_env().map(Arc::new);
+    gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         let config = GhosttyConfig::load();
         let options = WindowOptions {
@@ -31,9 +43,18 @@ fn main() {
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
-            let view = cx.new(|cx| TerminalView::new(config, cx));
-            window.focus(&view.read(cx).focus_handle(), cx);
-            view
+            let theme = Theme::new(&config.palette, config.font_family.clone());
+            let font = format!("{} {}", config.font_family, config.font_size_pt);
+            let command = herdr.as_ref().map(|h| h.command());
+            let binds = if herdr.is_some() {
+                binds::Binds::load()
+            } else {
+                binds::Binds::default()
+            };
+            let terminal = cx.new(|cx| TerminalView::new(config, command, binds, cx));
+            let sidebar = herdr.map(|h| cx.new(|cx| Sidebar::new(h, theme.clone(), cx)));
+            window.focus(&terminal.read(cx).focus_handle(), cx);
+            cx.new(|cx| Shell::new(sidebar, terminal, theme, font, cx))
         })
         .expect("abrir a janela");
     });

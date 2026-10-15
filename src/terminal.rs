@@ -15,7 +15,7 @@ use alacritty_terminal::{
 use futures::{StreamExt, channel::mpsc};
 use gpui_kit::*;
 
-use crate::{braille, ghostty::GhosttyConfig, keys, mouse, palette::Palette};
+use crate::{binds::Binds, braille, ghostty::GhosttyConfig, keys, mouse, palette::Palette};
 
 #[derive(Clone)]
 struct Listener(mpsc::UnboundedSender<TermEvent>);
@@ -57,6 +57,7 @@ pub struct TerminalView {
     cell: Size<Pixels>,
     scroll_rem: f32,
     last_motion: Option<GridPoint>,
+    binds: Binds,
     _events: Task<()>,
 }
 
@@ -73,12 +74,17 @@ struct Frame {
     braille: Vec<(usize, usize, char, Hsla)>,
 }
 
-fn hsla(c: Rgb) -> Hsla {
+pub fn hsla(c: Rgb) -> Hsla {
     rgb(((c.r as u32) << 16) | ((c.g as u32) << 8) | c.b as u32).into()
 }
 
 impl TerminalView {
-    pub fn new(config: GhosttyConfig, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        config: GhosttyConfig,
+        command: Option<(String, Vec<String>)>,
+        binds: Binds,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (tx, mut rx) = mpsc::unbounded();
         let listener = Listener(tx);
         let grid = GridSize {
@@ -100,7 +106,7 @@ impl TerminalView {
             ("COLORTERM".to_string(), "truecolor".to_string()),
         ]);
         let options = tty::Options {
-            shell: None,
+            shell: command.map(|(program, args)| tty::Shell::new(program, args)),
             working_directory: None,
             drain_on_exit: true,
             env,
@@ -139,6 +145,7 @@ impl TerminalView {
             cell: size(px(10.), px(20.)),
             scroll_rem: 0.,
             last_motion: None,
+            binds,
             _events: events,
         }
     }
@@ -200,6 +207,11 @@ impl TerminalView {
             _ => false,
         };
         if handled {
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(bytes) = self.binds.get(k) {
+            self.input(bytes.to_vec());
             cx.stop_propagation();
             return;
         }
@@ -391,16 +403,17 @@ impl TerminalView {
         }
     }
 
-    fn fit(&mut self, viewport: Size<Pixels>, cell: Size<Pixels>) {
-        let cols = (((viewport.width - self.padding.x * 2.) / cell.width).floor() as usize).max(2);
-        let lines =
-            (((viewport.height - self.padding.y * 2.) / cell.height).floor() as usize).max(1);
+    /// `area` é o espaço do canvas, já sem o padding.
+    fn fit(&mut self, area: Size<Pixels>, cell: Size<Pixels>, cx: &mut Context<Self>) {
+        let cols = ((area.width / cell.width).floor() as usize).max(2);
+        let lines = ((area.height / cell.height).floor() as usize).max(1);
         let grid = GridSize { cols, lines };
         if grid != self.grid {
             self.grid = grid;
             self.term.lock().resize(grid);
             self.pty
                 .on_resize(window_size(grid, cell.width, cell.height));
+            cx.notify();
         }
     }
 
@@ -603,7 +616,6 @@ impl Render for TerminalView {
             .floor(),
         };
         self.cell = cell;
-        self.fit(window.viewport_size(), cell);
         let entity = cx.entity();
         let focus = self.focus.clone();
         let focused = self.focus.is_focused(window) && window.is_window_active();
@@ -633,6 +645,8 @@ impl Render for TerminalView {
                 canvas(
                     |_, _, _| {},
                     move |bounds, _, window, cx| {
+                        // a grade segue o espaço real do terminal (a lateral ocupa parte da janela)
+                        entity.update(cx, |this, cx| this.fit(bounds.size, cell, cx));
                         window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
                         let origin = bounds.origin;
                         for (row, col, width, color) in frame.backgrounds {
