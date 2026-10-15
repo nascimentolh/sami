@@ -1,7 +1,6 @@
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 
-// ponytail: Dracula do ~/.config/ghostty/config fixo aqui; vira leitura do config no passo 3 da Etapa 1
 pub struct Palette {
     pub ansi: [Rgb; 16],
     pub foreground: Rgb,

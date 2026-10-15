@@ -14,11 +14,7 @@ use alacritty_terminal::{
 use futures::{StreamExt, channel::mpsc};
 use gpui_kit::*;
 
-use crate::{keys, mouse, palette::Palette};
-
-const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
-const FONT_PT: f32 = 13.0;
-const PADDING: f32 = 8.0;
+use crate::{ghostty::GhosttyConfig, keys, mouse, palette::Palette};
 
 #[derive(Clone)]
 struct Listener(mpsc::UnboundedSender<TermEvent>);
@@ -52,6 +48,10 @@ pub struct TerminalView {
     pty: Notifier,
     focus: FocusHandle,
     palette: Palette,
+    font: Font,
+    font_size: Pixels,
+    padding: Point<Pixels>,
+    opacity: f32,
     grid: GridSize,
     cell: Size<Pixels>,
     scroll_rem: f32,
@@ -67,6 +67,7 @@ struct Segment {
 struct Frame {
     rows: Vec<Vec<Segment>>,
     backgrounds: Vec<(usize, usize, usize, Hsla)>,
+    hollow_cursor: Option<(usize, usize)>,
 }
 
 fn hsla(c: Rgb) -> Hsla {
@@ -74,18 +75,22 @@ fn hsla(c: Rgb) -> Hsla {
 }
 
 impl TerminalView {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(config: GhosttyConfig, cx: &mut Context<Self>) -> Self {
         let (tx, mut rx) = mpsc::unbounded();
         let listener = Listener(tx);
         let grid = GridSize {
             cols: 80,
             lines: 24,
         };
-        let config = Config {
+        let term_config = Config {
             scrolling_history: 10_000,
             ..Default::default()
         };
-        let term = Arc::new(FairMutex::new(Term::new(config, &grid, listener.clone())));
+        let term = Arc::new(FairMutex::new(Term::new(
+            term_config,
+            &grid,
+            listener.clone(),
+        )));
 
         let env = HashMap::from([
             ("TERM".to_string(), "xterm-256color".to_string()),
@@ -118,7 +123,15 @@ impl TerminalView {
             term,
             pty,
             focus: cx.focus_handle(),
-            palette: Palette::default(),
+            palette: config.palette,
+            font: Font {
+                features: FontFeatures(Arc::new(config.font_features)),
+                ..font(config.font_family)
+            },
+            // ponytail: 96 DPI fixo (conferido com o Ghostty); ler o DPI do monitor quando houver tela HiDPI
+            font_size: px(config.font_size_pt * 96. / 72.),
+            padding: point(px(config.padding_x), px(config.padding_y)),
+            opacity: config.background_opacity,
             grid,
             cell: size(px(10.), px(20.)),
             scroll_rem: 0.,
@@ -197,8 +210,8 @@ impl TerminalView {
     }
 
     fn grid_point(&self, position: Point<Pixels>) -> (GridPoint, Side) {
-        let x = (f32::from(position.x) - PADDING).max(0.) / f32::from(self.cell.width);
-        let y = (f32::from(position.y) - PADDING).max(0.) / f32::from(self.cell.height);
+        let x = (f32::from(position.x - self.padding.x)).max(0.) / f32::from(self.cell.width);
+        let y = (f32::from(position.y - self.padding.y)).max(0.) / f32::from(self.cell.height);
         let col = (x as usize).min(self.grid.cols - 1);
         let line = (y as usize).min(self.grid.lines - 1);
         let side = if x.fract() < 0.5 {
@@ -336,8 +349,9 @@ impl TerminalView {
     }
 
     fn fit(&mut self, viewport: Size<Pixels>, cell: Size<Pixels>) {
-        let cols = (((viewport.width - px(2. * PADDING)) / cell.width).floor() as usize).max(2);
-        let lines = (((viewport.height - px(2. * PADDING)) / cell.height).floor() as usize).max(1);
+        let cols = (((viewport.width - self.padding.x * 2.) / cell.width).floor() as usize).max(2);
+        let lines =
+            (((viewport.height - self.padding.y * 2.) / cell.height).floor() as usize).max(1);
         let grid = GridSize { cols, lines };
         if grid != self.grid {
             self.grid = grid;
@@ -347,7 +361,7 @@ impl TerminalView {
         }
     }
 
-    fn snapshot(&self, font: &Font) -> Frame {
+    fn snapshot(&self, font: &Font, focused: bool) -> Frame {
         let term = self.term.lock();
         let content = term.renderable_content();
         let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR);
@@ -361,6 +375,7 @@ impl TerminalView {
 
         let mut rows: Vec<Vec<Segment>> = (0..self.grid.lines).map(|_| Vec::new()).collect();
         let mut backgrounds = Vec::new();
+        let mut hollow_cursor = None;
 
         for indexed in content.display_iter {
             let cell = indexed.cell;
@@ -386,8 +401,12 @@ impl TerminalView {
                 bg = self.palette.selection_bg;
             }
             if show_cursor && (row, col) == cursor {
-                fg = self.palette.cursor_text;
-                bg = self.palette.cursor;
+                if focused {
+                    fg = self.palette.cursor_text;
+                    bg = self.palette.cursor;
+                } else {
+                    hollow_cursor = Some((row as usize, col));
+                }
             }
             if cell.flags.contains(Flags::HIDDEN) {
                 fg = bg;
@@ -454,7 +473,57 @@ impl TerminalView {
                 }),
             }
         }
-        Frame { rows, backgrounds }
+        Frame {
+            rows,
+            backgrounds,
+            hollow_cursor,
+        }
+    }
+}
+
+/// Glifo a glifo na coluna dele: o avanço natural da fonte (10.4px) desalinharia da grade inteira.
+/// A ligadura sobrevive porque a JetBrains Mono troca glifos sem mudar a quantidade.
+fn paint_on_grid(
+    shaped: &ShapedLine,
+    runs: &[TextRun],
+    at: Point<Pixels>,
+    cell: Size<Pixels>,
+    font_size: Pixels,
+    window: &mut Window,
+) {
+    let baseline = at.y + (cell.height - shaped.ascent - shaped.descent) / 2. + shaped.ascent;
+    let mut start = 0;
+    let spans: Vec<_> = runs
+        .iter()
+        .map(|r| {
+            start += r.len;
+            (start - r.len..start, r)
+        })
+        .collect();
+    for run in &shaped.runs {
+        for glyph in &run.glyphs {
+            let Some((_, style)) = spans.iter().find(|(r, _)| r.contains(&glyph.index)) else {
+                continue;
+            };
+            let origin = point(at.x + cell.width * glyph.index as f32, baseline);
+            let _ = if glyph.is_emoji {
+                window.paint_emoji(origin, run.font_id, glyph.id, font_size)
+            } else {
+                window.paint_glyph(origin, run.font_id, glyph.id, font_size, style.color)
+            };
+        }
+    }
+    for (range, style) in &spans {
+        if let Some(u) = &style.underline {
+            let y = baseline + px(2.);
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(at.x + cell.width * range.start as f32, y),
+                    size(cell.width * range.len() as f32, u.thickness),
+                ),
+                u.color.unwrap_or(style.color),
+            ));
+        }
     }
 }
 
@@ -469,25 +538,32 @@ fn window_size(grid: GridSize, cell_width: Pixels, cell_height: Pixels) -> Windo
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let font = font(FONT_FAMILY);
-        let font_size = px(FONT_PT * 96. / 72.);
+        let font = self.font.clone();
+        let font_size = self.font_size;
         let text_system = window.text_system().clone();
         let font_id = text_system.resolve_font(&font);
+        // grade em pixels inteiros, como o Ghostty (13pt: 10.4x22.9 vira 10x22); o glifo fica no tamanho real
         let cell = Size {
             width: text_system
                 .advance(font_id, font_size, 'm')
                 .map(|s| s.width)
-                .unwrap_or(font_size * 0.6),
+                .unwrap_or(font_size * 0.6)
+                .floor(),
             height: (text_system.ascent(font_id, font_size)
                 + text_system.descent(font_id, font_size).abs())
-            .ceil(),
+            .floor(),
         };
         self.cell = cell;
         self.fit(window.viewport_size(), cell);
         let entity = cx.entity();
         let focus = self.focus.clone();
-        let frame = self.snapshot(&font);
-        let bg = hsla(self.palette.background);
+        let focused = self.focus.is_focused(window) && window.is_window_active();
+        let frame = self.snapshot(&font, focused);
+        let cursor_color = hsla(self.palette.cursor);
+        let bg = Hsla {
+            a: self.opacity,
+            ..hsla(self.palette.background)
+        };
 
         div()
             .track_focus(&self.focus)
@@ -502,7 +578,8 @@ impl Render for TerminalView {
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .size_full()
             .bg(bg)
-            .p(px(PADDING))
+            .px(self.padding.x)
+            .py(self.padding.y)
             .child(
                 canvas(
                     |_, _, _| {},
@@ -519,26 +596,43 @@ impl Render for TerminalView {
                                 color,
                             ));
                         }
+                        // sem foco o Ghostty desenha o cursor vazado
+                        if let Some((row, col)) = frame.hollow_cursor {
+                            let at = point(
+                                origin.x + cell.width * col as f32,
+                                origin.y + cell.height * row as f32,
+                            );
+                            window.paint_quad(outline(
+                                Bounds::new(at, cell),
+                                cursor_color,
+                                BorderStyle::Solid,
+                            ));
+                        }
                         for (row, segments) in frame.rows.into_iter().enumerate() {
                             for seg in segments {
                                 let at = point(
                                     origin.x + cell.width * seg.col as f32,
                                     origin.y + cell.height * row as f32,
                                 );
+                                let ascii = seg.text.is_ascii();
                                 let shaped = window.text_system().shape_line(
                                     seg.text.into(),
                                     font_size,
                                     &seg.runs,
                                     None,
                                 );
-                                let _ = shaped.paint(
-                                    at,
-                                    cell.height,
-                                    TextAlign::Left,
-                                    None,
-                                    window,
-                                    cx,
-                                );
+                                if !ascii {
+                                    let _ = shaped.paint(
+                                        at,
+                                        cell.height,
+                                        TextAlign::Left,
+                                        None,
+                                        window,
+                                        cx,
+                                    );
+                                    continue;
+                                }
+                                paint_on_grid(&shaped, &seg.runs, at, cell, font_size, window);
                             }
                         }
                     },

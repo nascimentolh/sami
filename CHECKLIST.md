@@ -33,8 +33,9 @@ Regras:
 - [x] mouse reporting SGR e X10 para os apps (testado em unidade; validar com vim/btop/herdr no item abaixo)
 - [x] acentos e teclas mortas no layout `us intl` (ç, é, ã): exigiu patch em `vendor/xim-ctext` (o ibus manda a pré-edição em Latin-1 e a crate derrubava o processo)
 - [x] resize propaga para o PTY (SIGWINCH): a grade se ajusta ao tamanho da janela
-- [ ] parser do `~/.config/ghostty/config` com teste: `font-family`, `font-size`, `font-feature`, `palette`, `background`, `foreground`, `selection-*`, `cursor-*`, `window-padding-*`, `background-opacity`, `unfocused-split-opacity` e `keybind`
-- [ ] ligaduras e glifos da Nerd Font
+- [x] parser do `~/.config/ghostty/config` com teste: `font-family`, `font-size`, `font-feature`, `palette`, `background`, `foreground`, `selection-*`, `cursor-*`, `window-padding-*` e `background-opacity`. O `keybind` fica para a Etapa 2 (binds de split viram ações do herdr). O `unfocused-split-opacity` não se aplica: os splits são do herdr, dentro de um terminal só
+- [x] grade em pixels inteiros como a do Ghostty (13 pt a 96 DPI: célula 10×22, glifo no tamanho real); cursor vazado sem foco. Conferido com screenshot lado a lado de um Ghostty isolado: colunas alinhadas
+- [x] ligaduras e glifos da Nerd Font
 - [ ] regra de atalhos: com o foco no terminal, Ctrl+tecla vai para o PTY; Ctrl+Shift+tecla é do Maestro
 - [ ] `herdr`, `vim`, `btop` e `lazygit` rodam sem artefato visual
 - [ ] (por último, opcional) aproximação do `cursor_blaze`
