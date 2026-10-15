@@ -3,6 +3,7 @@ use gpui_kit::Modifiers;
 pub const LEFT: u8 = 0;
 pub const MIDDLE: u8 = 1;
 pub const RIGHT: u8 = 2;
+pub const NO_BUTTON: u8 = 3;
 pub const WHEEL_UP: u8 = 64;
 pub const WHEEL_DOWN: u8 = 65;
 const DRAG: u8 = 32;
@@ -76,6 +77,10 @@ mod tests {
         assert_eq!(
             report(LEFT, false, false, 0, 0, &none, false).unwrap(),
             vec![0x1b, b'[', b'M', 35, 33, 33]
+        );
+        assert_eq!(
+            report(NO_BUTTON, true, true, 4, 1, &none, true).unwrap(),
+            b"\x1b[<35;5;2M"
         );
         assert!(report(LEFT, false, true, 300, 0, &none, false).is_none());
     }

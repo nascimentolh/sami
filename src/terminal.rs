@@ -7,14 +7,15 @@ use alacritty_terminal::{
     index::{Column, Line, Point as GridPoint, Side},
     selection::{Selection, SelectionType},
     sync::FairMutex,
+    term::ClipboardType,
     term::{Config, Term, TermMode, cell::Flags},
     tty,
-    vte::ansi::Rgb,
+    vte::ansi::{Color, NamedColor, Rgb},
 };
 use futures::{StreamExt, channel::mpsc};
 use gpui_kit::*;
 
-use crate::{ghostty::GhosttyConfig, keys, mouse, palette::Palette};
+use crate::{braille, ghostty::GhosttyConfig, keys, mouse, palette::Palette};
 
 #[derive(Clone)]
 struct Listener(mpsc::UnboundedSender<TermEvent>);
@@ -55,6 +56,7 @@ pub struct TerminalView {
     grid: GridSize,
     cell: Size<Pixels>,
     scroll_rem: f32,
+    last_motion: Option<GridPoint>,
     _events: Task<()>,
 }
 
@@ -68,6 +70,7 @@ struct Frame {
     rows: Vec<Vec<Segment>>,
     backgrounds: Vec<(usize, usize, usize, Hsla)>,
     hollow_cursor: Option<(usize, usize)>,
+    braille: Vec<(usize, usize, char, Hsla)>,
 }
 
 fn hsla(c: Rgb) -> Hsla {
@@ -135,6 +138,7 @@ impl TerminalView {
             grid,
             cell: size(px(10.), px(20.)),
             scroll_rem: 0.,
+            last_motion: None,
             _events: events,
         }
     }
@@ -148,6 +152,28 @@ impl TerminalView {
             TermEvent::Wakeup => cx.notify(),
             TermEvent::PtyWrite(text) => self.pty.notify(text.into_bytes()),
             TermEvent::Exit | TermEvent::ChildExit(_) => cx.quit(),
+            // OSC 10/11/4: herdr e vim perguntam as cores para se adaptar ao tema
+            TermEvent::ColorRequest(i, reply) => {
+                let color = match i {
+                    i if i < 256 => Color::Indexed(i as u8),
+                    257 => Color::Named(NamedColor::Background),
+                    258 => Color::Named(NamedColor::Cursor),
+                    _ => Color::Named(NamedColor::Foreground),
+                };
+                let rgb = self.palette.resolve(color, self.term.lock().colors());
+                self.pty.notify(reply(rgb).into_bytes());
+            }
+            TermEvent::TextAreaSizeRequest(reply) => {
+                let size = window_size(self.grid, self.cell.width, self.cell.height);
+                self.pty.notify(reply(size).into_bytes());
+            }
+            // OSC 52 só de escrita; ler o clipboard pelo terminal vazaria dados para qualquer programa
+            TermEvent::ClipboardStore(ClipboardType::Clipboard, text) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(text))
+            }
+            TermEvent::ClipboardStore(ClipboardType::Selection, text) => {
+                cx.write_to_primary(ClipboardItem::new_string(text))
+            }
             _ => {}
         }
     }
@@ -281,18 +307,32 @@ impl TerminalView {
     }
 
     fn on_mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if e.pressed_button != Some(MouseButton::Left) {
+        if let Some(sgr) = self.mouse_report(e.modifiers.shift) {
+            let mode = *self.term.lock().mode();
+            let button = match e.pressed_button {
+                Some(MouseButton::Left) => Some(mouse::LEFT),
+                Some(MouseButton::Middle) => Some(mouse::MIDDLE),
+                Some(MouseButton::Right) => Some(mouse::RIGHT),
+                _ => None,
+            };
+            // 1002 reporta só arrasto; 1003 (herdr) também o movimento sem botão
+            let report = match button {
+                Some(b) if mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION) => {
+                    Some(b)
+                }
+                None if mode.contains(TermMode::MOUSE_MOTION) => Some(mouse::NO_BUTTON),
+                _ => None,
+            };
+            let cell = self.grid_point(e.position).0;
+            if let Some(b) = report
+                && self.last_motion != Some(cell)
+            {
+                self.last_motion = Some(cell);
+                self.send_mouse(b, true, true, e.position, &e.modifiers, sgr);
+            }
             return;
         }
-        if let Some(sgr) = self.mouse_report(e.modifiers.shift) {
-            if self
-                .term
-                .lock()
-                .mode()
-                .intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
-            {
-                self.send_mouse(mouse::LEFT, true, true, e.position, &e.modifiers, sgr);
-            }
+        if e.pressed_button != Some(MouseButton::Left) {
             return;
         }
         let (point, side) = self.grid_point(e.position);
@@ -376,6 +416,7 @@ impl TerminalView {
         let mut rows: Vec<Vec<Segment>> = (0..self.grid.lines).map(|_| Vec::new()).collect();
         let mut backgrounds = Vec::new();
         let mut hollow_cursor = None;
+        let mut braille = Vec::new();
 
         for indexed in content.display_iter {
             let cell = indexed.cell;
@@ -420,6 +461,10 @@ impl TerminalView {
                 backgrounds.push((row as usize, col, width, hsla(bg)));
             }
 
+            if cell.zerowidth().is_none() && ('\u{2800}'..='\u{28ff}').contains(&cell.c) {
+                braille.push((row as usize, col, cell.c, hsla(fg)));
+                continue;
+            }
             let mut text = String::from(cell.c);
             if let Some(extra) = cell.zerowidth() {
                 text.extend(extra);
@@ -477,6 +522,7 @@ impl TerminalView {
             rows,
             backgrounds,
             hollow_cursor,
+            braille,
         }
     }
 }
@@ -595,6 +641,26 @@ impl Render for TerminalView {
                                 Bounds::new(at, size(cell.width * width as f32, cell.height)),
                                 color,
                             ));
+                        }
+                        for (row, col, c, color) in frame.braille {
+                            let at = point(
+                                origin.x + cell.width * col as f32,
+                                origin.y + cell.height * row as f32,
+                            );
+                            let dots = braille::dots(
+                                c,
+                                f32::from(cell.width) as u32,
+                                f32::from(cell.height) as u32,
+                            );
+                            for (x, y, w) in dots.into_iter().flatten() {
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        point(at.x + px(x as f32), at.y + px(y as f32)),
+                                        size(px(w as f32), px(w as f32)),
+                                    ),
+                                    color,
+                                ));
+                            }
                         }
                         // sem foco o Ghostty desenha o cursor vazado
                         if let Some((row, col)) = frame.hollow_cursor {

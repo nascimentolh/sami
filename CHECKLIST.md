@@ -30,14 +30,15 @@ Regras:
 - [x] PTY rodando `$SHELL` com o env do usuário (o `tty` + `EventLoop` do próprio `alacritty_terminal`; sem `portable-pty`)
 - [x] `alacritty_terminal` + renderer de grid no GPUI: 16, 256 e truecolor; bold, italic e underline; cursor block (verificado com screenshot: starship, eza com ícones, ligaduras)
 - [x] input: teclas e modificadores, colar (Ctrl+Shift+V, Shift+Insert, botão do meio) com bracketed paste, rolagem do histórico (roda e Shift+PageUp/Down), seleção (simples, palavra com 2 cliques, linha com 3) e cópia (Ctrl+Shift+C e copy-on-select na PRIMARY)
-- [x] mouse reporting SGR e X10 para os apps (testado em unidade; validar com vim/btop/herdr no item abaixo)
+- [x] mouse reporting SGR e X10 para os apps, com arrasto (1002) e movimento sem botão (1003); validado com clique real no herdr
 - [x] acentos e teclas mortas no layout `us intl` (ç, é, ã): exigiu patch em `vendor/xim-ctext` (o ibus manda a pré-edição em Latin-1 e a crate derrubava o processo)
 - [x] resize propaga para o PTY (SIGWINCH): a grade se ajusta ao tamanho da janela
 - [x] parser do `~/.config/ghostty/config` com teste: `font-family`, `font-size`, `font-feature`, `palette`, `background`, `foreground`, `selection-*`, `cursor-*`, `window-padding-*` e `background-opacity`. O `keybind` fica para a Etapa 2 (binds de split viram ações do herdr). O `unfocused-split-opacity` não se aplica: os splits são do herdr, dentro de um terminal só
 - [x] grade em pixels inteiros como a do Ghostty (13 pt a 96 DPI: célula 10×22, glifo no tamanho real); cursor vazado sem foco. Conferido com screenshot lado a lado de um Ghostty isolado: colunas alinhadas
 - [x] ligaduras e glifos da Nerd Font
 - [ ] regra de atalhos: com o foco no terminal, Ctrl+tecla vai para o PTY; Ctrl+Shift+tecla é do Maestro
-- [ ] `herdr`, `vim`, `btop` e `lazygit` rodam sem artefato visual
+- [x] `herdr`, `vim`, `btop` e `lazygit` rodam sem artefato visual (screenshot contra um Ghostty isolado; o braille do btop é desenhado como no Ghostty, não pela fonte)
+- [x] respostas ao app: cores (OSC 10/11/4), tamanho em pixels (CSI 14 t), cópia por OSC 52 (só escrita); variáveis `HERDR_*` removidas para o herdr rodar mesmo com o Maestro aberto de dentro de um pane
 - [ ] (por último, opcional) aproximação do `cursor_blaze`
 
 **Pronto quando:** num screenshot lado a lado, Ghostty e Maestro mostram `ls`, `git diff`, o prompt do starship e o `btop` iguais, com diferença só no shader do cursor. Digitar não tem atraso perceptível (medir tecla → pixel).
