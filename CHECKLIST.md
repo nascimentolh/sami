@@ -16,12 +16,12 @@ Regras:
 
 - [x] `rustup` estável instalado (rustc 1.99.0)
 - [x] ambiente reproduzível: `scripts/deps.sh` aqui + `install.sh` do [dotfiles](https://github.com/rafaelmaestro/dotfiles)
-- [ ] libs de sistema do GPUI instaladas (`scripts/deps.sh`); `vulkaninfo` responde
-- [ ] `cargo new` com `gpui` e `gpui-component`, ambos no mesmo rev de gpui
-- [ ] janela vazia abre com o tema Dracula
-- [ ] baseline medido: tempo até a primeira janela e RAM ociosa
+- [x] libs de sistema do GPUI instaladas (`scripts/deps.sh`); `vulkaninfo` responde (Intel RPL-S, Mesa)
+- [x] crate com `gpui-kit =0.7.0` (traz o gpui e o gpui-component já casados) e `Cargo.lock` versionado
+- [x] janela vazia abre com o fundo Dracula
+- [x] baseline (`MAESTRO_STARTUP=1`, build dev com dependências em opt-level 2): primeiro frame em ~100 ms (915 ms na primeira execução, com o cache de shaders frio); RSS ~100 MB
 - [ ] CI no GitHub Actions: `cargo fmt --check`, `clippy -D warnings`, `cargo test`
-- [ ] `~/.config/maestro/config.toml` lido, com defaults quando não existe
+- [ ] ~~config.toml~~ adiado: entra quando existir a primeira opção configurável
 
 **Pronto quando:** `cargo run` abre a janela em menos de 300 ms e o CI passa.
 
