@@ -1,5 +1,19 @@
 use gpui_kit::Keystroke;
 
+/// Ctrl+Shift+letra e os binds de split do ghostty/config são do Maestro, nunca do PTY.
+/// Ctrl+Shift+- e Ctrl+Shift+2 ficam de fora: são o ^_ e o ^@ do readline e do emacs.
+pub fn is_app_shortcut(k: &Keystroke) -> bool {
+    let m = &k.modifiers;
+    m.control
+        && m.shift
+        && !m.alt
+        && (k.key.len() == 1 && k.key.as_bytes()[0].is_ascii_alphabetic()
+            || matches!(
+                k.key.as_str(),
+                "enter" | "\\" | "up" | "down" | "left" | "right"
+            ))
+}
+
 pub fn to_bytes(k: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
     let m = &k.modifiers;
     let arrow = |c: u8| {
@@ -42,6 +56,7 @@ pub fn to_bytes(k: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
         let c = k.key.chars().next().filter(|_| k.key.len() == 1)?;
         let byte = match c {
             'a'..='z' => c as u8 - b'a' + 1,
+            '@' | '2' => 0,
             '[' => 0x1b,
             '\\' => 0x1c,
             ']' => 0x1d,
@@ -82,5 +97,16 @@ mod tests {
         assert_eq!(to_bytes(&ks("shift-tab"), false), Some(b"\x1b[Z".to_vec()));
         assert_eq!(to_bytes(&ks("a"), false), None);
         assert_eq!(to_bytes(&ks("alt-b"), false), Some(b"\x1bb".to_vec()));
+        assert_eq!(to_bytes(&ks("ctrl-shift-2"), false), Some(vec![0]));
+    }
+
+    #[test]
+    fn atalhos_do_maestro() {
+        assert!(is_app_shortcut(&ks("ctrl-shift-t")));
+        assert!(is_app_shortcut(&ks("ctrl-shift-enter")));
+        assert!(is_app_shortcut(&ks("ctrl-shift-left")));
+        assert!(!is_app_shortcut(&ks("ctrl-t")));
+        assert!(!is_app_shortcut(&ks("ctrl-shift--")));
+        assert!(!is_app_shortcut(&ks("ctrl-alt-shift-t")));
     }
 }

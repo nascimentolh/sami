@@ -36,12 +36,14 @@ Regras:
 - [x] parser do `~/.config/ghostty/config` com teste: `font-family`, `font-size`, `font-feature`, `palette`, `background`, `foreground`, `selection-*`, `cursor-*`, `window-padding-*` e `background-opacity`. O `keybind` fica para a Etapa 2 (binds de split viram ações do herdr). O `unfocused-split-opacity` não se aplica: os splits são do herdr, dentro de um terminal só
 - [x] grade em pixels inteiros como a do Ghostty (13 pt a 96 DPI: célula 10×22, glifo no tamanho real); cursor vazado sem foco. Conferido com screenshot lado a lado de um Ghostty isolado: colunas alinhadas
 - [x] ligaduras e glifos da Nerd Font
-- [ ] regra de atalhos: com o foco no terminal, Ctrl+tecla vai para o PTY; Ctrl+Shift+tecla é do Maestro
+- [x] regra de atalhos: com o foco no terminal, Ctrl+tecla vai para o PTY; Ctrl+Shift+letra (e enter, `\`, setas) é do Maestro. Ctrl+Shift+- e Ctrl+Shift+2 seguem como `^_` e `^@`. Conferido com uma sonda de bytes no PTY
 - [x] `herdr`, `vim`, `btop` e `lazygit` rodam sem artefato visual (screenshot contra um Ghostty isolado; o braille do btop é desenhado como no Ghostty, não pela fonte)
 - [x] respostas ao app: cores (OSC 10/11/4), tamanho em pixels (CSI 14 t), cópia por OSC 52 (só escrita); variáveis `HERDR_*` removidas para o herdr rodar mesmo com o Maestro aberto de dentro de um pane
 - [ ] (por último, opcional) aproximação do `cursor_blaze`
 
 **Pronto quando:** num screenshot lado a lado, Ghostty e Maestro mostram `ls`, `git diff`, o prompt do starship e o `btop` iguais, com diferença só no shader do cursor. Digitar não tem atraso perceptível (medir tecla → pixel).
+
+**Resultado (2026-10-15):** `ls`, `git diff`, prompt do starship, `btop` e `lazygit` iguais ao Ghostty, com duas diferenças conhecidas: o shader do cursor e o tamanho de alguns ícones da Nerd Font, porque o Ghostty encolhe o ícone para caber na célula (ex.: o logo do Ubuntu no starship). Latência medida no build release: da tecla até o frame montado, com eco do zsh, mediana de 5,4 ms (máx. 9,3 ms), mais até um frame para aparecer na tela.
 
 ## Etapa 2: herdr + lateral de Features + paleta
 

@@ -203,6 +203,9 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
+        if keys::is_app_shortcut(k) {
+            return;
+        }
         let app_cursor = self.term.lock().mode().contains(TermMode::APP_CURSOR);
         if let Some(bytes) = keys::to_bytes(k, app_cursor) {
             self.input(bytes);
