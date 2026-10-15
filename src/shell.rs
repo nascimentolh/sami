@@ -3,6 +3,7 @@ use gpui_kit::{prelude::FluentBuilder, *};
 use crate::{
     herdr::{self, Status},
     keys,
+    palette_cmd::{self, Cmd, CommandPalette},
     sidebar::Sidebar,
     terminal::TerminalView,
     theme::Theme,
@@ -18,6 +19,8 @@ pub struct Shell {
     prefix: bool,
     tour: Option<usize>,
     anchors: Anchors,
+    palette: Option<Entity<CommandPalette>>,
+    left: bool,
 }
 
 /// Dicas do modo Features do protótipo; `false` = ainda não existe e aparece apagada.
@@ -65,12 +68,21 @@ impl Shell {
             // tutorial da área na primeira vez, como no protótipo
             tour: (sidebar_present && !tour::seen("feat")).then_some(0),
             anchors,
+            palette: None,
+            left: true,
         }
     }
 
-    fn on_key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         let m = &k.modifiers;
+        if m.control && m.shift && !m.alt {
+            match k.key.as_str() {
+                "p" => return self.toggle_palette(window, cx),
+                "b" => return self.run(Cmd::ToggleLeft, window, cx),
+                _ => {}
+            }
+        }
         let Some(sidebar) = &self.sidebar else { return };
         let s = sidebar.read(cx);
         let target = if let Some(n) = keys::feature_digit(k) {
@@ -84,6 +96,73 @@ impl Shell {
             s.focus(pane);
         }
         cx.stop_propagation();
+    }
+
+    fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette.take().is_some() {
+            window.focus(&self.terminal.read(cx).focus_handle(), cx);
+        } else {
+            let mut items = palette_cmd::commands();
+            if let Some(s) = &self.sidebar {
+                let s = s.read(cx);
+                for (i, (pane, label)) in s.features().into_iter().enumerate() {
+                    items.push(palette_cmd::Item {
+                        title: format!("Feature: {label}"),
+                        key: if i < 9 {
+                            format!("Ctrl+Shift+{}", i + 1)
+                        } else {
+                            String::new()
+                        },
+                        cmd: Some(Cmd::Feature(pane)),
+                    });
+                }
+            }
+            let theme = self.theme.clone();
+            let p = cx.new(|cx| CommandPalette::new(theme, items, cx));
+            cx.subscribe_in(&p, window, |this, _, e: &palette_cmd::Event, window, cx| {
+                let cmd = match e {
+                    palette_cmd::Event::Run(c) => Some(c.clone()),
+                    palette_cmd::Event::Close => None,
+                };
+                this.toggle_palette(window, cx);
+                if let Some(c) = cmd {
+                    this.run(c, window, cx);
+                }
+            })
+            .detach();
+            window.focus(&p.read(cx).focus_handle(), cx);
+            self.palette = Some(p);
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn run(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
+        let sidebar = self.sidebar.clone();
+        let focus = |pane: Option<String>, cx: &mut Context<Self>| {
+            if let (Some(s), Some(p)) = (&sidebar, pane) {
+                s.read(cx).focus(p);
+            }
+        };
+        match cmd {
+            Cmd::NextAttention => focus(
+                sidebar.as_ref().and_then(|s| s.read(cx).next_attention()),
+                cx,
+            ),
+            Cmd::Blocked => focus(
+                sidebar.as_ref().and_then(|s| s.read(cx).first_blocked()),
+                cx,
+            ),
+            Cmd::Feature(p) => focus(Some(p), cx),
+            Cmd::Tutorial => self.tour = Some(0),
+            Cmd::Herdr(a) => self.terminal.update(cx, |t, _| t.herdr_action(a)),
+            Cmd::Interrupt => self.terminal.update(cx, |t, _| t.send(b"\x1b")),
+            Cmd::ToggleLeft => self.left = !self.left,
+            Cmd::Features => {}
+        }
+        window.focus(&self.terminal.read(cx).focus_handle(), cx);
+        cx.stop_propagation();
+        cx.notify();
     }
 
     fn advance_tour(&mut self, cx: &mut Context<Self>) {
@@ -138,7 +217,7 @@ impl Shell {
             .on_click(move |_, window, _| action(window))
     }
 
-    fn title(&self, cx: &App) -> Div {
+    fn title(&self, cx: &mut Context<Self>) -> Div {
         let t = &self.theme;
         let (blocked, attention) = self.sidebar.as_ref().map_or((0, 0), |s| {
             let a = &s.read(cx).agents;
@@ -252,22 +331,26 @@ impl Shell {
                     .gap(px(10.))
                     .items_center()
                     .text_color(t.muted)
-                    .opacity(0.45)
                     .child(
                         div()
                             .flex()
                             .gap(px(6.))
+                            .opacity(0.45)
                             .child(self.kbd("Ctrl+Shift+O"))
                             .child("arquivo"),
                     )
                     .child(
                         div()
+                            .id("cmds")
                             .flex()
                             .gap(px(6.))
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, w, cx| this.toggle_palette(w, cx)))
                             .child(self.kbd("Ctrl+Shift+P"))
                             .child("comandos"),
                     )
-                    .child(self.kbd("?")),
+                    .child(div().opacity(0.45).child(self.kbd("?"))),
             )
     }
 
@@ -580,7 +663,7 @@ impl Render for Shell {
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .children(self.sidebar.clone())
+                    .children(self.sidebar.clone().filter(|_| self.left))
                     .child(
                         div()
                             .flex_1()
@@ -598,6 +681,30 @@ impl Render for Shell {
             .child(self.hints())
             .child(self.status(cx))
             .children(overlay)
+            .children(self.palette.clone().map(|p| {
+                // o `.scrim` do protótipo: clique fora fecha
+                div()
+                    .id("scrim")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .pt(px(60.))
+                    .px(px(16.))
+                    .bg(rgba(0x0a0a1080))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, w, cx| this.toggle_palette(w, cx)),
+                    )
+                    .child(
+                        div()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(p),
+                    )
+            }))
             // por último, para ficar por cima do conteúdo
             .children(resize_edges())
     }

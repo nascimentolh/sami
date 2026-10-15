@@ -6,6 +6,7 @@ mod herdr;
 mod keys;
 mod mouse;
 mod palette;
+mod palette_cmd;
 mod session;
 mod shell;
 mod sidebar;

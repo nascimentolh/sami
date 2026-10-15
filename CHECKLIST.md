@@ -54,8 +54,8 @@ Regras:
 - [x] "Terminais" = workspaces do herdr (`$ ~ · N abas · só terminal`), clique faz `workspace.focus`
 - [x] herdr sem o chrome dele: o Maestro usa a sessão própria `maestro` com `~/.config/maestro/herdr.toml` (seu `config.toml` + lateral oculta e barra de abas fixa na linha 0, que o Maestro esconde). A sessão `default` do Ghostty não muda
 - [x] binds de split do `ghostty/config` viram as teclas do herdr (prefixo do seu `config.toml`) escritas no PTY, para valer no cliente do Maestro
-- [ ] reconexão quando o server do herdr reinicia: a lateral retoma sozinha ("herdr: fora do ar" no status), mas o cliente herdr no PTY sai junto com o servidor e o Maestro fecha; falta reabrir o cliente em vez de fechar
-- [ ] paleta de comandos (`Ctrl+Shift+P`) com o atalho ao lado de cada item
+- [x] reconexão quando o server do herdr reinicia: a lateral retoma sozinha ("herdr: fora do ar" no status) e o cliente é reaberto enquanto sair com erro (servidor caiu); detach (Ctrl+A d) fecha o Maestro como antes
+- [x] paleta de comandos (`Ctrl+Shift+P`, ou clique em "comandos"): o `CMDS` do protótipo na mesma ordem, com o atalho ao lado, o mesmo fuzzy e "Feature: <branch>" na busca; Esc ou clique fora fecham. Os comandos de etapas futuras aparecem apagados. Ctrl+Shift+B mostra/oculta a lateral
 - [x] tutorial da área (primeira vez): os 4 passos do `TOURS.feat` do protótipo, com destaque e balão; Esc fecha; estado em `~/.config/maestro/state.toml`. O passo 4 termina em "Concluir" até a Nova feature existir
 - [x] testes sempre na sessão `MAESTRO_HERDR_SESSION=maestro-test`, nunca na `default`
 

@@ -189,7 +189,36 @@ impl Sidebar {
     }
 
     pub fn today_cost(&self) -> f64 {
-        self.usage.values().map(|u| u.today).sum()
+        self.usage.values().map(|u| u.today).sum::<f64>() + 0.0
+    }
+
+    pub fn first_blocked(&self) -> Option<String> {
+        let order = self.order();
+        order.into_iter().find(|id| {
+            self.agents
+                .iter()
+                .any(|a| &a.pane_id == id && a.agent_status == Status::Blocked)
+        })
+    }
+
+    /// (pane, nome na lateral) na ordem da tela, para a paleta.
+    pub fn features(&self) -> Vec<(String, String)> {
+        let (repos, loose) = self.repos();
+        let label = |pane: &str| -> String {
+            repos
+                .iter()
+                .find(|r| r.agents.iter().any(|a| a.pane_id == pane))
+                .and_then(|r| r.branch.clone())
+                .or_else(|| loose.iter().find(|a| a.pane_id == pane).map(|a| title(a)))
+                .unwrap_or_default()
+        };
+        self.order()
+            .into_iter()
+            .map(|p| {
+                let l = label(&p);
+                (p, l)
+            })
+            .collect()
     }
 
     /// Ordem em que aparecem na lateral (Ctrl+Shift+1…9).

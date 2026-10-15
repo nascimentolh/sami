@@ -168,6 +168,17 @@ impl TerminalView {
         }
     }
 
+    /// Ação do herdr pedida pela paleta, como se a tecla fosse digitada aqui.
+    pub fn herdr_action(&mut self, name: &str) {
+        if let Some(bytes) = self.binds.action(name) {
+            self.input(bytes.to_vec());
+        }
+    }
+
+    pub fn send(&mut self, bytes: &[u8]) {
+        self.input(bytes.to_vec());
+    }
+
     /// O último byte enviado foi o prefixo do herdr: a barra mostra o modo PREFIX até a próxima tecla.
     pub fn prefix_pending(&self) -> bool {
         self.prefix_pending

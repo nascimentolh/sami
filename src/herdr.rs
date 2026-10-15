@@ -127,12 +127,17 @@ impl Herdr {
                 path.to_string_lossy().into_owned(),
             ));
         }
-        let args = match self.session.as_str() {
-            "default" => vec![],
-            name => vec!["--session".into(), name.into()],
-        };
+        let mut args = vec![
+            "-c".into(),
+            // servidor caiu (sai com erro): reabre o cliente, que sobe o servidor de novo; detach (0) fecha
+            "until herdr \"$@\"; do sleep 1; done".into(),
+            "herdr".into(),
+        ];
+        if self.session != "default" {
+            args.extend(["--session".into(), self.session.clone()]);
+        }
         Launch {
-            program: "herdr".into(),
+            program: "sh".into(),
             args,
             env,
             hidden_top: 1,

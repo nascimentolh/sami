@@ -7,6 +7,8 @@ pub struct Binds {
     binds: Vec<(Combo, Vec<u8>)>,
     /// bytes do prefixo do herdr (Ctrl+A no seu config), para a barra mostrar "PREFIX"
     pub prefix: Option<Vec<u8>>,
+    /// teclas de cada ação do herdr (`split_vertical`, `new_tab`…), para a paleta
+    actions: Vec<(&'static str, Vec<u8>)>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -78,7 +80,23 @@ impl Binds {
                 binds.push((combo, keys));
             }
         }
-        Self { binds, prefix }
+        let actions = HERDR_DEFAULTS
+            .iter()
+            .filter(|(k, _)| *k != "prefix")
+            .filter_map(|(k, _)| Some((*k, bytes(&herdr_key(k)?, prefix.as_deref()?)?)))
+            .collect();
+        Self {
+            binds,
+            prefix,
+            actions,
+        }
+    }
+
+    pub fn action(&self, name: &str) -> Option<&[u8]> {
+        self.actions
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, b)| b.as_slice())
     }
 
     pub fn get(&self, k: &Keystroke) -> Option<&[u8]> {
@@ -175,5 +193,6 @@ mod tests {
         assert_eq!(b.get(&k("ctrl-shift-t")), Some(&b"\x01c"[..]));
         assert_eq!(b.get(&k("ctrl-shift-q")), None);
         assert_eq!(b.get(&k("ctrl-enter")), None);
+        assert_eq!(b.action("zoom"), Some(&b"\x01z"[..]));
     }
 }
