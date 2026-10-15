@@ -24,6 +24,7 @@ enum Tab {
 pub enum Redo {
     Patch(PathBuf, String),
     Restore(PathBuf, String),
+    Vault(crate::vault::Write),
 }
 
 pub enum Event {

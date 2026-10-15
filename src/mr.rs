@@ -9,6 +9,7 @@ pub struct Mr {
     pub merged: bool,
     pub closed: bool,
     pub web_url: String,
+    pub title: String,
     pub target: String,
     pub pipe: Status,
     /// (nome, link) do job que falhou
@@ -126,6 +127,7 @@ pub fn parse(detail: &Value, jobs: &Value, discussions: &Value) -> Mr {
         merged: state == "merged",
         closed: state == "closed",
         web_url: detail["web_url"].as_str().unwrap_or_default().into(),
+        title: detail["title"].as_str().unwrap_or_default().into(),
         target: detail["target_branch"].as_str().unwrap_or_default().into(),
         pipe,
         job: (pipe == Status::Fail).then(|| failed_job(jobs)).flatten(),

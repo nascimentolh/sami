@@ -111,6 +111,14 @@ impl Shell {
                     }
                     SidebarEvent::Notify(n) => this.notify_note(n.clone(), cx),
                     SidebarEvent::Learn(s) => this.learn.push(s.clone()),
+                    SidebarEvent::Vault(r) => match r {
+                        Ok(w) => this.toast_undo(
+                            format!("vault: {}", w.desc),
+                            Some(Redo::Vault(w.clone())),
+                            cx,
+                        ),
+                        Err(e) => this.toast(format!("vault: não deu para escrever ({e})"), cx),
+                    },
                 }
                 cx.notify();
             })
@@ -1768,6 +1776,7 @@ impl Render for Shell {
                                             crate::diff::apply(root, patch, false)
                                         }
                                         Redo::Restore(root, sha) => feature::restore(root, sha),
+                                        Redo::Vault(w) => crate::vault::undo(w),
                                     };
                                     if let Err(e) = r {
                                         this.toast(format!("Não deu para refazer: {e}"), cx);

@@ -31,6 +31,8 @@ pub enum SidebarEvent {
     Notify(Note),
     /// a mesma permissão foi pedida vezes demais: sugerir a regra
     Learn(perms::Suggestion),
+    /// o Maestro escreveu no vault (Histórico, daily)
+    Vault(Result<crate::vault::Write, String>),
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -226,6 +228,30 @@ impl Sidebar {
                             else {
                                 continue;
                             };
+                            // MR aberto ou mergeado → Histórico (e [x] na daily), uma vez cada
+                            let repo = inv
+                                .repo
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            let hist = feature::state_lines(&inv.id, "hist");
+                            let step = if m.merged {
+                                format!("merged:{}", m.iid)
+                            } else {
+                                format!("open:{}", m.iid)
+                            };
+                            if !m.closed && !hist.contains(&step) {
+                                feature::add_state_line(&inv.id, "hist", &step);
+                                for r in crate::vault::on_mr(
+                                    &repo,
+                                    m.iid,
+                                    &inv.branch,
+                                    &m.title,
+                                    m.merged,
+                                ) {
+                                    cx.emit(SidebarEvent::Vault(r));
+                                }
+                            }
                             // uma vez por MR, mesmo depois de reiniciar
                             let iid = m.iid.to_string();
                             if m.merged && !feature::state_lines(&inv.id, "merged").contains(&iid) {

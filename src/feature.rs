@@ -214,7 +214,8 @@ fn git_err(repo: &Path, args: &[&str]) -> Result<(), String> {
 }
 
 /// O comando que roda no pane da feature: setup e depois o `claude` com o prompt.
-pub fn start_command(req: &Request, setup: Option<&str>) -> String {
+/// `context`: o arquivo com a nota do repo no vault, que vai no `--append-system-prompt`.
+pub fn start_command(req: &Request, setup: Option<&str>, context: Option<&Path>) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(s) = setup.filter(|_| req.setup) {
         parts.push(s.to_string());
@@ -223,6 +224,12 @@ pub fn start_command(req: &Request, setup: Option<&str>) -> String {
         let mut c = String::from("claude");
         if let Some(m) = req.model {
             c.push_str(&format!(" --model {m}"));
+        }
+        if let Some(f) = context {
+            c.push_str(&format!(
+                " --append-system-prompt \"$(cat {})\"",
+                sh_quote(&f.to_string_lossy())
+            ));
         }
         if !req.prompt.trim().is_empty() {
             c.push(' ');
@@ -303,7 +310,18 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Inventory, Stri
     save(&inv).map_err(|e| e.to_string())?;
 
     let _ = install_hook(&req.repo, &path, &inv.id);
-    let cmd = start_command(req, setup_command(&req.repo).as_deref());
+    // a nota do repo no vault e o que ela linka entram no contexto do Claude da feature
+    let repo_name = req
+        .repo
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let context = crate::vault::context(&crate::vault::load(&crate::vault::dir()), &repo_name)
+        .and_then(|c| {
+            let f = data_dir().join(format!("{}.context.md", inv.id));
+            std::fs::write(&f, c).ok().map(|_| f)
+        });
+    let cmd = start_command(req, setup_command(&req.repo).as_deref(), context.as_deref());
     if let (Some(pane), false) = (&pane, cmd.is_empty()) {
         let _ = herdr.call(
             "pane.send_text",
@@ -399,7 +417,7 @@ pub fn conclude(herdr: &Herdr, inv: &Inventory) -> Result<Vec<String>, String> {
     let _ = std::fs::remove_file(data_dir().join(format!("{}.json", inv.id)));
     let _ = std::fs::remove_file(turns_file(&inv.id));
     let _ = std::fs::remove_file(preflight_file(&inv.id));
-    for ext in ["merged", "sent"] {
+    for ext in ["merged", "sent", "hist", "context.md"] {
         let _ = std::fs::remove_file(data_dir().join(format!("{}.{ext}", inv.id)));
     }
     Ok(done)
@@ -890,13 +908,20 @@ mod tests {
         assert_eq!(next_port(&[3001, 3003]), 3002);
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
         assert_eq!(
-            start_command(&req("faz X"), Some("npm ci")),
+            start_command(&req("faz X"), Some("npm ci"), None),
             "npm ci && claude 'faz X'"
         );
         let mut r = req("");
         r.setup = false;
         r.model = Some("sonnet");
-        assert_eq!(start_command(&r, Some("npm ci")), "claude --model sonnet");
+        assert_eq!(
+            start_command(&r, Some("npm ci"), None),
+            "claude --model sonnet"
+        );
+        assert_eq!(
+            start_command(&r, None, Some(Path::new("/d/x.context.md"))),
+            "claude --model sonnet --append-system-prompt \"$(cat '/d/x.context.md')\""
+        );
     }
 
     #[test]

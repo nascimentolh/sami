@@ -28,6 +28,7 @@ mod sidebar;
 mod terminal;
 mod theme;
 mod tour;
+mod vault;
 
 use std::sync::Arc;
 
