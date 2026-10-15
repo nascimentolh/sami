@@ -8,6 +8,7 @@ pub enum FieldEvent {
     Changed,
     /// Enter (linha única) ou Ctrl+Enter (as duas)
     Submit,
+    Cancel,
 }
 
 /// Campo do `.dlg` do protótipo. O texto chega pelo input handler (acentos e teclas mortas funcionam).
@@ -60,6 +61,7 @@ impl TextField {
                 self.value.push('\n');
                 cx.emit(FieldEvent::Changed);
             }
+            "escape" => cx.emit(FieldEvent::Cancel),
             "backspace" => {
                 self.value.pop();
                 cx.emit(FieldEvent::Changed);

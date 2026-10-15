@@ -13,6 +13,7 @@ pub enum Cmd {
     Cleanup,
     AddRepoMenu,
     Compare,
+    Review,
     AddRepo(std::path::PathBuf),
     Blocked,
     Tutorial,
@@ -61,7 +62,7 @@ pub fn commands() -> Vec<Item> {
         c("Feature: Limpeza…", "", Some(Cleanup)),
         c("Feature: Adicionar repo…", "", Some(AddRepoMenu)),
         c("Feature: Ir para a que precisa de você", "", Some(Blocked)),
-        c("Feature: Revisar mudanças", "Ctrl+Shift+E", None),
+        c("Feature: Revisar mudanças", "Ctrl+Shift+E", Some(Review)),
         c("Feature: Enviar comentários ao Claude", "Ctrl+⏎", None),
         c(
             "Claude: Enviar seleção para o terminal",

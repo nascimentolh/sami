@@ -18,6 +18,8 @@ use crate::{
 
 pub enum SidebarEvent {
     NewFeature,
+    /// clique num arquivo de "Mudanças": abre a revisão nele
+    OpenReview(String),
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -433,7 +435,7 @@ impl Sidebar {
             })
     }
 
-    fn changes_panel(&self) -> Div {
+    fn changes_panel(&self, cx: &mut Context<Self>) -> Div {
         let t = &self.theme;
         let n = self.changes.as_ref().map_or(0, |c| c.files.len());
         let tab = |label: String, on: bool| {
@@ -465,8 +467,15 @@ impl Sidebar {
                     } else {
                         format!("{dir}/")
                     };
+                    let path = f.path.clone();
                     list = list.child(
                         div()
+                            .id(SharedString::from(format!("ch:{}", f.path)))
+                            .cursor_pointer()
+                            .hover(|d| d.bg(t.raise))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(SidebarEvent::OpenReview(path.clone()))
+                            }))
                             .flex()
                             .gap(px(6.))
                             .items_center()
@@ -772,7 +781,7 @@ impl Render for Sidebar {
         }
         col = col.child(terms);
         if top.is_some() {
-            col = col.child(self.changes_panel());
+            col = col.child(self.changes_panel(cx));
         }
 
         div()

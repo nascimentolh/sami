@@ -1,0 +1,804 @@
+use std::{collections::HashSet, path::PathBuf, time::Duration};
+
+use gpui_kit::{prelude::FluentBuilder, *};
+
+use crate::{
+    diff::{self, FileDiff, Kind, Tok},
+    form::{FieldEvent, TextField, button},
+    theme::Theme,
+};
+
+pub enum Event {
+    Close,
+    /// texto pronto para o Claude desta worktree
+    Send(String),
+    /// mensagem e, se houver, o patch que refaz o que foi desfeito
+    Toast(String, Option<(PathBuf, String)>),
+}
+
+struct Draft {
+    id: usize,
+    path: String,
+    line: Option<u32>,
+    body: String,
+    field: Option<Entity<TextField>>,
+    sent: bool,
+}
+
+/// O painel "Revisar" do protótipo: o diff da feature contra a base, com aceitar, desfazer e comentar.
+pub struct Review {
+    pub root: PathBuf,
+    branch: String,
+    base: String,
+    files: Option<Vec<FileDiff>>,
+    accepted: HashSet<(String, String)>,
+    selected: Option<(String, u32)>,
+    drafts: Vec<Draft>,
+    next_id: usize,
+    /// edição em linha: (arquivo, linha nova, campo)
+    editing: Option<(String, u32, Entity<TextField>)>,
+    edited: Vec<String>,
+    scroll: ScrollHandle,
+    scroll_to: Option<String>,
+    focus: FocusHandle,
+    theme: Theme,
+    _poll: Task<()>,
+}
+
+impl EventEmitter<Event> for Review {}
+
+impl Review {
+    pub fn new(root: PathBuf, branch: String, theme: Theme, cx: &mut Context<Self>) -> Self {
+        // ponytail: relê o diff a cada 2 s com o painel aberto; `notify` quando ficar lento em repo grande
+        let poll = cx.spawn({
+            let root = root.clone();
+            async move |this, cx| loop {
+                let r = root.clone();
+                let d = cx
+                    .background_executor()
+                    .spawn(async move { diff::worktree(&r) })
+                    .await;
+                if this
+                    .update(cx, |this, cx| {
+                        let (base, files) = d.unwrap_or_default();
+                        if this.files.as_ref() != Some(&files) {
+                            this.base = base;
+                            this.files = Some(files);
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+            }
+        });
+        Self {
+            root,
+            branch,
+            base: "main".into(),
+            files: None,
+            accepted: HashSet::new(),
+            selected: None,
+            drafts: Vec::new(),
+            next_id: 0,
+            editing: None,
+            edited: Vec::new(),
+            scroll: ScrollHandle::new(),
+            scroll_to: None,
+            focus: cx.focus_handle(),
+            theme,
+            _poll: poll,
+        }
+    }
+
+    pub fn focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+
+    pub fn show_file(&mut self, path: String, cx: &mut Context<Self>) {
+        self.scroll_to = Some(path);
+        cx.notify();
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.files = diff::worktree(&self.root).map(|(b, f)| {
+            self.base = b;
+            f
+        });
+        cx.notify();
+    }
+
+    fn undo_hunk(&mut self, fi: usize, hi: usize, cx: &mut Context<Self>) {
+        let Some(f) = self.files.as_ref().and_then(|f| f.get(fi)) else {
+            return;
+        };
+        let patch = f.hunk_patch(hi);
+        let path = f.path.clone();
+        match diff::apply(&self.root, &patch, true) {
+            Ok(()) => cx.emit(Event::Toast(
+                format!("Bloco de {path} desfeito"),
+                Some((self.root.clone(), patch)),
+            )),
+            Err(e) => cx.emit(Event::Toast(format!("Não deu para desfazer: {e}"), None)),
+        }
+        self.refresh(cx);
+    }
+
+    fn new_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((path, line)) = self.selected.clone() else {
+            return;
+        };
+        self.next_id += 1;
+        let field = self.field(self.next_id, "", window, cx);
+        self.drafts.push(Draft {
+            id: self.next_id,
+            path,
+            line: Some(line),
+            body: String::new(),
+            field: Some(field),
+            sent: false,
+        });
+        cx.notify();
+    }
+
+    fn field(
+        &mut self,
+        id: usize,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TextField> {
+        let t = self.theme.clone();
+        let f = cx
+            .new(|cx| TextField::new(t, value, "O que o Claude deve mudar aqui?", true, false, cx));
+        cx.subscribe(&f, move |this, f, e: &FieldEvent, cx| match e {
+            FieldEvent::Submit => {
+                let body = f.read(cx).value.trim().to_string();
+                if let Some(d) = this.drafts.iter_mut().find(|d| d.id == id) {
+                    d.body = body;
+                    d.field = None;
+                }
+                this.drafts
+                    .retain(|d| !d.body.is_empty() || d.field.is_some());
+                cx.notify();
+            }
+            FieldEvent::Cancel => {
+                this.drafts.retain(|d| d.id != id || !d.body.is_empty());
+                if let Some(d) = this.drafts.iter_mut().find(|d| d.id == id) {
+                    d.field = None;
+                }
+                cx.notify();
+            }
+            FieldEvent::Changed => {}
+        })
+        .detach();
+        window.focus(&f.read(cx).focus_handle(), cx);
+        f
+    }
+
+    fn start_edit(
+        &mut self,
+        path: String,
+        line: u32,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let t = self.theme.clone();
+        let f = cx.new(|cx| TextField::new(t, &text, "", false, true, cx));
+        cx.subscribe(&f, |this, f, e: &FieldEvent, cx| match e {
+            FieldEvent::Submit => {
+                let value = f.read(cx).value.clone();
+                if let Some((path, line, _)) = this.editing.take() {
+                    this.write_line(&path, line, &value, cx);
+                }
+                cx.notify();
+            }
+            FieldEvent::Cancel => {
+                this.editing = None;
+                cx.notify();
+            }
+            FieldEvent::Changed => {}
+        })
+        .detach();
+        window.focus(&f.read(cx).focus_handle(), cx);
+        self.editing = Some((path, line, f));
+        cx.notify();
+    }
+
+    /// Edição em linha salva direto no arquivo da worktree (é o buffer real, como no multibuffer do Zed).
+    fn write_line(&mut self, path: &str, line: u32, value: &str, cx: &mut Context<Self>) {
+        let file = self.root.join(path);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            return;
+        };
+        let mut lines: Vec<&str> = text.split('\n').collect();
+        let i = line as usize - 1;
+        if lines.get(i).is_none_or(|l| *l == value) {
+            return;
+        }
+        lines[i] = value;
+        if std::fs::write(&file, lines.join("\n")).is_ok() {
+            if !self.edited.iter().any(|p| p == path) {
+                self.edited.push(path.into());
+            }
+            cx.emit(Event::Toast(
+                format!("Editado {path}:{line}. Vai junto quando enviar ao Claude."),
+                None,
+            ));
+            self.refresh(cx);
+        }
+    }
+
+    fn pending(&self) -> Vec<&Draft> {
+        self.drafts
+            .iter()
+            .filter(|d| !d.sent && d.field.is_none() && !d.body.is_empty())
+            .collect()
+    }
+
+    /// O `sendToClaude` do protótipo: comentários e edições num prompt só.
+    fn send(&mut self, cx: &mut Context<Self>) {
+        let pend = self.pending();
+        if pend.is_empty() && self.edited.is_empty() {
+            return;
+        }
+        let mut text = String::from("Revisei suas mudanças.");
+        // mesmo formato do `sendToClaude` do protótipo
+        if !pend.is_empty() {
+            let items: Vec<String> = pend
+                .iter()
+                .map(|d| {
+                    format!(
+                        "  - {}:{}: {}",
+                        d.path,
+                        d.line.map_or("geral".into(), |l| l.to_string()),
+                        d.body
+                    )
+                })
+                .collect();
+            text.push_str(&format!(" Ajuste:\n{}", items.join("\n")));
+        }
+        if !self.edited.is_empty() {
+            text.push_str(&format!(
+                "\n  Eu editei direto em {}; mantenha minhas edições.",
+                self.edited.join(", ")
+            ));
+        }
+        for d in self
+            .drafts
+            .iter_mut()
+            .filter(|d| !d.sent && d.field.is_none())
+        {
+            d.sent = true;
+        }
+        self.edited.clear();
+        cx.emit(Event::Send(text));
+        cx.notify();
+    }
+
+    fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &e.keystroke;
+        match k.key.as_str() {
+            "c" if !k.modifiers.modified() => self.new_draft(window, cx),
+            "enter" if k.modifiers.control => self.send(cx),
+            "escape" => cx.emit(Event::Close),
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    fn color(&self, tok: Tok) -> Hsla {
+        match tok {
+            Tok::Comment => self.theme.comment,
+            Tok::Str => rgb(0xf1fa8c).into(),
+            Tok::Keyword => rgb(0xff79c6).into(),
+            Tok::Number => self.theme.accent,
+        }
+    }
+
+    fn code(&self, text: &str) -> StyledText {
+        let hl: Vec<_> = diff::highlight(text)
+            .into_iter()
+            .map(|(r, tok)| {
+                let style = HighlightStyle {
+                    color: Some(self.color(tok)),
+                    font_style: (tok == Tok::Comment).then_some(FontStyle::Italic),
+                    ..Default::default()
+                };
+                (r, style)
+            })
+            .collect();
+        StyledText::new(text.to_string()).with_highlights(hl)
+    }
+
+    fn draft_box(&self, d: &Draft, cx: &mut Context<Self>) -> Div {
+        let t = &self.theme;
+        let yellow: Hsla = rgb(0xf1fa8c).into();
+        let id = d.id;
+        div()
+            .ml(px(94.))
+            .mr(px(12.))
+            .my(px(6.))
+            .max_w(px(720.))
+            .rounded(px(6.))
+            .font_family(t.sans)
+            .text_size(px(13.))
+            .when(!d.sent, |x| {
+                x.border_1()
+                    .border_dashed()
+                    .border_color(yellow)
+                    .bg(Hsla { a: 0.07, ..yellow })
+            })
+            .when(d.sent, |x| x.border_1().border_color(t.line).opacity(0.7))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .items_center()
+                    .px(px(10.))
+                    .py(px(6.))
+                    .border_b_1()
+                    .border_color(t.line)
+                    .text_size(px(12.))
+                    .text_color(t.muted)
+                    .when(!d.sent, |x| {
+                        x.child(
+                            div()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(yellow)
+                                .child("PARA O CLAUDE"),
+                        )
+                        .child("· você")
+                    })
+                    .when(d.sent, |x| x.child("enviado ao Claude"))
+                    .child(div().flex_1())
+                    .when(!d.sent && d.field.is_none(), |x| {
+                        x.child(button(t, ("ed", id), "Editar", false).on_click(cx.listener(
+                            move |this, _, w, cx| {
+                                let body = this
+                                    .drafts
+                                    .iter()
+                                    .find(|d| d.id == id)
+                                    .map(|d| d.body.clone())
+                                    .unwrap_or_default();
+                                let f = this.field(id, &body, w, cx);
+                                if let Some(d) = this.drafts.iter_mut().find(|d| d.id == id) {
+                                    d.field = Some(f);
+                                }
+                                cx.notify();
+                            },
+                        )))
+                        .child(
+                            button(t, ("del", id), "Descartar", false)
+                                .text_color(rgb(0xff5555))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.drafts.retain(|d| d.id != id);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .px(px(10.))
+                    .py(px(8.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .when_some(d.field.clone(), |x, f| {
+                        x.child(f).child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(t.muted)
+                                .child("Ctrl+⏎ salva · Esc cancela"),
+                        )
+                    })
+                    .when(d.field.is_none(), |x| x.child(d.body.clone())),
+            )
+    }
+
+    fn file_block(&self, fi: usize, f: &FileDiff, cx: &mut Context<Self>) -> Div {
+        let t = &self.theme;
+        let (a, r) = f.counts();
+        let red: Hsla = rgb(0xff5555).into();
+        let mut block = div().flex().flex_col().child(
+            div()
+                .flex()
+                .gap(px(10.))
+                .items_center()
+                .px(px(12.))
+                .py(px(6.))
+                .bg(t.panel)
+                .border_t_1()
+                .border_b_1()
+                .border_color(t.line)
+                .font_family(t.sans)
+                .child(div().font_family(t.mono.clone()).child(f.path.clone()))
+                .when(f.new, |x| {
+                    x.child(
+                        div()
+                            .font_family(t.mono.clone())
+                            .text_size(px(11.))
+                            .px(px(7.))
+                            .rounded(px(10.))
+                            .border_1()
+                            .border_color(t.accent)
+                            .text_color(t.accent)
+                            .child("novo"),
+                    )
+                })
+                .child(div().text_color(t.ok).child(format!("+{a}")))
+                .child(div().text_color(red).child(format!("−{r}")))
+                .when(self.edited.contains(&f.path), |x| {
+                    x.child(
+                        div()
+                            .font_family(t.mono.clone())
+                            .text_size(px(11.))
+                            .px(px(6.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(t.accent)
+                            .text_color(t.accent)
+                            .child("editado por você"),
+                    )
+                })
+                .child(div().flex_1())
+                // ponytail: o editor de arquivo vem no fim desta etapa
+                .child(div().opacity(0.45).child(button(
+                    t,
+                    ("open", fi),
+                    "Abrir no editor",
+                    false,
+                ))),
+        );
+        for (hi, h) in f.hunks.iter().enumerate() {
+            let ok = self.accepted.contains(&(f.path.clone(), h.header.clone()));
+            let key = (f.path.clone(), h.header.clone());
+            let small = |id: (&'static str, usize), label: &str| {
+                div()
+                    .id(id)
+                    .text_size(px(11.5))
+                    .px(px(6.))
+                    .border_1()
+                    .border_color(t.line)
+                    .rounded(px(4.))
+                    .bg(t.raise)
+                    .text_color(t.fg)
+                    .cursor_pointer()
+                    .hover(|x| x.border_color(t.muted))
+                    .child(label.to_string())
+            };
+            block = block.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(12.))
+                    .text_color(if ok { t.ok } else { t.comment })
+                    .bg(rgba(0x6272a41f))
+                    .child(h.header.clone())
+                    .child(
+                        div()
+                            .ml_auto()
+                            .flex()
+                            .gap(px(4.))
+                            .font_family(t.sans)
+                            .when(ok, |x| x.child("✓ aceito"))
+                            .when(!ok, |x| {
+                                x.child(small(("acc", fi * 1000 + hi), "✓ Aceitar").on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.accepted.insert(key.clone());
+                                        cx.notify();
+                                    }),
+                                ))
+                                .child(
+                                    small(("rej", fi * 1000 + hi), "↶ Desfazer").on_click(
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.undo_hunk(fi, hi, cx)
+                                        }),
+                                    ),
+                                )
+                            }),
+                    ),
+            );
+            for (li, l) in h.lines.iter().enumerate() {
+                let sel = self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|(p, n)| *p == f.path && Some(*n) == l.new);
+                let editing = self
+                    .editing
+                    .as_ref()
+                    .filter(|(p, n, _)| *p == f.path && Some(*n) == l.new)
+                    .map(|(_, _, e)| e.clone());
+                let (path, n, text) = (f.path.clone(), l.new, l.text.clone());
+                let bg = match l.kind {
+                    Kind::Add => Some(Hsla::from(rgba(0x50fa7b1a))),
+                    Kind::Del => Some(Hsla::from(rgba(0xff55551f))),
+                    Kind::Context => None,
+                };
+                let sign = match l.kind {
+                    Kind::Add => "+",
+                    Kind::Del => "-",
+                    Kind::Context => "",
+                };
+                let num = |v: Option<u32>| {
+                    div()
+                        .w(px(40.))
+                        .flex_none()
+                        .pr(px(8.))
+                        .text_right()
+                        .text_color(t.comment)
+                        .child(v.map(|x| x.to_string()).unwrap_or_default())
+                };
+                let row = div()
+                    .id(("l", (fi * 1000 + hi) * 10_000 + li))
+                    .group("dl")
+                    .relative()
+                    .flex()
+                    .h(px(20.))
+                    .cursor_pointer()
+                    .when_some(bg, |x, c| x.bg(c))
+                    .hover(|x| x.bg(rgba(0x44475a73)))
+                    .when(sel, |x| x.border_l_3().border_color(t.accent))
+                    .on_click(cx.listener(move |this, e: &ClickEvent, w, cx| {
+                        let Some(n) = n else { return };
+                        this.selected = Some((path.clone(), n));
+                        if e.click_count() == 2 {
+                            this.start_edit(path.clone(), n, text.clone(), w, cx);
+                        }
+                        cx.notify();
+                    }))
+                    .child(num(l.old))
+                    .child(num(l.new))
+                    .child(div().w(px(18.)).flex_none().text_color(t.muted).child(sign))
+                    .child(match editing {
+                        Some(f) => div().flex_1().child(f),
+                        None => div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .pr(px(8.))
+                            .child(self.code(&l.text)),
+                    })
+                    .when(l.new.is_some(), |x| {
+                        let path = f.path.clone();
+                        let n = l.new.unwrap();
+                        x.child(
+                            div()
+                                .id(("cm", (fi * 1000 + hi) * 10_000 + li))
+                                .absolute()
+                                .left(px(62.))
+                                .top(px(2.))
+                                .size(px(16.))
+                                .rounded(px(3.))
+                                .bg(t.accent)
+                                .text_color(rgb(0x282a36))
+                                .font_family(t.sans)
+                                .text_size(px(12.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .invisible()
+                                .group_hover("dl", |s| s.visible())
+                                .when(sel, |x| x.visible())
+                                .on_click(cx.listener(move |this, _, w, cx| {
+                                    this.selected = Some((path.clone(), n));
+                                    this.new_draft(w, cx);
+                                }))
+                                .child("+"),
+                        )
+                    });
+                block = block.child(row);
+                if let Some(n) = l.new {
+                    for d in self
+                        .drafts
+                        .iter()
+                        .filter(|d| d.path == f.path && d.line == Some(n))
+                    {
+                        block = block.child(self.draft_box(d, cx));
+                    }
+                }
+            }
+        }
+        block
+    }
+}
+
+impl Render for Review {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme.clone();
+        let tab = |label: &str, on: bool| {
+            div()
+                .flex()
+                .items_center()
+                .h_full()
+                .px(px(12.))
+                .border_r_1()
+                .border_color(t.line)
+                .text_color(if on { t.fg } else { t.muted })
+                .when(on, |x| x.bg(t.win).border_b_2().border_color(t.accent))
+                .when(!on, |x| x.opacity(0.45))
+                .child(label.to_string())
+        };
+        let n = self.files.as_ref().map_or(0, Vec::len);
+        let mut body = div()
+            .id("diff")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll);
+        if let Some(target) = self.scroll_to.take()
+            && let Some(i) = self
+                .files
+                .as_ref()
+                .and_then(|f| f.iter().position(|x| x.path == target))
+        {
+            self.scroll.scroll_to_item(i);
+        }
+        body = match &self.files {
+            None => body.child(div().p(px(24.)).text_color(t.muted).child("Lendo o diff…")),
+            Some(files) if files.is_empty() => body.child(
+                div()
+                    .m_auto()
+                    .max_w(px(360.))
+                    .p(px(24.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .text_center()
+                    .text_color(t.muted)
+                    .child(div().text_size(px(15.)).text_color(t.fg).child(format!("Nada para revisar em {}", self.branch)))
+                    .child(format!(
+                        "Quando o Claude mudar arquivos nesta worktree, o diff contra {} aparece aqui, separado por turno.",
+                        self.base
+                    )),
+            ),
+            Some(files) => {
+                let files = files.clone();
+                let mut list = div().flex().flex_col().pb(px(40.)).font_family(t.mono.clone()).text_size(px(12.5)).line_height(px(20.));
+                for (i, f) in files.iter().enumerate() {
+                    list = list.child(self.file_block(i, f, cx));
+                }
+                body.child(list)
+            }
+        };
+        let pend = self.pending().len();
+        let edits = self.edited.len();
+        let counts = [
+            (pend > 0).then(|| format!("{pend} comentário{}", if pend > 1 { "s" } else { "" })),
+            (edits > 0).then(|| {
+                format!(
+                    "{edits} edição{} sua{}",
+                    if edits > 1 { "ões" } else { "" },
+                    if edits > 1 { "s" } else { "" }
+                )
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+        let yellow: Hsla = rgb(0xf1fa8c).into();
+        div()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key_down))
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(t.win)
+            .text_color(t.fg)
+            .font_family(t.sans)
+            .text_size(px(13.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h(px(32.))
+                    .flex_none()
+                    .bg(t.panel)
+                    .border_b_1()
+                    .border_color(t.line)
+                    .child(tab("Revisar", true))
+                    // ponytail: a aba MR é da Etapa 5
+                    .child(tab("MR", false))
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id("r-close")
+                            .px(px(10.))
+                            .text_color(t.muted)
+                            .cursor_pointer()
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Close)))
+                            .child("×"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .items_center()
+                    .px(px(10.))
+                    .py(px(6.))
+                    .flex_none()
+                    .bg(t.panel)
+                    .border_b_1()
+                    .border_color(t.line)
+                    .child(
+                        div()
+                            .px(px(6.))
+                            .py(px(2.))
+                            .bg(t.win)
+                            .border_1()
+                            .border_color(t.line)
+                            .rounded(px(5.))
+                            .text_size(px(12.))
+                            .child(format!("Todos os turnos · {n} arquivo{}  ▾", if n == 1 { "" } else { "s" })),
+                    )
+                    .child(div().flex_1())
+                    .child(div().opacity(0.45).child(button(&t, "aff", "▶ Testes afetados", false)))
+                    .when(n > 0, |x| {
+                        x.child(button(&t, "acc-all", "✓ Aceitar tudo", false).on_click(cx.listener(|this, _, _, cx| {
+                            for f in this.files.iter().flatten() {
+                                for h in &f.hunks {
+                                    this.accepted.insert((f.path.clone(), h.header.clone()));
+                                }
+                            }
+                            cx.emit(Event::Toast("Tudo aceito. Os blocos continuam no diff até você commitar.".into(), None));
+                            cx.notify();
+                        })))
+                    }),
+            )
+            .child(body)
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(10.))
+                    .items_center()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .flex_none()
+                    .bg(t.panel)
+                    .border_t_1()
+                    .border_color(t.line)
+                    .when(counts.is_empty(), |x| {
+                        x.child(div().text_color(t.muted).child("Edite as linhas aqui mesmo, aceite ou desfaça blocos, ou comente com C."))
+                    })
+                    .when(!counts.is_empty(), |x| {
+                        x.child(div().text_color(yellow).font_weight(FontWeight::MEDIUM).child(format!("{counts} para o Claude")))
+                    })
+                    .child(div().flex_1())
+                    .child(
+                        button(&t, "d-all", "Descartar", false)
+                            .text_color(rgb(0xff5555))
+                            .when(pend == 0, |x| x.opacity(0.45))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.drafts.retain(|d| d.sent || d.field.is_some());
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        button(&t, "send", "Enviar ao Claude", true)
+                            .when(pend == 0 && edits == 0, |x| x.opacity(0.45))
+                            .on_click(cx.listener(|this, _, _, cx| this.send(cx)))
+                            .child(
+                                div()
+                                    .font_family(t.mono.clone())
+                                    .text_size(px(11.))
+                                    .px(px(4.))
+                                    .border_1()
+                                    .border_color(rgb(0x282a36))
+                                    .rounded(px(3.))
+                                    .child("Ctrl+⏎"),
+                            ),
+                    ),
+            )
+    }
+}

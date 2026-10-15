@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
@@ -10,11 +12,15 @@ use crate::{
     keys,
     new_feature::{self, NewFeature},
     palette_cmd::{self, Cmd, CommandPalette},
+    review::{self, Review},
     sidebar::{Sidebar, SidebarEvent},
     terminal::TerminalView,
     theme::Theme,
     tour::{self, Anchors},
 };
+
+/// (worktree, patch) que refaz um bloco desfeito.
+type Redo = (PathBuf, String);
 
 /// Janela do protótipo: título (36) · lateral | terminal · dicas (22) · status (24).
 pub struct Shell {
@@ -30,7 +36,10 @@ pub struct Shell {
     confirm: Option<Entity<Confirm>>,
     cleanup: Option<Entity<Cleanup>>,
     compare: Option<Entity<Compare>>,
-    toasts: Vec<(usize, String)>,
+    /// (id, texto, patch que refaz o que foi desfeito)
+    toasts: Vec<(usize, String, Option<Redo>)>,
+    review: Option<Entity<Review>>,
+    want_review: Option<Option<String>>,
     toast_seq: usize,
     want_dialog: bool,
     left: bool,
@@ -40,7 +49,7 @@ pub struct Shell {
 const HINTS: &[(&str, &str, bool)] = &[
     ("Ctrl+Shift+Espaço", "próximo da fila", true),
     ("Ctrl+Shift+1…9", "feature", true),
-    ("Ctrl+Shift+E", "revisar mudanças", false),
+    ("Ctrl+Shift+E", "revisar mudanças", true),
     ("Ctrl+Shift+\\", "dividir", true),
     ("Ctrl+Shift+Enter", "empilhar", true),
     ("Ctrl+Shift+←→", "trocar pane", true),
@@ -63,8 +72,11 @@ impl Shell {
         if let Some(s) = &sidebar {
             cx.observe(s, |_, _, cx| cx.notify()).detach();
             // o botão da lateral não tem a janela; o diálogo abre no próximo render
-            cx.subscribe(s, |this: &mut Self, _, _: &SidebarEvent, cx| {
-                this.want_dialog = true;
+            cx.subscribe(s, |this: &mut Self, _, e: &SidebarEvent, cx| {
+                match e {
+                    SidebarEvent::NewFeature => this.want_dialog = true,
+                    SidebarEvent::OpenReview(p) => this.want_review = Some(Some(p.clone())),
+                }
                 cx.notify();
             })
             .detach();
@@ -93,6 +105,8 @@ impl Shell {
             cleanup: None,
             compare: None,
             toasts: Vec::new(),
+            review: None,
+            want_review: None,
             toast_seq: 0,
             want_dialog: false,
             left: true,
@@ -108,6 +122,7 @@ impl Shell {
         if m.control && m.shift && !m.alt {
             match k.key.as_str() {
                 "p" => return self.toggle_palette(window, cx),
+                "e" => return self.toggle_review(None, window, cx),
                 "b" => return self.run(Cmd::ToggleLeft, window, cx),
                 _ => {}
             }
@@ -204,15 +219,21 @@ impl Shell {
     }
 
     pub fn toast(&mut self, msg: String, cx: &mut Context<Self>) {
+        self.toast_undo(msg, None, cx);
+    }
+
+    /// Toast com "Desfazer" (6 s, como no protótipo) quando vem o patch que refaz.
+    fn toast_undo(&mut self, msg: String, redo: Option<(PathBuf, String)>, cx: &mut Context<Self>) {
         self.toast_seq += 1;
         let id = self.toast_seq;
-        self.toasts.push((id, msg));
+        let ms = if redo.is_some() { 6000 } else { 2800 };
+        self.toasts.push((id, msg, redo));
         cx.spawn(async move |this, cx| {
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(2800))
+                .timer(std::time::Duration::from_millis(ms))
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.toasts.retain(|(i, _)| *i != id);
+                this.toasts.retain(|(i, _, _)| *i != id);
                 cx.notify();
             });
         })
@@ -407,6 +428,93 @@ impl Shell {
         cx.notify();
     }
 
+    /// Painel "Revisar" da feature em foco (`Ctrl+Shift+E`); com `path`, abre já nesse arquivo.
+    fn toggle_review(&mut self, path: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self
+            .sidebar
+            .as_ref()
+            .and_then(|s| s.read(cx).top_worktree());
+        if path.is_none() && self.review.take().is_some() {
+            window.focus(&self.terminal.read(cx).focus_handle(), cx);
+            return cx.notify();
+        }
+        let Some(root) = root else {
+            return self.toast("Abra um terminal num repositório para revisar".into(), cx);
+        };
+        let same = self
+            .review
+            .as_ref()
+            .is_some_and(|r| r.read(cx).root == root);
+        if !same {
+            let branch = herdr::branch(&root).unwrap_or_default();
+            let theme = self.theme.clone();
+            let r = cx.new(|cx| Review::new(root.clone(), branch.clone(), theme, cx));
+            cx.subscribe_in(
+                &r,
+                window,
+                move |this, r, e: &review::Event, window, cx| match e {
+                    review::Event::Close => {
+                        this.review = None;
+                        window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                        cx.notify();
+                    }
+                    review::Event::Toast(m, redo) => this.toast_undo(m.clone(), redo.clone(), cx),
+                    review::Event::Send(text) => {
+                        let root = r.read(cx).root.clone();
+                        let Some(s) = this.sidebar.clone() else {
+                            return;
+                        };
+                        let s = s.read(cx);
+                        let pane = s
+                            .agents
+                            .iter()
+                            .find(|a| std::path::Path::new(&a.cwd).starts_with(&root))
+                            .map(|a| a.pane_id.clone());
+                        let Some(pane) = pane else {
+                            return this.toast(
+                                "Nenhum Claude rodando nesta worktree para receber a revisão"
+                                    .into(),
+                                cx,
+                            );
+                        };
+                        let herdr = s.herdr();
+                        let text = text.clone();
+                        let branch = branch.clone();
+                        cx.spawn(async move |this, cx| {
+                            let r = cx
+                                .background_executor()
+                                .spawn(async move {
+                                    herdr.call(
+                                        "agent.prompt",
+                                        serde_json::json!({ "target": pane, "text": text }),
+                                    )
+                                })
+                                .await;
+                            let _ = this.update(cx, |this, cx| match r {
+                                Ok(_) => {
+                                    this.toast(format!("Revisão enviada ao Claude de {branch}"), cx)
+                                }
+                                Err(e) => {
+                                    this.toast(format!("O Claude não recebeu a revisão: {e}"), cx)
+                                }
+                            });
+                        })
+                        .detach();
+                    }
+                },
+            )
+            .detach();
+            self.review = Some(r);
+        }
+        if let (Some(p), Some(r)) = (path, &self.review) {
+            r.update(cx, |r, cx| r.show_file(p, cx));
+        }
+        if let Some(r) = &self.review {
+            window.focus(&r.read(cx).focus_handle(), cx);
+        }
+        cx.notify();
+    }
+
     fn run(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
         let sidebar = self.sidebar.clone();
         let focus = |pane: Option<String>, cx: &mut Context<Self>| {
@@ -432,6 +540,7 @@ impl Shell {
             Cmd::NewFeature => return self.open_new_feature(window, cx),
             Cmd::RemoveFeature => return self.remove_feature(window, cx),
             Cmd::Compare => return self.open_compare(window, cx),
+            Cmd::Review => return self.toggle_review(None, window, cx),
             Cmd::AddRepoMenu => {
                 let wt = self
                     .sidebar
@@ -979,6 +1088,9 @@ impl Render for Shell {
         if std::mem::take(&mut self.want_dialog) {
             self.open_new_feature(window, cx);
         }
+        if let Some(p) = self.want_review.take() {
+            self.toggle_review(p, window, cx);
+        }
         let overlay = self.tour.and_then(|i| {
             let root = self.anchors.borrow().get("root").copied()?;
             let next = cx.listener(|this: &mut Self, _: &(), _, cx| this.advance_tour(cx));
@@ -1034,7 +1146,17 @@ impl Render for Shell {
                             .child(tour::anchor(&self.anchors, "term"))
                             .child(self.hbar(cx))
                             .child(div().flex_1().min_h_0().child(self.terminal.clone())),
-                    ),
+                    )
+                    .children(self.review.clone().map(|r| {
+                        div()
+                            .w(relative(0.46))
+                            .max_w(px(640.))
+                            .flex_none()
+                            .h_full()
+                            .border_l_1()
+                            .border_color(t.line)
+                            .child(r)
+                    })),
             )
             .child(self.hints())
             .child(self.status(cx))
@@ -1097,8 +1219,27 @@ impl Render for Shell {
                     .flex_col()
                     .items_center()
                     .gap(px(8.));
-                for (_, m) in &self.toasts {
-                    col = col.child(confirm::toast(&t, m));
+                for (id, m, redo) in &self.toasts {
+                    let mut toast = confirm::toast(&t, m).flex().gap(px(12.)).items_center();
+                    if let Some((root, patch)) = redo.clone() {
+                        let id = *id;
+                        toast = toast.child(
+                            div()
+                                .id(("undo", id))
+                                .underline()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toasts.retain(|(i, _, _)| *i != id);
+                                    if let Err(e) = crate::diff::apply(&root, &patch, false) {
+                                        this.toast(format!("Não deu para refazer: {e}"), cx);
+                                    }
+                                    cx.notify();
+                                }))
+                                .child("Desfazer"),
+                        );
+                    }
+                    col = col.child(toast);
                 }
                 d.child(col)
             })

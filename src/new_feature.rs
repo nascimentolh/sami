@@ -69,6 +69,7 @@ impl NewFeature {
                 }
                 FieldEvent::Submit if f == this.jira => this.lookup_jira(cx),
                 FieldEvent::Submit => this.create(cx),
+                FieldEvent::Cancel => cx.emit(Event::Done),
             })
             .detach();
         }

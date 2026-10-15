@@ -79,10 +79,10 @@ Regras:
 
 ## Etapa 4: Revisão local (multibuffer)
 
-- [ ] diff da worktree contra a base, incluindo não commitados
-- [ ] multibuffer: um excerpt por bloco sobre o buffer real do arquivo; editar salva no arquivo
-- [ ] aceitar e desfazer por bloco (`git apply -R` do bloco), com desfazer
-- [ ] comentários por linha (`C`) + suas edições → "Enviar ao Claude" (`agent.prompt`) num prompt só
+- [x] diff da worktree contra a base, incluindo não commitados e arquivos novos (painel "Revisar" do protótipo, `Ctrl+Shift+E` ou clique em Mudanças)
+- [x] multibuffer: os blocos de todos os arquivos num painel só; dois cliques numa linha editam e Enter salva no arquivo da worktree (`ponytail:` campo de linha única, cursor no fim)
+- [x] aceitar e desfazer por bloco (`git apply -R` do bloco), com "Desfazer" no toast (reaplica o patch)
+- [x] comentários por linha (`C` ou o `+`) + suas edições → "Enviar ao Claude" (`agent.prompt`) num prompt só, no formato do protótipo. Conferido com `pane.read` no pane do agente
 - [ ] checkpoints por turno: hook `UserPromptSubmit` grava `refs/maestro/<feature>/t<n>`; filtro por turno; "voltar para antes do turno N"
 - [ ] testes afetados (ripwire + `--findRelatedTests`) num split
 - [ ] editor de arquivo simples (gpui-component) e `Ctrl+Shift+L` (seleção → `@arquivo:linhas` no Claude)
