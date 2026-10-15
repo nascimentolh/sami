@@ -77,7 +77,7 @@ pub fn style(t: &Theme, tok: Tok) -> HighlightStyle {
 }
 
 /// O `hl()` do protótipo dentro do editor do gpui-component.
-// ponytail: realce por linha sem parser; tree-sitter do gpui-component quando precisar de mais que k/s/c/n
+// ponytail: realce por linha sem parser, relendo o arquivo do início a cada pintura (O(arquivo)); tree-sitter do gpui-component quando um arquivo grande pesar
 struct Highlighter {
     text: String,
     theme: Theme,

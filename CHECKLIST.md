@@ -112,10 +112,12 @@ Conferido com um `glab` falso no PATH do app de teste (CI vermelho, sem MR, merg
 
 ## Etapa 6: Atenção
 
-- [ ] fila de atenção (permissão > CI/Sonar > comentários e prontas > contexto alto e MR alheio > daily) e `Ctrl+Shift+Espaço`
-- [ ] mascote no app com os sprites de `claude-mascot/overlay/poses.py` e os sons do config; fora do foco, o claude-reminder continua cuidando do desktop
-- [ ] permissões que aprendem (hook `PermissionRequest`): sugestão para o time ou só para você
-- [ ] custo e contexto por feature lidos do JSONL da sessão; aviso com contexto ≥ 80%
+- [x] fila de atenção (o `attention()` do protótipo): permissão > CI e Sonar vermelhos > comentários novos, prontas pra revisar e tentativas prontas para comparar > contexto ≥ 80%. "Fila N" no título abre a paleta da fila com o `.pr` colorido por prioridade; `Ctrl+Shift+Espaço` vai ao primeiro item e o toast diz quantos faltam. Cada item leva ao lugar certo (o pane, a aba MR, o painel Revisar, a comparação). `ponytail:` MR alheio, auditoria e daily entram com as Etapas 8, 9 e 7
+- [x] mascote no app (o `notify`/`nextMascot` do protótipo): as poses `front`/`blink`/`happy` com as cores do `poses.py`, ? roxo ou ✓ verde, card com a feature, "clique para ir · Esc dispensa · +N na fila", pulo, piscar a cada 450 ms, entrada e saída em passos. Aparece quando uma feature que você não está olhando pede permissão ou termina (com a janela fora de foco também). O clique foca o pane, ir para a feature por qualquer caminho dispensa, o Esc dispensa antes de chegar ao terminal. O som segue o `~/.config/claude-mascot/config.json` (`pw-play`), mas fica mudo com o plugin claude-mascot ligado, porque ele já toca o som do mesmo pedido; fora do foco o plugin continua cuidando do desktop
+- [x] permissões que aprendem: hook `PermissionRequest` na worktree (`maestro perm <id>`, só anota) conta pedidos por repo e regra (`Bash(<2 palavras>:*)`, como o `learnPerm`); com 5 na semana, o `choiceDlg` do protótipo: "Agora não", "Só pra mim (.claude/settings.local.json)" (vale para as worktrees abertas do repo e entra nas próximas pelo `install_hook`) e "Para o time (.claude/settings.json, vai no git)" (na worktree da feature que pediu). A pergunta não volta. `ponytail:` conta pedidos, não aprovações (o hook não sabe a resposta); 5 é o `LEARN_AFTER`
+- [x] custo e contexto por feature lidos do JSONL da sessão (no card desde a Etapa 2), com `ctx N% ⚠` laranja a partir de 80% e o item "contexto" na fila
+
+Nota: os hooks rodam o binário do próprio Maestro; o build de debug (1 GB) leva ~1,5 s só no `execve` nesta máquina, o de release não.
 
 **Pronto quando:** uma permissão numa feature de fundo mostra o mascote, e o clique foca o pane certo.
 

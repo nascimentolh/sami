@@ -1,17 +1,20 @@
 use gpui_kit::{prelude::FluentBuilder, *};
 
+use std::time::Duration;
+
 use crate::{
     changes,
     cleanup::{self, Cleanup},
     compare::{self, Attempt, Compare},
-    confirm::{self, Answer, Confirm},
+    confirm::{self, Answer, Choice, Chose, Confirm},
     feature,
     herdr::{self, Status},
     keys,
+    mascot::{self, Note},
     new_feature::{self, NewFeature},
     palette_cmd::{self, Cmd, CommandPalette},
     review::{self, Redo, Review},
-    sidebar::{Sidebar, SidebarEvent},
+    sidebar::{Go, Sidebar, SidebarEvent},
     terminal::TerminalView,
     theme::Theme,
     tour::{self, Anchors},
@@ -38,6 +41,16 @@ pub struct Shell {
     want_review: Option<Option<String>>,
     want_file: Option<String>,
     want_merged: Option<(std::path::PathBuf, u64, String)>,
+    /// a fila do mascote e o que está na tela: (pedido, sequência, saindo)
+    mq: Vec<Note>,
+    /// as permissões que aprendem: sugestões esperando o diálogo
+    learn: Vec<crate::perms::Suggestion>,
+    choice: Option<Entity<Choice>>,
+    mascot: Option<(Note, usize, bool)>,
+    mascot_seq: usize,
+    mascot_frame: u64,
+    window_active: bool,
+    _blink: Option<Task<()>>,
     toast_seq: usize,
     want_dialog: bool,
     left: bool,
@@ -68,7 +81,25 @@ impl Shell {
     ) -> Self {
         let sidebar_present = sidebar.is_some();
         if let Some(s) = &sidebar {
-            cx.observe(s, |_, _, cx| cx.notify()).detach();
+            cx.observe(s, |this: &mut Self, s, cx| {
+                // ir para a feature (por qualquer caminho) dispensa o mascote dela, como o `selectFeat`
+                let focused = s
+                    .read(cx)
+                    .agents
+                    .iter()
+                    .find(|a| a.focused)
+                    .map(|a| a.pane_id.clone());
+                if this.window_active
+                    && this
+                        .mascot
+                        .as_ref()
+                        .is_some_and(|(n, _, out)| !out && Some(&n.pane) == focused.as_ref())
+                {
+                    this.dismiss_mascot(cx);
+                }
+                cx.notify();
+            })
+            .detach();
             // o botão da lateral não tem a janela; o diálogo abre no próximo render
             cx.subscribe(s, |this: &mut Self, _, e: &SidebarEvent, cx| {
                 match e {
@@ -78,6 +109,8 @@ impl Shell {
                     SidebarEvent::Merged(wt, iid, branch) => {
                         this.want_merged = Some((wt.clone(), *iid, branch.clone()))
                     }
+                    SidebarEvent::Notify(n) => this.notify_note(n.clone(), cx),
+                    SidebarEvent::Learn(s) => this.learn.push(s.clone()),
                 }
                 cx.notify();
             })
@@ -111,6 +144,14 @@ impl Shell {
             want_review: None,
             want_file: None,
             want_merged: None,
+            mq: Vec::new(),
+            learn: Vec::new(),
+            choice: None,
+            mascot: None,
+            mascot_seq: 0,
+            mascot_frame: 0,
+            window_active: true,
+            _blink: None,
             toast_seq: 0,
             want_dialog: false,
             left: true,
@@ -133,12 +174,13 @@ impl Shell {
                 _ => {}
             }
         }
+        if m.control && m.shift && !m.alt && k.key == "space" {
+            return self.run(Cmd::NextAttention, window, cx);
+        }
         let Some(sidebar) = &self.sidebar else { return };
         let s = sidebar.read(cx);
         let target = if let Some(n) = keys::feature_digit(k) {
             s.order().into_iter().nth(n - 1)
-        } else if m.control && m.shift && !m.alt && k.key == "space" {
-            s.next_attention()
         } else {
             return;
         };
@@ -164,10 +206,17 @@ impl Shell {
                             String::new()
                         },
                         cmd: Some(Cmd::Feature(pane)),
+                        tag: None,
                     });
                 }
             }
-            self.open_palette(items, "Comando ou nome da feature…", window, cx);
+            self.open_palette(
+                items,
+                "Comando ou nome da feature…",
+                "Nada encontrado",
+                window,
+                cx,
+            );
         }
         cx.stop_propagation();
         cx.notify();
@@ -177,12 +226,13 @@ impl Shell {
         &mut self,
         items: Vec<palette_cmd::Item>,
         placeholder: &'static str,
+        empty: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         {
             let theme = self.theme.clone();
-            let p = cx.new(|cx| CommandPalette::new(theme, items, placeholder, cx));
+            let p = cx.new(|cx| CommandPalette::new(theme, items, placeholder, empty, cx));
             cx.subscribe_in(&p, window, |this, _, e: &palette_cmd::Event, window, cx| {
                 let cmd = match e {
                     palette_cmd::Event::Run(c) => Some(c.clone()),
@@ -470,6 +520,17 @@ impl Shell {
         let Some(root) = root else {
             return self.toast("Abra um terminal num repositório para revisar".into(), cx);
         };
+        self.open_review_at(root, path, window, cx)
+    }
+
+    /// O painel de uma worktree escolhida (a da fila, que pode ainda não estar em foco).
+    fn open_review_at(
+        &mut self,
+        root: std::path::PathBuf,
+        path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let same = self
             .review
             .as_ref()
@@ -557,6 +618,145 @@ impl Shell {
             let f = r.read(cx).focus_handle(cx);
             window.focus(&f, cx);
         }
+        cx.notify();
+    }
+
+    /// O `learnPerm` do protótipo: sempre permitir, só para você ou para o time.
+    fn ask_learn(
+        &mut self,
+        s: crate::perms::Suggestion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let repo = s
+            .repo
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let key = s
+            .rule
+            .strip_prefix("Bash(")
+            .and_then(|r| r.strip_suffix(":*)"))
+            .unwrap_or(&s.rule)
+            .to_string();
+        let title = format!("Você aprovou `{key}` {} vezes em {repo}", s.count);
+        let text = format!(
+            "Em {} feature{} nesta semana. Sempre permitir `{}` neste repo?",
+            s.features,
+            if s.features > 1 { "s" } else { "" },
+            s.rule
+        );
+        let options = vec![
+            ("Agora não".to_string(), false),
+            (
+                "Só pra mim (.claude/settings.local.json)".to_string(),
+                false,
+            ),
+            (
+                "Para o time (.claude/settings.json, vai no git)".to_string(),
+                true,
+            ),
+        ];
+        let theme = self.theme.clone();
+        let c = cx.new(|cx| Choice::new(theme, title, text, options, window, cx));
+        cx.subscribe_in(&c, window, move |this, _, Chose(i), window, cx| {
+            this.choice = None;
+            window.focus(&this.terminal.read(cx).focus_handle(), cx);
+            crate::perms::mark(&s);
+            let r = match i {
+                Some(1) => crate::perms::allow_personal(&s)
+                    .map(|_| format!("Permitido para você: {}", s.rule)),
+                Some(2) => crate::perms::allow_team(&s).map(|_| {
+                    format!(
+                        "{} adicionado ao .claude/settings.json. Entra no próximo commit.",
+                        s.rule
+                    )
+                }),
+                _ => return cx.notify(),
+            };
+            match r {
+                Ok(m) => this.toast(m, cx),
+                Err(e) => this.toast(format!("Não deu para gravar a regra: {e}"), cx),
+            }
+        })
+        .detach();
+        self.choice = Some(c);
+        cx.notify();
+    }
+
+    /// O `notify(f)` do protótipo: quem está olhando a feature não precisa do mascote.
+    fn notify_note(&mut self, n: Note, cx: &mut Context<Self>) {
+        let focused = self.sidebar.as_ref().and_then(|s| {
+            s.read(cx)
+                .agents
+                .iter()
+                .find(|a| a.focused)
+                .map(|a| a.pane_id.clone())
+        });
+        if self.window_active && focused.as_ref() == Some(&n.pane) {
+            return;
+        }
+        let shown = self
+            .mascot
+            .as_ref()
+            .is_some_and(|(m, _, _)| m.pane == n.pane);
+        if !shown && !self.mq.iter().any(|m| m.pane == n.pane) {
+            self.mq.push(n);
+        }
+        if self.mascot.is_none() {
+            self.next_mascot(cx);
+        }
+        cx.notify();
+    }
+
+    fn next_mascot(&mut self, cx: &mut Context<Self>) {
+        if self.mq.is_empty() {
+            self.mascot = None;
+            self._blink = None;
+            return cx.notify();
+        }
+        let n = self.mq.remove(0);
+        mascot::play(n.kind);
+        self.mascot_seq += 1;
+        self.mascot = Some((n, self.mascot_seq, false));
+        // o piscar do protótipo: um quadro a cada 450 ms
+        self._blink = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(450))
+                    .await;
+                if this
+                    .update(cx, |this, cx| {
+                        this.mascot_frame += 1;
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
+        cx.notify();
+    }
+
+    fn dismiss_mascot(&mut self, cx: &mut Context<Self>) {
+        let Some((n, seq, false)) = self.mascot.clone() else {
+            return;
+        };
+        self.mq.retain(|m| m.pane != n.pane);
+        self.mascot = Some((n, seq, true));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(700))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.mascot.as_ref().is_some_and(|m| m.1 == seq) {
+                    this.mascot = None;
+                    this.next_mascot(cx);
+                }
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -649,9 +849,10 @@ impl Shell {
                 title: p.clone(),
                 key: String::new(),
                 cmd: Some(Cmd::OpenFile(p)),
+                tag: None,
             })
             .collect();
-        self.open_palette(items, "Nome do arquivo…", window, cx);
+        self.open_palette(items, "Nome do arquivo…", "Nada encontrado", window, cx);
     }
 
     fn run(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
@@ -662,10 +863,72 @@ impl Shell {
             }
         };
         match cmd {
-            Cmd::NextAttention => focus(
-                sidebar.as_ref().and_then(|s| s.read(cx).next_attention()),
-                cx,
-            ),
+            // o `nextAttention` do protótipo
+            Cmd::NextAttention => {
+                let q = sidebar
+                    .as_ref()
+                    .map(|s| s.read(cx).attention())
+                    .unwrap_or_default();
+                let Some(first) = q.first() else {
+                    return self.toast("Fila vazia: nada esperando você".into(), cx);
+                };
+                let rest = if q.len() > 1 {
+                    format!(" · faltam {}", q.len() - 1)
+                } else {
+                    String::new()
+                };
+                self.toast(format!("Fila: {}{rest}", first.text), cx);
+                return self.run(Cmd::Go(first.go.clone()), window, cx);
+            }
+            Cmd::AttentionMenu => {
+                let t = self.theme.clone();
+                let items = sidebar
+                    .as_ref()
+                    .map(|s| s.read(cx).attention())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|i| palette_cmd::Item {
+                        title: i.text,
+                        key: String::new(),
+                        tag: Some((
+                            i.tag.into(),
+                            match i.p {
+                                0 => t.orange,
+                                1 => rgb(0xff5555).into(),
+                                2 => t.ok,
+                                3 => t.accent,
+                                _ => t.muted,
+                            },
+                        )),
+                        cmd: Some(Cmd::Go(i.go)),
+                    })
+                    .collect();
+                return self.open_palette(
+                    items,
+                    "Fila de atenção: filtrar…",
+                    "Fila vazia. Nada esperando você.",
+                    window,
+                    cx,
+                );
+            }
+            Cmd::Go(go) => {
+                let pane = match &go {
+                    Go::Pane(p) | Go::Mr(p, _) | Go::Review(p, _) | Go::Compare(p) => p.clone(),
+                };
+                focus(Some(pane), cx);
+                match go {
+                    Go::Pane(_) => {}
+                    Go::Mr(_, wt) => {
+                        self.open_review_at(wt, None, window, cx);
+                        if let Some(r) = &self.review {
+                            r.update(cx, |r, cx| r.open_mr(cx));
+                        }
+                        return cx.notify();
+                    }
+                    Go::Review(_, wt) => return self.open_review_at(wt, None, window, cx),
+                    Go::Compare(_) => return self.open_compare(window, cx),
+                }
+            }
             Cmd::Blocked => focus(
                 sidebar.as_ref().and_then(|s| s.read(cx).first_blocked()),
                 cx,
@@ -748,11 +1011,13 @@ impl Shell {
                             .unwrap_or_default(),
                         key: String::new(),
                         cmd: Some(Cmd::AddRepo(r)),
+                        tag: None,
                     })
                     .collect();
                 return self.open_palette(
                     items,
                     "Repositório para adicionar à feature…",
+                    "Nenhum repositório irmão para adicionar",
                     window,
                     cx,
                 );
@@ -871,9 +1136,13 @@ impl Shell {
     fn title(&self, cx: &mut Context<Self>) -> Div {
         let t = &self.theme;
         let (blocked, attention) = self.sidebar.as_ref().map_or((0, 0), |s| {
-            let a = &s.read(cx).agents;
-            let n = |st: &[Status]| a.iter().filter(|x| st.contains(&x.agent_status)).count();
-            (n(&[Status::Blocked]), n(&[Status::Blocked, Status::Done]))
+            let s = s.read(cx);
+            let n = s
+                .agents
+                .iter()
+                .filter(|x| x.agent_status == Status::Blocked)
+                .count();
+            (n, s.attention().len())
         });
         let mode = |label: &str, on: bool, count: Option<String>| {
             div()
@@ -954,17 +1223,7 @@ impl Shell {
                     .border_color(t.line)
                     .cursor_pointer()
                     .hover(|d| d.bg(t.raise))
-                    .on_click({
-                        let sidebar = self.sidebar.clone();
-                        move |_, _, cx| {
-                            if let Some(s) = &sidebar {
-                                let s = s.read(cx);
-                                if let Some(p) = s.next_attention() {
-                                    s.focus(p);
-                                }
-                            }
-                        }
-                    })
+                    .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::AttentionMenu, w, cx)))
                     .child("Fila")
                     .child(
                         div()
@@ -1191,7 +1450,7 @@ impl Shell {
                             .cursor_pointer()
                             .on_click(move |_, _, cx| {
                                 let s = sidebar.read(cx);
-                                if let Some(p) = s.next_attention() {
+                                if let Some(p) = s.first_blocked() {
                                     s.focus(p);
                                 }
                             })
@@ -1277,6 +1536,7 @@ fn resize_edges() -> impl Iterator<Item = Div> {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme.clone();
+        self.window_active = window.is_window_active();
         if std::mem::take(&mut self.want_dialog) {
             self.open_new_feature(window, cx);
         }
@@ -1284,6 +1544,14 @@ impl Render for Shell {
             && let Some(s) = &self.sidebar
         {
             s.update(cx, |s, cx| s.set_open(None, cx));
+        }
+        if self.confirm.is_none()
+            && self.choice.is_none()
+            && self.dialog.is_none()
+            && !self.learn.is_empty()
+        {
+            let s = self.learn.remove(0);
+            self.ask_learn(s, window, cx);
         }
         if self.confirm.is_none()
             && let Some((wt, iid, branch)) = self.want_merged.take()
@@ -1320,10 +1588,24 @@ impl Render for Shell {
             .relative()
             .child(tour::anchor(&self.anchors, "root"))
             .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
-                if this.tour.is_some() && e.keystroke.key == "escape" {
-                    this.end_tour(cx);
-                    cx.stop_propagation();
+                if e.keystroke.key != "escape" {
+                    return;
                 }
+                // a ordem do Esc do protótipo: tutorial, diálogos, e só então o mascote
+                let overlay = this.palette.is_some()
+                    || this.dialog.is_some()
+                    || this.confirm.is_some()
+                    || this.cleanup.is_some()
+                    || this.compare.is_some()
+                    || this.choice.is_some();
+                if this.tour.is_some() {
+                    this.end_tour(cx);
+                } else if !overlay && this.mascot.as_ref().is_some_and(|m| !m.2) {
+                    this.dismiss_mascot(cx);
+                } else {
+                    return;
+                }
+                cx.stop_propagation();
             }))
             .on_key_down(cx.listener(Self::on_key_down))
             .size_full()
@@ -1399,6 +1681,21 @@ impl Render for Shell {
                     .occlude()
                     .child(d)
             }))
+            .children(self.choice.clone().map(|d| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .pt(px(60.))
+                    .px(px(16.))
+                    .bg(rgba(0x0a0a1080))
+                    .occlude()
+                    .child(d)
+            }))
             .children(self.confirm.clone().map(|d| {
                 div()
                     .absolute()
@@ -1415,6 +1712,31 @@ impl Render for Shell {
                     .occlude()
                     .child(d)
             }))
+            .when_some(self.mascot.clone(), |d, (n, seq, leaving)| {
+                let pane = n.pane.clone();
+                d.child(
+                    div()
+                        .id("mascot")
+                        .absolute()
+                        .right(px(22.))
+                        .bottom(px(58.))
+                        .occlude()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(s) = &this.sidebar {
+                                s.read(cx).focus(pane.clone());
+                            }
+                            this.dismiss_mascot(cx);
+                        }))
+                        .child(mascot::view(
+                            &t,
+                            &n,
+                            self.mq.len(),
+                            self.mascot_frame,
+                            seq,
+                            leaving,
+                        )),
+                )
+            })
             .when(!self.toasts.is_empty(), |d| {
                 let mut col = div()
                     .absolute()

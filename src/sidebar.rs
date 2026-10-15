@@ -11,7 +11,9 @@ use crate::{
     changes::{self, Changes},
     feature::{self, Inventory},
     herdr::{self, Agent, Herdr, Status, Tab, Workspace},
+    mascot::{Kind, Note},
     mr::{self, Fetch, Mr},
+    perms,
     session::{Sessions, Usage},
     theme::Theme,
     tour::{self, Anchors},
@@ -25,6 +27,10 @@ pub enum SidebarEvent {
     OpenFile(String),
     /// o MR da feature desta worktree acabou de mergear: (worktree, iid, branch)
     Merged(PathBuf, u64, String),
+    /// um agente passou a pedir permissão ou terminou (o `notify(f)` do protótipo)
+    Notify(Note),
+    /// a mesma permissão foi pedida vezes demais: sugerir a regra
+    Learn(perms::Suggestion),
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -45,12 +51,33 @@ pub struct Sidebar {
     /// MR de cada feature (pela worktree), o `mrSum` do card
     mrs: HashMap<PathBuf, Mr>,
     asked: HashSet<(PathBuf, u64)>,
+    learned: HashSet<(PathBuf, String)>,
     /// (arquivo do editor, sujo, aba do editor à frente)
     open: Option<(String, bool, bool)>,
     sessions: Arc<Mutex<Sessions>>,
     anchors: Anchors,
     theme: Theme,
     _poll: Task<()>,
+}
+
+/// Aonde um item da fila leva.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Go {
+    Pane(String),
+    /// (pane, worktree): a feature e a aba MR dela
+    Mr(String, PathBuf),
+    /// (pane, worktree): a feature e o painel Revisar
+    Review(String, PathBuf),
+    Compare(String),
+}
+
+/// Um item do `attention()` do protótipo; `p` é a prioridade (0 = permissão … 4 = daily).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttItem {
+    pub p: u8,
+    pub tag: &'static str,
+    pub text: String,
+    pub go: Go,
 }
 
 pub struct Repo {
@@ -88,7 +115,11 @@ impl Sidebar {
                     .await;
                 // "há N min" envelhece sozinho: redesenha a cada 30 s mesmo sem mudança
                 let alive = this.update(cx, |this, cx| {
-                    if this.apply(state) || tick % 60 == 0 {
+                    let (changed, notes) = this.apply(state);
+                    for n in notes {
+                        cx.emit(SidebarEvent::Notify(n));
+                    }
+                    if changed || tick % 60 == 0 {
                         cx.notify();
                     }
                 });
@@ -107,7 +138,7 @@ impl Sidebar {
                     }) else {
                         break;
                     };
-                    let (usage, changes, inventories) = cx
+                    let (usage, changes, inventories, learn) = cx
                         .background_executor()
                         .spawn(async move {
                             let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
@@ -122,10 +153,16 @@ impl Sidebar {
                                 usage,
                                 root.and_then(|r| changes::changes(&r)),
                                 feature::inventories(),
+                                perms::pending(),
                             )
                         })
                         .await;
                     let _ = this.update(cx, |this, cx| {
+                        for s in learn {
+                            if this.learned.insert((s.repo.clone(), s.rule.clone())) {
+                                cx.emit(SidebarEvent::Learn(s));
+                            }
+                        }
                         if this.usage != usage
                             || this.changes != changes
                             || this.inventories != inventories
@@ -194,6 +231,7 @@ impl Sidebar {
             files: None,
             mrs: HashMap::new(),
             asked: HashSet::new(),
+            learned: HashSet::new(),
             open: None,
             sessions: Arc::default(),
             anchors,
@@ -202,10 +240,15 @@ impl Sidebar {
         }
     }
 
-    fn apply(&mut self, state: std::io::Result<(Vec<Agent>, Vec<Workspace>, Vec<Tab>)>) -> bool {
+    /// Aplica o estado do herdr; devolve se mudou e os agentes que acabaram de pedir atenção.
+    fn apply(
+        &mut self,
+        state: std::io::Result<(Vec<Agent>, Vec<Workspace>, Vec<Tab>)>,
+    ) -> (bool, Vec<Note>) {
         let offline = state.is_err();
         let (agents, workspaces, tabs) = state.unwrap_or_default();
         let now = Instant::now();
+        let mut notes = Vec::new();
         for a in &agents {
             let entry = self
                 .since
@@ -213,6 +256,31 @@ impl Sidebar {
                 .or_insert((a.agent_status, now));
             if entry.0 != a.agent_status {
                 *entry = (a.agent_status, now);
+                let kind = match a.agent_status {
+                    Status::Blocked => Some(Kind::Ask),
+                    Status::Done => Some(Kind::Done),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    let wt = herdr::repo_root(Path::new(&a.cwd)).map(Path::to_path_buf);
+                    let branch = self
+                        .inventories
+                        .iter()
+                        .find(|i| i.worktrees.iter().any(|w| Some(&w.path) == wt.as_ref()))
+                        .map(|i| i.branch.clone())
+                        .or_else(|| branch_of(a))
+                        .unwrap_or_else(|| title(a));
+                    notes.push(Note {
+                        pane: a.pane_id.clone(),
+                        kind,
+                        branch,
+                        text: if kind == Kind::Ask {
+                            title(a)
+                        } else {
+                            "terminou, pronto pra revisar".into()
+                        },
+                    });
+                }
             }
         }
         let changed = self.agents != agents
@@ -223,7 +291,7 @@ impl Sidebar {
         self.workspaces = workspaces;
         self.tabs = tabs;
         self.offline = offline;
-        changed
+        (changed, notes)
     }
 
     /// Repositórios em ordem alfabética; agentes fora de git vão com os Terminais.
@@ -356,18 +424,114 @@ impl Sidebar {
     }
 
     /// Próximo da fila: quem precisa de você primeiro, depois quem terminou.
-    pub fn next_attention(&self) -> Option<String> {
-        let order = self.order();
-        [Status::Blocked, Status::Done].iter().find_map(|s| {
-            order
+    /// A fila: permissão > CI/Sonar > comentários, prontas e comparar > contexto alto.
+    // ponytail: MR alheio, auditoria e daily entram com as Etapas 8, 9 e 7
+    pub fn attention(&self) -> Vec<AttItem> {
+        let mut q = Vec::new();
+        let mut groups_done: HashSet<String> = HashSet::new();
+        for pane in self.order() {
+            let Some(a) = self.agents.iter().find(|a| a.pane_id == pane) else {
+                continue;
+            };
+            let Some(wt) = herdr::repo_root(Path::new(&a.cwd)).map(Path::to_path_buf) else {
+                continue;
+            };
+            let inv = self
+                .inventories
                 .iter()
-                .find(|id| {
-                    self.agents
-                        .iter()
-                        .any(|a| &a.pane_id == *id && a.agent_status == *s)
-                })
-                .cloned()
-        })
+                .find(|i| i.worktrees.iter().any(|w| w.path == wt));
+            // o git só roda quando o item existe (a fila é recalculada a cada desenho do título)
+            let branch = || {
+                inv.map_or_else(
+                    || branch_of(a).unwrap_or_else(|| title(a)),
+                    |i| i.branch.clone(),
+                )
+            };
+            let item = |p, tag, text: String, go| AttItem { p, tag, text, go };
+            if a.agent_status == Status::Blocked {
+                q.push(item(
+                    0,
+                    "permissão",
+                    format!("{}: {}", branch(), title(a)),
+                    Go::Pane(pane.clone()),
+                ));
+            }
+            if let Some(m) = self.mrs.get(&wt).filter(|m| !m.merged) {
+                let go = Go::Mr(pane.clone(), wt.clone());
+                if m.pipe == mr::Status::Fail {
+                    q.push(item(
+                        1,
+                        "CI",
+                        format!("CI falhou em !{} ({})", m.iid, branch()),
+                        go.clone(),
+                    ));
+                }
+                if m.sonar == mr::Status::Fail {
+                    q.push(item(
+                        1,
+                        "Sonar",
+                        format!("Quality gate reprovado em !{}", m.iid),
+                        go.clone(),
+                    ));
+                }
+                let n = m.comments.len();
+                if n > 0 {
+                    let s = if n > 1 { "s" } else { "" };
+                    q.push(item(
+                        2,
+                        "MR",
+                        format!("{n} comentário{s} novo{s} em !{}", m.iid),
+                        go,
+                    ));
+                }
+            }
+            if a.agent_status == Status::Done {
+                q.push(item(
+                    2,
+                    "revisar",
+                    format!("{} pronta pra revisar", branch()),
+                    Go::Review(pane.clone(), wt.clone()),
+                ));
+            }
+            if let Some(g) = inv.and_then(|i| i.group.clone()) {
+                let attempts: Vec<&Inventory> = self
+                    .inventories
+                    .iter()
+                    .filter(|i| i.group.as_ref() == Some(&g))
+                    .collect();
+                let done = attempts.len() > 1
+                    && attempts.iter().all(|i| {
+                        self.agents.iter().any(|x| {
+                            x.agent_status == Status::Done
+                                && i.worktrees
+                                    .iter()
+                                    .any(|w| Path::new(&x.cwd).starts_with(&w.path))
+                        })
+                    });
+                if done && groups_done.insert(g.clone()) {
+                    q.push(item(
+                        2,
+                        "comparar",
+                        format!("Tentativas de {g} prontas para comparar"),
+                        Go::Compare(pane.clone()),
+                    ));
+                }
+            }
+            if let Some(u) = self.usage.get(&pane).filter(|u| u.ctx >= 80) {
+                q.push(item(
+                    3,
+                    "contexto",
+                    format!(
+                        "{} com {}% do contexto: perto de compactar",
+                        branch(),
+                        u.ctx
+                    ),
+                    Go::Pane(pane.clone()),
+                ));
+            }
+        }
+        q.sort_by_key(|i| i.p);
+        q
     }
 
     fn agent_row(&self, a: &Agent, branch: Option<&str>) -> Row {

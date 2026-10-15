@@ -12,12 +12,14 @@ mod ghostty;
 mod herdr;
 mod jira;
 mod keys;
+mod mascot;
 mod mouse;
 mod mr;
 mod mr_tab;
 mod new_feature;
 mod palette;
 mod palette_cmd;
+mod perms;
 mod preflight;
 mod review;
 mod session;
@@ -50,6 +52,15 @@ fn main() {
             ),
             Ok(None) => {}
             Err(e) => eprintln!("maestro checkpoint: {e}"),
+        }
+        return;
+    }
+    // `maestro perm <id>`: o hook PermissionRequest só anota o pedido (as permissões que aprendem)
+    if args.get(1).map(String::as_str) == Some("perm") {
+        let mut stdin = String::new();
+        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin);
+        if let Err(e) = perms::record(args.get(2).map_or("", String::as_str), &stdin) {
+            eprintln!("maestro perm: {e}");
         }
         return;
     }

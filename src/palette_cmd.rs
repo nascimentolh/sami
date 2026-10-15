@@ -29,6 +29,8 @@ pub enum Cmd {
     Affected,
     SendReview,
     OpenMr,
+    AttentionMenu,
+    Go(crate::sidebar::Go),
 }
 
 #[derive(Clone)]
@@ -37,6 +39,8 @@ pub struct Item {
     pub key: String,
     /// `None`: ainda não existe (aparece apagado, como os outros pontos do protótipo)
     pub cmd: Option<Cmd>,
+    /// o `.pr` da fila de atenção: (rótulo, cor da prioridade)
+    pub tag: Option<(String, Hsla)>,
 }
 
 /// O `CMDS` do protótipo, na mesma ordem. Sem o "Simular: …", que só existe no protótipo.
@@ -46,6 +50,7 @@ pub fn commands() -> Vec<Item> {
         title: t.into(),
         key: k.into(),
         cmd,
+        tag: None,
     };
     vec![
         c(
@@ -53,7 +58,11 @@ pub fn commands() -> Vec<Item> {
             "Ctrl+Shift+Espaço",
             Some(NextAttention),
         ),
-        c("Fila: Ver tudo que espera por você", "", None),
+        c(
+            "Fila: Ver tudo que espera por você",
+            "",
+            Some(AttentionMenu),
+        ),
         c("Feature: Nova…", "Alt+N", Some(NewFeature)),
         c("Feature: Rodar testes afetados", "", Some(Affected)),
         c("Feature: Comparar tentativas", "", Some(Compare)),
@@ -166,6 +175,7 @@ pub struct CommandPalette {
     items: Vec<Item>,
     all: Vec<Item>,
     placeholder: &'static str,
+    empty: &'static str,
     focus: FocusHandle,
     theme: Theme,
 }
@@ -177,6 +187,7 @@ impl CommandPalette {
         theme: Theme,
         all: Vec<Item>,
         placeholder: &'static str,
+        empty: &'static str,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut p = Self {
@@ -185,6 +196,7 @@ impl CommandPalette {
             items: Vec::new(),
             all,
             placeholder,
+            empty,
             focus: cx.focus_handle(),
             theme,
         };
@@ -330,7 +342,7 @@ impl Render for CommandPalette {
                     .px(px(12.))
                     .py(px(10.))
                     .text_color(t.muted)
-                    .child("Nada encontrado"),
+                    .child(self.empty),
             );
         }
         // ponytail: desenha só os 200 primeiros (a lista de arquivos de um repo grande); lista virtual se fizer falta
@@ -348,6 +360,20 @@ impl Render for CommandPalette {
                     .when(!ready, |d| d.opacity(0.45))
                     .when(i == self.selected, |d| d.bg(t.accent_soft))
                     .on_click(cx.listener(move |this, _, _, cx| this.run(i, cx)))
+                    .when_some(it.tag.clone(), |d, (tag, color)| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .font_family(t.mono.clone())
+                                .text_size(px(10.))
+                                .px(px(5.))
+                                .rounded(px(3.))
+                                .border_1()
+                                .border_color(color)
+                                .text_color(color)
+                                .child(tag),
+                        )
+                    })
                     .child(it.title.clone())
                     .child(div().flex_1())
                     .when(!it.key.is_empty(), |d| {

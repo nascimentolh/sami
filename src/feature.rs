@@ -532,8 +532,15 @@ pub fn install_hook(repo: &Path, worktree: &Path, id: &str) -> Result<(), String
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = worktree.join(".claude");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let cmd = format!("{} checkpoint {id}", sh_quote(&exe.to_string_lossy()));
-    let settings = json!({ "hooks": { "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": cmd } ] } ] } });
+    let exe = sh_quote(&exe.to_string_lossy());
+    let hook = |cmd: String| json!([ { "hooks": [ { "type": "command", "command": cmd } ] } ]);
+    let settings = json!({
+        "hooks": {
+            "UserPromptSubmit": hook(format!("{exe} checkpoint {id}")),
+            "PermissionRequest": hook(format!("{exe} perm {id}")),
+        },
+        "permissions": { "allow": crate::perms::personal(repo) },
+    });
     std::fs::write(
         dir.join("settings.local.json"),
         serde_json::to_string_pretty(&settings).unwrap(),
