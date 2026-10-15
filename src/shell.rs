@@ -1,7 +1,9 @@
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
+    changes,
     cleanup::{self, Cleanup},
+    compare::{self, Attempt, Compare},
     confirm::{self, Answer, Confirm},
     feature,
     herdr::{self, Status},
@@ -27,6 +29,7 @@ pub struct Shell {
     dialog: Option<Entity<NewFeature>>,
     confirm: Option<Entity<Confirm>>,
     cleanup: Option<Entity<Cleanup>>,
+    compare: Option<Entity<Compare>>,
     toasts: Vec<(usize, String)>,
     toast_seq: usize,
     want_dialog: bool,
@@ -88,6 +91,7 @@ impl Shell {
             dialog: None,
             confirm: None,
             cleanup: None,
+            compare: None,
             toasts: Vec::new(),
             toast_seq: 0,
             want_dialog: false,
@@ -142,8 +146,22 @@ impl Shell {
                     });
                 }
             }
+            self.open_palette(items, "Comando ou nome da feature…", window, cx);
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn open_palette(
+        &mut self,
+        items: Vec<palette_cmd::Item>,
+        placeholder: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        {
             let theme = self.theme.clone();
-            let p = cx.new(|cx| CommandPalette::new(theme, items, cx));
+            let p = cx.new(|cx| CommandPalette::new(theme, items, placeholder, cx));
             cx.subscribe_in(&p, window, |this, _, e: &palette_cmd::Event, window, cx| {
                 let cmd = match e {
                     palette_cmd::Event::Run(c) => Some(c.clone()),
@@ -275,6 +293,120 @@ impl Shell {
         cx.notify();
     }
 
+    /// O `compareDlg` do protótipo para o grupo da feature em foco.
+    fn open_compare(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sidebar) = self.sidebar.clone() else {
+            return;
+        };
+        let s = sidebar.read(cx);
+        let wt = s.top_worktree();
+        let group = wt
+            .as_deref()
+            .and_then(feature::find_by_path)
+            .and_then(|i| i.group);
+        let Some(group) =
+            group.or_else(|| feature::inventories().into_iter().find_map(|i| i.group))
+        else {
+            return self.toast(
+                "Nenhuma feature com várias tentativas. Crie uma com Tentativas: 2.".into(),
+                cx,
+            );
+        };
+        let mut invs: Vec<_> = feature::inventories()
+            .into_iter()
+            .filter(|i| i.group.as_ref() == Some(&group))
+            .collect();
+        invs.sort_by(|a, b| a.branch.cmp(&b.branch));
+        let attempts: Vec<Attempt> = invs
+            .into_iter()
+            .map(|inv| {
+                let path = &inv.worktrees[0].path;
+                let agent = s
+                    .agents
+                    .iter()
+                    .find(|a| std::path::Path::new(&a.cwd).starts_with(path));
+                let st = agent.map_or(Status::Unknown, |a| a.agent_status);
+                let ch = changes::changes(path).unwrap_or_default();
+                Attempt {
+                    state: (
+                        crate::sidebar::glyph(st).1.to_string(),
+                        self.status_color(st),
+                    ),
+                    done: matches!(st, Status::Done | Status::Idle),
+                    files: ch.files.len(),
+                    added: ch.files.iter().map(|f| f.added).sum(),
+                    removed: ch.files.iter().map(|f| f.removed).sum(),
+                    cost: agent.and_then(|a| s.usage.get(&a.pane_id)).map(|u| u.cost),
+                    inv,
+                }
+            })
+            .collect();
+        let herdr = s.herdr();
+        let theme = self.theme.clone();
+        let invs: Vec<_> = attempts.iter().map(|a| a.inv.clone()).collect();
+        let c = cx.new(|cx| Compare::new(group, attempts, theme, window, cx));
+        cx.subscribe_in(
+            &c,
+            window,
+            move |this, _, e: &compare::Event, window, cx| {
+                this.compare = None;
+                window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                if let compare::Event::Keep(i) = e {
+                    let keep = invs[*i].clone();
+                    let rest: Vec<_> = invs.iter().filter(|x| x.id != keep.id).cloned().collect();
+                    let names: Vec<_> = rest.iter().map(|x| x.branch.clone()).collect();
+                    let theme = this.theme.clone();
+                    let herdr = herdr.clone();
+                    let title = format!("Ficar com {}?", keep.branch);
+                    let text =
+                        format!("Remove {} (worktrees e branches locais).", names.join(", "));
+                    let d = cx.new(|cx| {
+                        Confirm::new(theme, title, text, "Ficar com esta", false, window, cx)
+                    });
+                    cx.subscribe_in(&d, window, move |this, _, a: &Answer, window, cx| {
+                        this.confirm = None;
+                        window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                        if matches!(a, Answer::Ok) {
+                            let (herdr, keep, rest) = (herdr.clone(), keep.clone(), rest.clone());
+                            cx.spawn(async move |this, cx| {
+                                let n = rest.len();
+                                let branch = keep.branch.clone();
+                                let r = cx
+                                    .background_executor()
+                                    .spawn(async move {
+                                        rest.iter()
+                                            .try_for_each(|x| feature::discard(&herdr, x))?;
+                                        feature::keep(&keep)
+                                    })
+                                    .await;
+                                let _ = this.update(cx, |this, cx| match r {
+                                    Ok(()) => this.toast(
+                                        format!(
+                                            "Ficou {branch}; {n} tentativa{} removida{}",
+                                            if n > 1 { "s" } else { "" },
+                                            if n > 1 { "s" } else { "" }
+                                        ),
+                                        cx,
+                                    ),
+                                    Err(e) => this
+                                        .toast(format!("Não deu para remover as outras: {e}"), cx),
+                                });
+                            })
+                            .detach();
+                        }
+                        cx.notify();
+                    })
+                    .detach();
+                    this.confirm = Some(d);
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+        self.compare = Some(c);
+        cx.notify();
+    }
+
     fn run(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
         let sidebar = self.sidebar.clone();
         let focus = |pane: Option<String>, cx: &mut Context<Self>| {
@@ -299,6 +431,67 @@ impl Shell {
             Cmd::Features => {}
             Cmd::NewFeature => return self.open_new_feature(window, cx),
             Cmd::RemoveFeature => return self.remove_feature(window, cx),
+            Cmd::Compare => return self.open_compare(window, cx),
+            Cmd::AddRepoMenu => {
+                let wt = self
+                    .sidebar
+                    .as_ref()
+                    .and_then(|s| s.read(cx).top_worktree());
+                let Some(inv) = wt.as_deref().and_then(feature::find_by_path) else {
+                    return self.toast(
+                        "Abra uma feature criada pelo Maestro para adicionar um repo".into(),
+                        cx,
+                    );
+                };
+                let items = feature::sibling_repos(&inv.repo)
+                    .into_iter()
+                    .filter(|r| !inv.worktrees.iter().any(|w| w.repo == *r))
+                    .map(|r| palette_cmd::Item {
+                        title: r
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                        key: String::new(),
+                        cmd: Some(Cmd::AddRepo(r)),
+                    })
+                    .collect();
+                return self.open_palette(
+                    items,
+                    "Repositório para adicionar à feature…",
+                    window,
+                    cx,
+                );
+            }
+            Cmd::AddRepo(repo) => {
+                let wt = self
+                    .sidebar
+                    .as_ref()
+                    .and_then(|s| s.read(cx).top_worktree());
+                let (Some(mut inv), Some(herdr)) = (
+                    wt.as_deref().and_then(feature::find_by_path),
+                    self.sidebar.as_ref().map(|s| s.read(cx).herdr()),
+                ) else {
+                    return;
+                };
+                let name = repo
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                cx.spawn(async move |this, cx| {
+                    let r = cx
+                        .background_executor()
+                        .spawn(async move { feature::add_repo(&herdr, &mut inv, &repo) })
+                        .await;
+                    let _ = this.update(cx, |this, cx| match r {
+                        Ok(_) => this.toast(
+                            format!("{name} entrou na feature; /add-dir enviado ao Claude"),
+                            cx,
+                        ),
+                        Err(e) => this.toast(format!("Não deu para adicionar {name}: {e}"), cx),
+                    });
+                })
+                .detach();
+            }
             Cmd::Cleanup => {
                 let repos = self
                     .sidebar
@@ -846,6 +1039,22 @@ impl Render for Shell {
             .child(self.hints())
             .child(self.status(cx))
             .children(overlay)
+            .children(self.compare.clone().map(|d| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .pt(px(24.))
+                    .px(px(16.))
+                    .bg(rgba(0x0a0a1080))
+                    // sem isto o clique atravessa e o terminal embaixo toma o foco
+                    .occlude()
+                    .child(d)
+            }))
             .children(self.cleanup.clone().map(|d| {
                 div()
                     .absolute()
@@ -858,6 +1067,8 @@ impl Render for Shell {
                     .pt(px(60.))
                     .px(px(16.))
                     .bg(rgba(0x0a0a1080))
+                    // sem isto o clique atravessa e o terminal embaixo toma o foco
+                    .occlude()
                     .child(d)
             }))
             .children(self.confirm.clone().map(|d| {
@@ -872,6 +1083,8 @@ impl Render for Shell {
                     .pt(px(60.))
                     .px(px(16.))
                     .bg(rgba(0x0a0a1080))
+                    // sem isto o clique atravessa e o terminal embaixo toma o foco
+                    .occlude()
                     .child(d)
             }))
             .when(!self.toasts.is_empty(), |d| {
@@ -901,6 +1114,8 @@ impl Render for Shell {
                     .pt(px(60.))
                     .px(px(16.))
                     .bg(rgba(0x0a0a1080))
+                    // sem isto o clique atravessa e o terminal embaixo toma o foco
+                    .occlude()
                     .child(d)
             }))
             .children(self.palette.clone().map(|p| {
@@ -917,6 +1132,8 @@ impl Render for Shell {
                     .pt(px(60.))
                     .px(px(16.))
                     .bg(rgba(0x0a0a1080))
+                    // sem isto o clique atravessa e o terminal embaixo toma o foco
+                    .occlude()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, w, cx| this.toggle_palette(w, cx)),

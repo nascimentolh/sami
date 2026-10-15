@@ -438,6 +438,15 @@ impl Render for NewFeature {
         div()
             .track_focus(&self.focus)
             .key_context("NewFeature")
+            // clicar num seletor ou checkbox não pode tirar o foco do diálogo (Esc e Ctrl+⏎ param de chegar)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.focus.contains_focused(window, cx) {
+                        window.focus(&this.focus, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &NextField, w, cx| this.cycle(1, w, cx)))
             .on_action(cx.listener(|this, _: &PrevField, w, cx| this.cycle(2, w, cx)))
             // captura: Tab e Esc chegam aqui antes dos campos e da navegação de foco do GPUI

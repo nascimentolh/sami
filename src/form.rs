@@ -220,7 +220,7 @@ pub fn checkbox(t: &Theme, on: bool) -> Div {
         .when(on, |d| d.child("✓"))
 }
 
-pub fn button(t: &Theme, id: &'static str, label: &str, primary: bool) -> Stateful<Div> {
+pub fn button(t: &Theme, id: impl Into<ElementId>, label: &str, primary: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex()

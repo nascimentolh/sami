@@ -68,12 +68,12 @@ Regras:
 - [x] **inventário da feature** em `~/.local/share/maestro/features/<id>.json`: worktrees, branches (e se foram criadas pela feature), porta, projeto do compose e workspace. Gravado antes do herdr, para a Limpeza achar a worktree mesmo se algo falhar. MRs entram na Etapa 5
 - [x] `PORT` (3001…) e `COMPOSE_PROJECT_NAME=<repo>-<slug>` únicos por worktree, no env do workspace do herdr; a porta aparece no card
 - [x] issue do Jira opcional preenche a branch e o prompt, lida pelo MCP do Atlassian num `claude -p --model haiku` (~US$ 0,01, ~7 s)
-- [ ] melhor de N: 2 ou 3 tentativas `-a/-b/-c`, comparação e "ficar com esta" (remove as outras pelo inventário)
-- [ ] **multi-repo sob demanda:** "+ repo" (ex.: `k8s-configmap`, `vault-roleset`, `pipeline`) cria a worktree só quando pedido, manda `/add-dir` ao agente e registra no inventário; os MRs ficam ligados entre si
+- [x] melhor de N: 2 ou 3 tentativas `-a/-b/-c` (modelos opus/sonnet/opus[1m] se pedido), o `compareDlg` do protótipo (modelo, estado, arquivos, custo) e "Ficar com esta", que remove as outras pelo inventário, branch inclusive. A coluna "testes" e o "Ver diff" chegam na Etapa 4
+- [x] **multi-repo sob demanda:** "Feature: Adicionar repo…" lista os repos irmãos, cria a worktree na mesma branch só quando pedido, manda `/add-dir` ao Claude da feature e registra no inventário. MRs ligados entre si na Etapa 5
 - [x] **concluir feature** ("Feature: Remover a atual…", com o `confirmDlg` do protótipo): fecha o workspace, para o compose (sem `-v`: volume fica), remove a worktree, apaga a branch se mergeada na base, apaga `refs/maestro/<id>/*` e o inventário (libera a porta). Avisa antes do que não está commitado. Conferido num repo descartável: `worktree list` e `branch` voltaram ao estado de antes
-- [ ] worktree extra que terminou sem nenhuma mudança é removida na conclusão sem perguntar (está limpa)
+- [x] worktree extra que terminou sem nenhuma mudança é removida na conclusão sem perguntar (o aviso só conta o que não está commitado). Teste: feature com repo extra concluída deixa os dois repos como estavam
 - [x] comando **Limpeza** ("Feature: Limpeza…" na paleta): lista órfãos (worktree em `<repo>.wt/` sem inventário, inventário sem worktree, `refs/maestro` de feature removida, compose parado cujo arquivo está numa worktree do Maestro, branch local já mergeada) e apaga o que estiver marcado. Branch local e worktree com mudanças vêm desmarcadas. Conferido num repo descartável
-- [ ] tutorial da área
+- [x] tutorial da área: o passo 4 do tutorial de Features espera o clique em "Nova feature", como no protótipo (que não tem tutorial próprio desta área)
 
 **Pronto quando:** você cria uma feature em `bots-api` + `k8s-configmap`, conclui, e `git worktree list`, `git for-each-ref refs/maestro`, `git branch` e `docker compose ls` voltam exatamente ao estado de antes, nos dois repos.
 

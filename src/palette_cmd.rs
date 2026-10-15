@@ -11,6 +11,9 @@ pub enum Cmd {
     NewFeature,
     RemoveFeature,
     Cleanup,
+    AddRepoMenu,
+    Compare,
+    AddRepo(std::path::PathBuf),
     Blocked,
     Tutorial,
     Herdr(&'static str),
@@ -45,7 +48,7 @@ pub fn commands() -> Vec<Item> {
         c("Fila: Ver tudo que espera por você", "", None),
         c("Feature: Nova…", "Alt+N", Some(NewFeature)),
         c("Feature: Rodar testes afetados", "", None),
-        c("Feature: Comparar tentativas", "", None),
+        c("Feature: Comparar tentativas", "", Some(Compare)),
         c("Feature: Ver MR da feature", "", None),
         c("Vault: Grafo de notas", "", None),
         c("Vault: Nota do repo", "", None),
@@ -56,6 +59,7 @@ pub fn commands() -> Vec<Item> {
         c("Feature: Remover a atual…", "", Some(RemoveFeature)),
         // não está no protótipo; o desenho (5.4) pede o comando
         c("Feature: Limpeza…", "", Some(Cleanup)),
+        c("Feature: Adicionar repo…", "", Some(AddRepoMenu)),
         c("Feature: Ir para a que precisa de você", "", Some(Blocked)),
         c("Feature: Revisar mudanças", "Ctrl+Shift+E", None),
         c("Feature: Enviar comentários ao Claude", "Ctrl+⏎", None),
@@ -149,6 +153,7 @@ pub struct CommandPalette {
     selected: usize,
     items: Vec<Item>,
     all: Vec<Item>,
+    placeholder: &'static str,
     focus: FocusHandle,
     theme: Theme,
 }
@@ -156,12 +161,18 @@ pub struct CommandPalette {
 impl EventEmitter<Event> for CommandPalette {}
 
 impl CommandPalette {
-    pub fn new(theme: Theme, all: Vec<Item>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        theme: Theme,
+        all: Vec<Item>,
+        placeholder: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut p = Self {
             query: String::new(),
             selected: 0,
             items: Vec::new(),
             all,
+            placeholder,
             focus: cx.focus_handle(),
             theme,
         };
@@ -290,11 +301,7 @@ impl Render for CommandPalette {
                 .size_full(),
             )
             .when(self.query.is_empty(), |d| {
-                d.child(
-                    div()
-                        .text_color(t.muted)
-                        .child("Comando ou nome da feature…"),
-                )
+                d.child(div().text_color(t.muted).child(self.placeholder))
             })
             .when(!self.query.is_empty(), |d| d.child(self.query.clone()))
             .child(div().w(px(1.)).h(px(16.)).ml(px(1.)).bg(t.fg));

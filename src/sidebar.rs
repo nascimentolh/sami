@@ -802,6 +802,7 @@ mod tests {
         let a = Agent {
             pane_id: "p".into(),
             tab_id: "t".into(),
+            workspace_id: "w".into(),
             agent: "claude".into(),
             agent_status: Status::Idle,
             terminal_title_stripped: Some("◑ revisão".into()),

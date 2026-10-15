@@ -75,6 +75,8 @@ pub struct Agent {
     pub pane_id: String,
     #[serde(default)]
     pub tab_id: String,
+    #[serde(default)]
+    pub workspace_id: String,
     pub agent: String,
     pub agent_status: Status,
     #[serde(default)]
@@ -110,6 +112,15 @@ impl Herdr {
             name => dir.join("sessions").join(name).join("herdr.sock"),
         };
         Some(Self { session, socket })
+    }
+
+    /// Sem servidor: as chamadas falham e quem chama segue sem o herdr.
+    #[cfg(test)]
+    pub fn offline() -> Self {
+        Self {
+            session: "maestro-test-offline".into(),
+            socket: "/nonexistent/herdr.sock".into(),
+        }
     }
 
     /// O cliente herdr para o PTY, com a config do Maestro (só vale para o servidor que ele mesmo sobe).

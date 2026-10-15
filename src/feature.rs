@@ -22,6 +22,8 @@ pub struct Inventory {
     pub workspace_id: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     pub created_at: u64,
 }
 
@@ -278,6 +280,7 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Inventory, Stri
         compose_project: compose_project(&req.repo, &req.branch),
         workspace_id: None,
         group: req.group.clone(),
+        model: req.model.map(String::from),
         created_at: now,
     };
     // grava antes do herdr: se algo falhar daqui em diante, a Limpeza ainda acha a worktree
@@ -322,9 +325,13 @@ pub struct Pending {
     pub merged: bool,
 }
 
+/// Conta o não commitado de todas as worktrees: as extras limpas saem sem perguntar.
 pub fn pending(inv: &Inventory) -> Pending {
-    let wt = &inv.worktrees[0];
-    let uncommitted = git(&wt.path, &["status", "--porcelain"]).map_or(0, |s| s.lines().count());
+    let uncommitted = inv
+        .worktrees
+        .iter()
+        .map(|w| git(&w.path, &["status", "--porcelain"]).map_or(0, |s| s.lines().count()))
+        .sum();
     Pending {
         uncommitted,
         merged: is_merged(&inv.repo, &inv.branch, &inv.base),
@@ -390,6 +397,77 @@ pub fn conclude(herdr: &Herdr, inv: &Inventory) -> Result<Vec<String>, String> {
     }
     let _ = std::fs::remove_file(data_dir().join(format!("{}.json", inv.id)));
     Ok(done)
+}
+
+/// Tentativa descartada no melhor de N: conclui e apaga a branch mesmo sem merge (foi você que escolheu).
+pub fn discard(herdr: &Herdr, inv: &Inventory) -> Result<(), String> {
+    conclude(herdr, inv)?;
+    for w in inv.worktrees.iter().filter(|w| w.created_branch) {
+        if branches(&w.repo).contains(&w.branch) {
+            git_err(&w.repo, &["branch", "-D", &w.branch])?;
+        }
+    }
+    Ok(())
+}
+
+/// Ficou com esta: o grupo some do inventário e ela vira uma feature comum.
+pub fn keep(inv: &Inventory) -> Result<(), String> {
+    let mut i = inv.clone();
+    i.group = None;
+    save(&i).map_err(|e| e.to_string())
+}
+
+/// Repositórios irmãos do da feature (`~/repos-ctbz/*` com `.git`), para o "+ repo".
+pub fn sibling_repos(repo: &Path) -> Vec<PathBuf> {
+    let Some(parent) = repo.parent() else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p != repo && p.join(".git").is_dir())
+        .collect();
+    out.sort();
+    out
+}
+
+/// "+ repo": worktree na mesma branch em outro repositório, só quando pedido, registrada no inventário.
+pub fn add_repo(herdr: &Herdr, inv: &mut Inventory, repo: &Path) -> Result<PathBuf, String> {
+    if inv.worktrees.iter().any(|w| w.repo == repo) {
+        return Err(format!("{} já faz parte da feature", repo.display()));
+    }
+    let path = worktree_path(repo, &inv.branch);
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    let exists = branches(repo).contains(&inv.branch);
+    let base = bases(repo)
+        .into_iter()
+        .next()
+        .ok_or("o repositório não tem branch base")?;
+    let p = path.to_string_lossy().into_owned();
+    if exists {
+        git_err(repo, &["worktree", "add", &p, &inv.branch])?;
+    } else {
+        git_err(repo, &["worktree", "add", "-b", &inv.branch, &p, &base])?;
+    }
+    inv.worktrees.push(Worktree {
+        repo: repo.to_path_buf(),
+        path: path.clone(),
+        branch: inv.branch.clone(),
+        created_branch: !exists,
+    });
+    save(inv).map_err(|e| e.to_string())?;
+    // o Claude da feature passa a enxergar a pasta nova
+    let agents = herdr.agents().unwrap_or_default();
+    let ws = inv.workspace_id.as_deref();
+    if let Some(a) = agents.iter().find(|a| Some(a.workspace_id.as_str()) == ws) {
+        let _ = herdr.call(
+            "pane.send_text",
+            json!({ "pane_id": a.pane_id, "text": format!("/add-dir {p}\r") }),
+        );
+    }
+    Ok(path)
 }
 
 /// Algo no disco que nenhuma feature reconhece.
@@ -657,6 +735,89 @@ mod tests {
         std::fs::write(dir.join(".maestro.toml"), "setup = \"make deps\"\n").unwrap();
         assert_eq!(setup_command(&dir).as_deref(), Some("make deps"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn mais_um_repo_e_conclusao_voltam_ao_estado_de_antes() {
+        let root = std::env::temp_dir().join(format!("maestro-multi-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (app, k8s) = (root.join("app"), root.join("k8s-configmap"));
+        for r in [&app, &k8s] {
+            std::fs::create_dir_all(r).unwrap();
+            for args in [
+                &["init", "-q", "-b", "main"][..],
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "i",
+                ],
+            ] {
+                Command::new("git")
+                    .arg("-C")
+                    .arg(r)
+                    .args(args)
+                    .output()
+                    .unwrap();
+            }
+        }
+        let state = |r: &Path| {
+            (
+                git(r, &["worktree", "list", "--porcelain"])
+                    .unwrap()
+                    .lines()
+                    .filter(|l| l.starts_with("worktree"))
+                    .count(),
+                git(r, &["branch", "--format=%(refname:short)"]).unwrap(),
+            )
+        };
+        let before = (state(&app), state(&k8s));
+        let h = Herdr::offline();
+        let wt = worktree_path(&app, "feat/multi");
+        git_err(
+            &app,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "feat/multi",
+                &wt.to_string_lossy(),
+                "main",
+            ],
+        )
+        .unwrap();
+        let mut inv = Inventory {
+            id: format!("teste-multi-{}", std::process::id()),
+            repo: app.clone(),
+            branch: "feat/multi".into(),
+            base: "main".into(),
+            worktrees: vec![Worktree {
+                repo: app.clone(),
+                path: wt,
+                branch: "feat/multi".into(),
+                created_branch: true,
+            }],
+            port: 3999,
+            compose_project: "app-feat-multi-teste".into(),
+            workspace_id: None,
+            group: None,
+            model: None,
+            created_at: 0,
+        };
+        assert_eq!(sibling_repos(&app), vec![k8s.clone()]);
+        let extra = add_repo(&h, &mut inv, &k8s).unwrap();
+        assert!(extra.ends_with("k8s-configmap.wt/feat-multi") && extra.exists());
+        assert!(add_repo(&h, &mut inv, &k8s).is_err());
+        assert_eq!(pending(&inv).uncommitted, 0);
+        conclude(&h, &inv).unwrap();
+        assert_eq!((state(&app), state(&k8s)), before);
+        assert!(!root.join("app.wt").exists() && !root.join("k8s-configmap.wt").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
