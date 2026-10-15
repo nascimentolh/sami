@@ -11,3 +11,7 @@ gpui-kit = "=0.7.0"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# ponytail: corrige o pânico do XIM com tecla morta no ibus (texto Latin-1 sem escape); sai quando o upstream corrigir
+[patch.crates-io]
+xim-ctext = { path = "vendor/xim-ctext" }

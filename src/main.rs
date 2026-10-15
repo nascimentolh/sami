@@ -1,4 +1,5 @@
 mod keys;
+mod mouse;
 mod palette;
 mod terminal;
 

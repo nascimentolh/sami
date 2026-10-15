@@ -1,9 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::Range, sync::Arc};
 
 use alacritty_terminal::{
     event::{Event as TermEvent, EventListener, Notify, OnResize, WindowSize},
     event_loop::{EventLoop, Notifier},
-    grid::Dimensions,
+    grid::{Dimensions, Scroll},
+    index::{Column, Line, Point as GridPoint, Side},
+    selection::{Selection, SelectionType},
     sync::FairMutex,
     term::{Config, Term, TermMode, cell::Flags},
     tty,
@@ -12,7 +14,7 @@ use alacritty_terminal::{
 use futures::{StreamExt, channel::mpsc};
 use gpui_kit::*;
 
-use crate::{keys, palette::Palette};
+use crate::{keys, mouse, palette::Palette};
 
 const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 const FONT_PT: f32 = 13.0;
@@ -51,6 +53,8 @@ pub struct TerminalView {
     focus: FocusHandle,
     palette: Palette,
     grid: GridSize,
+    cell: Size<Pixels>,
+    scroll_rem: f32,
     _events: Task<()>,
 }
 
@@ -116,6 +120,8 @@ impl TerminalView {
             focus: cx.focus_handle(),
             palette: Palette::default(),
             grid,
+            cell: size(px(10.), px(20.)),
+            scroll_rem: 0.,
             _events: events,
         }
     }
@@ -134,10 +140,198 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let app_cursor = self.term.lock().mode().contains(TermMode::APP_CURSOR);
-        if let Some(bytes) = keys::to_bytes(&event.keystroke, app_cursor) {
-            self.pty.notify(bytes);
+        let k = &event.keystroke;
+        let m = &k.modifiers;
+        // atalhos do próprio terminal, iguais aos defaults do Ghostty no Linux
+        let handled = match (m.control, m.shift, k.key.as_str()) {
+            (true, true, "c") => {
+                if let Some(text) = self.term.lock().selection_to_string() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+                true
+            }
+            (true, true, "v") | (false, true, "insert") => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                    self.paste(&text);
+                }
+                true
+            }
+            (false, true, "pageup") => self.scroll(Scroll::PageUp, cx),
+            (false, true, "pagedown") => self.scroll(Scroll::PageDown, cx),
+            _ => false,
+        };
+        if handled {
             cx.stop_propagation();
+            return;
+        }
+        let app_cursor = self.term.lock().mode().contains(TermMode::APP_CURSOR);
+        if let Some(bytes) = keys::to_bytes(k, app_cursor) {
+            self.input(bytes);
+            cx.stop_propagation();
+        }
+    }
+
+    fn input(&mut self, bytes: Vec<u8>) {
+        let mut term = self.term.lock();
+        term.scroll_display(Scroll::Bottom);
+        term.selection = None;
+        drop(term);
+        self.pty.notify(bytes);
+    }
+
+    fn paste(&mut self, text: &str) {
+        let bracketed = self.term.lock().mode().contains(TermMode::BRACKETED_PASTE);
+        let bytes = if bracketed {
+            // sem ESC dentro do bracket, senão o texto colado consegue fechar o bracket e virar comando
+            format!("\x1b[200~{}\x1b[201~", text.replace('\x1b', "")).into_bytes()
+        } else {
+            text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
+        };
+        self.input(bytes);
+    }
+
+    fn scroll(&mut self, scroll: Scroll, cx: &mut Context<Self>) -> bool {
+        self.term.lock().scroll_display(scroll);
+        cx.notify();
+        true
+    }
+
+    fn grid_point(&self, position: Point<Pixels>) -> (GridPoint, Side) {
+        let x = (f32::from(position.x) - PADDING).max(0.) / f32::from(self.cell.width);
+        let y = (f32::from(position.y) - PADDING).max(0.) / f32::from(self.cell.height);
+        let col = (x as usize).min(self.grid.cols - 1);
+        let line = (y as usize).min(self.grid.lines - 1);
+        let side = if x.fract() < 0.5 {
+            Side::Left
+        } else {
+            Side::Right
+        };
+        let offset = self.term.lock().grid().display_offset() as i32;
+        (
+            GridPoint::new(Line(line as i32 - offset), Column(col)),
+            side,
+        )
+    }
+
+    fn mouse_report(&self, shift: bool) -> Option<bool> {
+        let mode = *self.term.lock().mode();
+        (mode.intersects(TermMode::MOUSE_MODE) && !shift)
+            .then(|| mode.contains(TermMode::SGR_MOUSE))
+    }
+
+    fn send_mouse(
+        &mut self,
+        button: u8,
+        drag: bool,
+        pressed: bool,
+        position: Point<Pixels>,
+        mods: &Modifiers,
+        sgr: bool,
+    ) {
+        let (p, _) = self.grid_point(position);
+        let line = (p.line.0 + self.term.lock().grid().display_offset() as i32).max(0) as usize;
+        if let Some(bytes) = mouse::report(button, drag, pressed, p.column.0, line, mods, sgr) {
+            self.pty.notify(bytes);
+        }
+    }
+
+    fn on_mouse_down(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+        let button = match e.button {
+            MouseButton::Left => mouse::LEFT,
+            MouseButton::Middle => mouse::MIDDLE,
+            MouseButton::Right => mouse::RIGHT,
+            _ => return,
+        };
+        if let Some(sgr) = self.mouse_report(e.modifiers.shift) {
+            self.send_mouse(button, false, true, e.position, &e.modifiers, sgr);
+            return;
+        }
+        match e.button {
+            MouseButton::Left => {
+                let (point, side) = self.grid_point(e.position);
+                let ty = match e.click_count {
+                    2 => SelectionType::Semantic,
+                    n if n >= 3 => SelectionType::Lines,
+                    _ => SelectionType::Simple,
+                };
+                self.term.lock().selection = Some(Selection::new(ty, point, side));
+                cx.notify();
+            }
+            MouseButton::Middle => {
+                if let Some(text) = cx.read_from_primary().and_then(|i| i.text()) {
+                    self.paste(&text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if e.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        if let Some(sgr) = self.mouse_report(e.modifiers.shift) {
+            if self
+                .term
+                .lock()
+                .mode()
+                .intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
+            {
+                self.send_mouse(mouse::LEFT, true, true, e.position, &e.modifiers, sgr);
+            }
+            return;
+        }
+        let (point, side) = self.grid_point(e.position);
+        if let Some(sel) = self.term.lock().selection.as_mut() {
+            sel.update(point, side);
+        }
+        cx.notify();
+    }
+
+    fn on_mouse_up(&mut self, e: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(sgr) = self.mouse_report(e.modifiers.shift) {
+            let button = match e.button {
+                MouseButton::Left => mouse::LEFT,
+                MouseButton::Middle => mouse::MIDDLE,
+                MouseButton::Right => mouse::RIGHT,
+                _ => return,
+            };
+            self.send_mouse(button, false, false, e.position, &e.modifiers, sgr);
+            return;
+        }
+        // copy-on-select do Ghostty no Linux: a seleção vai para a área PRIMARY (colar com o botão do meio)
+        let selected = self.term.lock().selection_to_string();
+        if e.button == MouseButton::Left
+            && let Some(text) = selected.filter(|t| !t.is_empty())
+        {
+            cx.write_to_primary(ClipboardItem::new_string(text));
+        }
+    }
+
+    fn on_scroll(&mut self, e: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let lines = self.scroll_rem
+            + f32::from(e.delta.pixel_delta(self.cell.height).y) / f32::from(self.cell.height);
+        self.scroll_rem = lines.fract();
+        let n = lines.trunc() as i32;
+        if n == 0 {
+            return;
+        }
+        let mode = *self.term.lock().mode();
+        if let Some(sgr) = self.mouse_report(e.modifiers.shift) {
+            let button = if n > 0 {
+                mouse::WHEEL_UP
+            } else {
+                mouse::WHEEL_DOWN
+            };
+            for _ in 0..n.unsigned_abs() {
+                self.send_mouse(button, false, true, e.position, &e.modifiers, sgr);
+            }
+        } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+            let arrow: &[u8] = if n > 0 { b"\x1bOA" } else { b"\x1bOB" };
+            self.pty.notify(arrow.repeat(n.unsigned_abs() as usize));
+        } else {
+            self.scroll(Scroll::Delta(n), cx);
         }
     }
 
@@ -158,6 +352,7 @@ impl TerminalView {
         let content = term.renderable_content();
         let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR);
         let offset = content.display_offset as i32;
+        let selection = content.selection;
         let cursor = (
             content.cursor.point.line.0 + offset,
             content.cursor.point.column.0,
@@ -185,6 +380,10 @@ impl TerminalView {
             let mut bg = self.palette.resolve(cell.bg, content.colors);
             if cell.flags.contains(Flags::INVERSE) {
                 std::mem::swap(&mut fg, &mut bg);
+            }
+            if selection.is_some_and(|s| s.contains(indexed.point)) {
+                fg = self.palette.selection_fg;
+                bg = self.palette.selection_bg;
             }
             if show_cursor && (row, col) == cursor {
                 fg = self.palette.cursor_text;
@@ -283,13 +482,24 @@ impl Render for TerminalView {
                 + text_system.descent(font_id, font_size).abs())
             .ceil(),
         };
+        self.cell = cell;
         self.fit(window.viewport_size(), cell);
+        let entity = cx.entity();
+        let focus = self.focus.clone();
         let frame = self.snapshot(&font);
         let bg = hsla(self.palette.background);
 
         div()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_mouse_up))
+            .on_mouse_up(MouseButton::Right, cx.listener(Self::on_mouse_up))
+            .on_scroll_wheel(cx.listener(Self::on_scroll))
             .size_full()
             .bg(bg)
             .p(px(PADDING))
@@ -297,6 +507,7 @@ impl Render for TerminalView {
                 canvas(
                     |_, _, _| {},
                     move |bounds, _, window, cx| {
+                        window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
                         let origin = bounds.origin;
                         for (row, col, width, color) in frame.backgrounds {
                             let at = point(
@@ -334,5 +545,65 @@ impl Render for TerminalView {
                 )
                 .size_full(),
             )
+    }
+}
+
+// texto digitado, inclusive o resultado de tecla morta (´ + e = é); o terminal não tem texto "marcado"
+impl EntityInputHandler for TerminalView {
+    fn text_for_range(
+        &mut self,
+        _: Range<usize>,
+        _: &mut Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<String> {
+        None
+    }
+    fn selected_text_range(
+        &mut self,
+        _: bool,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        None
+    }
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
+        None
+    }
+    fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        text: &str,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        self.input(text.as_bytes().to_vec());
+    }
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+    }
+    fn bounds_for_range(
+        &mut self,
+        _: Range<usize>,
+        _: Bounds<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        None
+    }
+    fn character_index_for_point(
+        &mut self,
+        _: Point<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<usize> {
+        None
     }
 }

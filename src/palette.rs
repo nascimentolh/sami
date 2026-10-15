@@ -8,6 +8,8 @@ pub struct Palette {
     pub background: Rgb,
     pub cursor: Rgb,
     pub cursor_text: Rgb,
+    pub selection_bg: Rgb,
+    pub selection_fg: Rgb,
 }
 
 const fn rgb(hex: u32) -> Rgb {
@@ -43,6 +45,8 @@ impl Default for Palette {
             background: rgb(0x282a36),
             cursor: rgb(0xf8f8f2),
             cursor_text: rgb(0x282a36),
+            selection_bg: rgb(0x44475a),
+            selection_fg: rgb(0xffffff),
         }
     }
 }

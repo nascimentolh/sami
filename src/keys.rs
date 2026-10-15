@@ -51,11 +51,15 @@ pub fn to_bytes(k: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
         };
         return Some(vec![byte]);
     }
-    let text = k.key_char.as_ref()?;
-    let mut bytes = Vec::with_capacity(text.len() + 1);
-    if m.alt {
-        bytes.push(0x1b);
+    // texto comum (inclusive acentos de tecla morta) chega pelo input handler, não por aqui
+    if !m.alt {
+        return None;
     }
+    let text = k
+        .key_char
+        .clone()
+        .or_else(|| (k.key.chars().count() == 1).then(|| k.key.clone()))?;
+    let mut bytes = vec![0x1b];
     bytes.extend_from_slice(text.as_bytes());
     Some(bytes)
 }
@@ -76,5 +80,7 @@ mod tests {
         assert_eq!(to_bytes(&ks("up"), false), Some(b"\x1b[A".to_vec()));
         assert_eq!(to_bytes(&ks("up"), true), Some(b"\x1bOA".to_vec()));
         assert_eq!(to_bytes(&ks("shift-tab"), false), Some(b"\x1b[Z".to_vec()));
+        assert_eq!(to_bytes(&ks("a"), false), None);
+        assert_eq!(to_bytes(&ks("alt-b"), false), Some(b"\x1bb".to_vec()));
     }
 }

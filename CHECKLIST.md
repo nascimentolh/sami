@@ -29,8 +29,9 @@ Regras:
 
 - [x] PTY rodando `$SHELL` com o env do usuário (o `tty` + `EventLoop` do próprio `alacritty_terminal`; sem `portable-pty`)
 - [x] `alacritty_terminal` + renderer de grid no GPUI: 16, 256 e truecolor; bold, italic e underline; cursor block (verificado com screenshot: starship, eza com ícones, ligaduras)
-- [ ] input: teclas e modificadores (básico feito: texto, Enter, setas, Ctrl+letra, Alt), bracketed paste, mouse reporting, scrollback, seleção e cópia
-- [ ] acentos e teclas mortas no layout `us intl` (ç, ã, é, aspas)
+- [x] input: teclas e modificadores, colar (Ctrl+Shift+V, Shift+Insert, botão do meio) com bracketed paste, rolagem do histórico (roda e Shift+PageUp/Down), seleção (simples, palavra com 2 cliques, linha com 3) e cópia (Ctrl+Shift+C e copy-on-select na PRIMARY)
+- [x] mouse reporting SGR e X10 para os apps (testado em unidade; validar com vim/btop/herdr no item abaixo)
+- [x] acentos e teclas mortas no layout `us intl` (ç, é, ã): exigiu patch em `vendor/xim-ctext` (o ibus manda a pré-edição em Latin-1 e a crate derrubava o processo)
 - [x] resize propaga para o PTY (SIGWINCH): a grade se ajusta ao tamanho da janela
 - [ ] parser do `~/.config/ghostty/config` com teste: `font-family`, `font-size`, `font-feature`, `palette`, `background`, `foreground`, `selection-*`, `cursor-*`, `window-padding-*`, `background-opacity`, `unfocused-split-opacity` e `keybind`
 - [ ] ligaduras e glifos da Nerd Font
