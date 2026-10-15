@@ -10,6 +10,7 @@ pub enum Cmd {
     NextAttention,
     NewFeature,
     RemoveFeature,
+    Cleanup,
     Blocked,
     Tutorial,
     Herdr(&'static str),
@@ -53,6 +54,8 @@ pub fn commands() -> Vec<Item> {
         c("Ir para: Vault", "", None),
         c("Ajuda: Rever tutorial desta tela", "", Some(Tutorial)),
         c("Feature: Remover a atual…", "", Some(RemoveFeature)),
+        // não está no protótipo; o desenho (5.4) pede o comando
+        c("Feature: Limpeza…", "", Some(Cleanup)),
         c("Feature: Ir para a que precisa de você", "", Some(Blocked)),
         c("Feature: Revisar mudanças", "Ctrl+Shift+E", None),
         c("Feature: Enviar comentários ao Claude", "Ctrl+⏎", None),

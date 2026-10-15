@@ -55,7 +55,7 @@ src/
 Branch e base, prompt opcional, issue do Jira opcional (preenche a branch e o prompt) e de 1 a 3 tentativas.
 
 Ao criar, o Maestro:
-1. roda `herdr worktree create`;
+1. cria a worktree com `git worktree add` em `<repo>.wt/<slug>` e abre um workspace do herdr nela (`workspace.create`, que aceita env; o `worktree.create` do herdr não aceita);
 2. copia os `.env*` ignorados pelo git;
 3. roda o setup do repo (`.maestro.toml`, ex.: `npm ci`);
 4. injeta `PORT` e `COMPOSE_PROJECT_NAME` únicos no ambiente do pane;
@@ -74,7 +74,7 @@ A feature nasce num repo só. "+ repo" (ex.: `k8s-configmap`, `vault-roleset`, `
   - Se houver algo não commitado ou não mergeado, avisa e pede confirmação item a item.
   - Worktree extra que terminou sem nenhuma mudança sai sem perguntar, porque está limpa.
   - Volume de banco do compose só é apagado com confirmação à parte.
-- **Limpeza** (comando): compara o disco com os inventários e lista os órfãos: worktree sem feature, ref de feature removida, compose parado, branch local mergeada. Apaga com confirmação.
+- **Limpeza** (comando "Feature: Limpeza…"): compara o disco com os inventários e lista os órfãos: worktree sem feature (só em `<repo>.wt/`), inventário sem worktree, ref de feature removida, compose parado de uma worktree do Maestro, branch local mergeada. Apaga o que estiver marcado; branch local e worktree com mudanças vêm desmarcadas.
 
 ### 5.5 Melhor de N
 2 ou 3 worktrees `-a/-b/-c` com o mesmo prompt, opcionalmente com modelos diferentes (`claude --model`). A comparação mostra arquivos, testes, custo e abordagem. "Ficar com esta" conclui as outras pelo inventário.

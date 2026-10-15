@@ -1,6 +1,7 @@
 mod binds;
 mod braille;
 mod changes;
+mod cleanup;
 mod confirm;
 mod feature;
 mod form;

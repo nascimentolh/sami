@@ -1,6 +1,7 @@
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
+    cleanup::{self, Cleanup},
     confirm::{self, Answer, Confirm},
     feature,
     herdr::{self, Status},
@@ -25,6 +26,7 @@ pub struct Shell {
     palette: Option<Entity<CommandPalette>>,
     dialog: Option<Entity<NewFeature>>,
     confirm: Option<Entity<Confirm>>,
+    cleanup: Option<Entity<Cleanup>>,
     toasts: Vec<(usize, String)>,
     toast_seq: usize,
     want_dialog: bool,
@@ -85,6 +87,7 @@ impl Shell {
             palette: None,
             dialog: None,
             confirm: None,
+            cleanup: None,
             toasts: Vec::new(),
             toast_seq: 0,
             want_dialog: false,
@@ -296,6 +299,28 @@ impl Shell {
             Cmd::Features => {}
             Cmd::NewFeature => return self.open_new_feature(window, cx),
             Cmd::RemoveFeature => return self.remove_feature(window, cx),
+            Cmd::Cleanup => {
+                let repos = self
+                    .sidebar
+                    .as_ref()
+                    .map(|s| s.read(cx).repo_paths())
+                    .unwrap_or_default();
+                let theme = self.theme.clone();
+                let c = cx.new(|cx| Cleanup::new(repos, theme, window, cx));
+                cx.subscribe_in(&c, window, |this, _, e: &cleanup::Event, window, cx| {
+                    let cleanup::Event::Done(msg) = e;
+                    this.cleanup = None;
+                    if let Some(m) = msg.clone() {
+                        this.toast(m, cx);
+                    }
+                    window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                    cx.notify();
+                })
+                .detach();
+                self.cleanup = Some(c);
+                cx.notify();
+                return;
+            }
         }
         window.focus(&self.terminal.read(cx).focus_handle(), cx);
         cx.stop_propagation();
@@ -821,6 +846,20 @@ impl Render for Shell {
             .child(self.hints())
             .child(self.status(cx))
             .children(overlay)
+            .children(self.cleanup.clone().map(|d| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .pt(px(60.))
+                    .px(px(16.))
+                    .bg(rgba(0x0a0a1080))
+                    .child(d)
+            }))
             .children(self.confirm.clone().map(|d| {
                 div()
                     .absolute()

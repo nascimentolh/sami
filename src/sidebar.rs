@@ -257,6 +257,15 @@ impl Sidebar {
     }
 
     // uma chamada curta ao socket; thread própria para não segurar a UI nem o contexto
+    /// Repositórios principais com algum agente aberto (onde a Limpeza procura).
+    pub fn repo_paths(&self) -> Vec<PathBuf> {
+        self.repos()
+            .0
+            .into_iter()
+            .map(|r| PathBuf::from(r.path))
+            .collect()
+    }
+
     pub fn herdr(&self) -> Arc<Herdr> {
         self.herdr.clone()
     }

@@ -392,6 +392,204 @@ pub fn conclude(herdr: &Herdr, inv: &Inventory) -> Result<Vec<String>, String> {
     Ok(done)
 }
 
+/// Algo no disco que nenhuma feature reconhece.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Orphan {
+    /// worktree em `<repo>.wt/` (onde o Maestro cria as dele) sem inventário
+    Worktree {
+        repo: PathBuf,
+        path: PathBuf,
+        dirty: bool,
+    },
+    /// inventário cuja worktree já não existe
+    Inventory { id: String, branch: String },
+    /// `refs/maestro/<id>/…` de uma feature que não existe mais
+    Ref { repo: PathBuf, name: String },
+    /// projeto do compose `<repo>-…` parado e sem feature
+    Compose { name: String },
+    /// branch local já mergeada na base, sem worktree; pode ser sua, por isso vem desmarcada
+    Branch { repo: PathBuf, name: String },
+}
+
+impl Orphan {
+    pub fn label(&self) -> (String, String) {
+        match self {
+            Orphan::Worktree { path, dirty, .. } => (
+                path.display().to_string(),
+                if *dirty {
+                    "worktree sem feature, com mudanças não commitadas".into()
+                } else {
+                    "worktree sem feature".into()
+                },
+            ),
+            Orphan::Inventory { branch, .. } => (
+                branch.clone(),
+                "inventário de feature cuja worktree sumiu".into(),
+            ),
+            Orphan::Ref { name, .. } => (name.clone(), "ref de feature removida".into()),
+            Orphan::Compose { name } => (name.clone(), "compose parado".into()),
+            Orphan::Branch { name, .. } => (name.clone(), "branch local mergeada".into()),
+        }
+    }
+
+    /// Marcado por padrão: só o que é seguro apagar sem olhar.
+    pub fn safe(&self) -> bool {
+        !matches!(
+            self,
+            Orphan::Branch { .. } | Orphan::Worktree { dirty: true, .. }
+        )
+    }
+
+    pub fn remove(&self) -> Result<(), String> {
+        match self {
+            Orphan::Worktree { repo, path, .. } => {
+                git_err(
+                    repo,
+                    &["worktree", "remove", "--force", &path.to_string_lossy()],
+                )?;
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::remove_dir(parent);
+                }
+                Ok(())
+            }
+            Orphan::Inventory { id, .. } => {
+                std::fs::remove_file(data_dir().join(format!("{id}.json")))
+                    .map_err(|e| e.to_string())
+            }
+            Orphan::Ref { repo, name } => git_err(repo, &["update-ref", "-d", name]),
+            Orphan::Compose { name } => Command::new("docker")
+                .args(["compose", "-p", name, "down"])
+                .output()
+                .map_err(|e| e.to_string())
+                .map(drop),
+            Orphan::Branch { repo, name } => git_err(repo, &["branch", "-d", name]),
+        }
+    }
+}
+
+/// Compara o disco com os inventários nos repositórios dados (os das features e os abertos no herdr).
+pub fn orphans(repos: &[PathBuf]) -> Vec<Orphan> {
+    let invs = inventories();
+    let known_paths: Vec<&Path> = invs
+        .iter()
+        .flat_map(|i| i.worktrees.iter().map(|w| w.path.as_path()))
+        .collect();
+    let mut out = Vec::new();
+    for inv in &invs {
+        if inv.worktrees.iter().all(|w| !w.path.exists()) {
+            out.push(Orphan::Inventory {
+                id: inv.id.clone(),
+                branch: inv.branch.clone(),
+            });
+        }
+    }
+    let mut repos: Vec<PathBuf> = repos
+        .iter()
+        .cloned()
+        .chain(invs.iter().map(|i| i.repo.clone()))
+        .collect();
+    repos.sort();
+    repos.dedup();
+    for repo in &repos {
+        let wt_dir = worktree_path(repo, "x")
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let list = git(repo, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+        let mut wt_branches = Vec::new();
+        for block in list.split("\n\n") {
+            let path = block
+                .lines()
+                .find_map(|l| l.strip_prefix("worktree "))
+                .map(PathBuf::from);
+            if let Some(b) = block
+                .lines()
+                .find_map(|l| l.strip_prefix("branch refs/heads/"))
+            {
+                wt_branches.push(b.to_string());
+            }
+            if let Some(path) =
+                path.filter(|p| p.starts_with(&wt_dir) && !known_paths.contains(&p.as_path()))
+            {
+                let dirty =
+                    git(&path, &["status", "--porcelain"]).is_some_and(|s| !s.trim().is_empty());
+                out.push(Orphan::Worktree {
+                    repo: repo.clone(),
+                    path,
+                    dirty,
+                });
+            }
+        }
+        for r in git(
+            repo,
+            &["for-each-ref", "--format=%(refname)", "refs/maestro/"],
+        )
+        .unwrap_or_default()
+        .lines()
+        {
+            let id = r
+                .trim_start_matches("refs/maestro/")
+                .split('/')
+                .next()
+                .unwrap_or_default();
+            if !invs.iter().any(|i| i.id == id) {
+                out.push(Orphan::Ref {
+                    repo: repo.clone(),
+                    name: r.into(),
+                });
+            }
+        }
+        let base = bases(repo).into_iter().next().unwrap_or_default();
+        let current = git(repo, &["branch", "--show-current"]).unwrap_or_default();
+        for b in git(
+            repo,
+            &["branch", "--merged", &base, "--format=%(refname:short)"],
+        )
+        .unwrap_or_default()
+        .lines()
+        {
+            let in_use = b == base || b == current.trim() || wt_branches.iter().any(|w| w == b);
+            if !in_use
+                && !invs
+                    .iter()
+                    .any(|i| i.worktrees.iter().any(|w| w.branch == b))
+            {
+                out.push(Orphan::Branch {
+                    repo: repo.clone(),
+                    name: b.into(),
+                });
+            }
+        }
+        // só compose cujo arquivo está numa worktree do Maestro; prefixo de nome pegaria projeto de outro repo
+        for (name, file) in stopped_compose_projects() {
+            if file.starts_with(&wt_dir) && !invs.iter().any(|i| i.compose_project == name) {
+                out.push(Orphan::Compose { name });
+            }
+        }
+    }
+    out
+}
+
+/// (nome, primeiro arquivo do compose) dos projetos parados.
+fn stopped_compose_projects() -> Vec<(String, PathBuf)> {
+    let Ok(o) = Command::new("docker")
+        .args(["compose", "ls", "-a", "--format", "json"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["Status"].as_str().is_some_and(|s| !s.contains("running")))
+        .filter_map(|p| {
+            let file = p["ConfigFiles"].as_str()?.split(',').next()?;
+            Some((p["Name"].as_str()?.to_string(), PathBuf::from(file)))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,5 +657,110 @@ mod tests {
         std::fs::write(dir.join(".maestro.toml"), "setup = \"make deps\"\n").unwrap();
         assert_eq!(setup_command(&dir).as_deref(), Some("make deps"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn acha_orfaos_sem_tocar_no_resto() {
+        let root = std::env::temp_dir().join(format!("maestro-orf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("app");
+        std::fs::create_dir_all(&repo).unwrap();
+        let run = |dir: &Path, args: &[&str]| {
+            let o = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                o.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        };
+        run(&repo, &["init", "-q", "-b", "main"]);
+        run(
+            &repo,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "i",
+            ],
+        );
+        run(&repo, &["branch", "velha"]);
+        let wt = worktree_path(&repo, "feat/sobra");
+        run(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat/sobra",
+                &wt.to_string_lossy(),
+                "main",
+            ],
+        );
+        run(&repo, &["update-ref", "refs/maestro/sumiu-1/t1", "HEAD"]);
+        let fora = root.join("minha-worktree");
+        run(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "minha",
+                &fora.to_string_lossy(),
+                "main",
+            ],
+        );
+        let o = orphans(std::slice::from_ref(&repo));
+        assert!(o.contains(&Orphan::Worktree {
+            repo: repo.clone(),
+            path: wt.clone(),
+            dirty: false
+        }));
+        assert!(o.contains(&Orphan::Ref {
+            repo: repo.clone(),
+            name: "refs/maestro/sumiu-1/t1".into()
+        }));
+        assert!(o.contains(&Orphan::Branch {
+            repo: repo.clone(),
+            name: "velha".into()
+        }));
+        // worktree fora de `<repo>.wt/` não é do Maestro; branch em uso por worktree também não sai
+        assert!(
+            !o.iter()
+                .any(|x| matches!(x, Orphan::Worktree { path, .. } if *path == fora))
+        );
+        assert!(!o.iter().any(
+            |x| matches!(x, Orphan::Branch { name, .. } if name == "minha" || name == "feat/sobra")
+        ));
+        assert!(
+            !Orphan::Branch {
+                repo: repo.clone(),
+                name: "velha".into()
+            }
+            .safe()
+        );
+        // só o que é deste repo de teste: inventários e composes reais da máquina não entram
+        let mine = |x: &Orphan| matches!(x, Orphan::Worktree { repo: r, .. } | Orphan::Ref { repo: r, .. } if *r == repo);
+        for x in o.iter().filter(|x| x.safe() && mine(x)) {
+            x.remove().unwrap();
+        }
+        assert!(
+            orphans(std::slice::from_ref(&repo))
+                .iter()
+                .filter(|x| mine(x))
+                .all(|x| !x.safe())
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

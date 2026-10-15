@@ -72,7 +72,7 @@ Regras:
 - [ ] **multi-repo sob demanda:** "+ repo" (ex.: `k8s-configmap`, `vault-roleset`, `pipeline`) cria a worktree só quando pedido, manda `/add-dir` ao agente e registra no inventário; os MRs ficam ligados entre si
 - [x] **concluir feature** ("Feature: Remover a atual…", com o `confirmDlg` do protótipo): fecha o workspace, para o compose (sem `-v`: volume fica), remove a worktree, apaga a branch se mergeada na base, apaga `refs/maestro/<id>/*` e o inventário (libera a porta). Avisa antes do que não está commitado. Conferido num repo descartável: `worktree list` e `branch` voltaram ao estado de antes
 - [ ] worktree extra que terminou sem nenhuma mudança é removida na conclusão sem perguntar (está limpa)
-- [ ] comando **Limpeza**: lista órfãos (worktree sem feature, `refs/maestro` de feature removida, compose parado, branch local já mergeada) e apaga com confirmação
+- [x] comando **Limpeza** ("Feature: Limpeza…" na paleta): lista órfãos (worktree em `<repo>.wt/` sem inventário, inventário sem worktree, `refs/maestro` de feature removida, compose parado cujo arquivo está numa worktree do Maestro, branch local já mergeada) e apaga o que estiver marcado. Branch local e worktree com mudanças vêm desmarcadas. Conferido num repo descartável
 - [ ] tutorial da área
 
 **Pronto quando:** você cria uma feature em `bots-api` + `k8s-configmap`, conclui, e `git worktree list`, `git for-each-ref refs/maestro`, `git branch` e `docker compose ls` voltam exatamente ao estado de antes, nos dois repos.
