@@ -255,6 +255,21 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 
 ---
 
+## Issues da auditoria (GitHub #1–#12)
+
+- [x] #1 revisor de MR com `--setting-sources user` e `--strict-mcp-config` (o `.claude/` do MR não carrega)
+- [x] #2 testes afetados com `sh_quote`
+- [x] #3 `--paginate` lido em stream, sem `][` → `,`
+- [x] #4 Ctrl+S relê o disco e abre o aviso de conflito
+- [x] #5 auditoria prod sem `kubectl get` (bloqueado em `--disallowedTools`)
+- [x] #6 `notify-send -A` numa thread do SO
+- [x] #7 PID do revisor zerado no `Done`
+- [x] #8 `--max-budget-usd` no revisor (2.00) e no Perguntar (0.50)
+- [x] #9 `pw-play`/`xdg-open` colhidos (`spawn_reaped`)
+- [x] #10 falha no `install_hook` vira toast
+- [x] #11 inventário com escrita atômica e log de JSON inválido
+- [x] #12 actions fixadas por SHA + Dependabot
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
