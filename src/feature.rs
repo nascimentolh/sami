@@ -119,16 +119,23 @@ pub fn inventories() -> Vec<Inventory> {
         return Vec::new();
     };
     dir.flatten()
-        .filter_map(|e| serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| {
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            serde_json::from_str(&text)
+                .inspect_err(|err| eprintln!("maestro: inventário inválido {:?}: {err}", e.path()))
+                .ok()
+        })
         .collect()
 }
 
+/// Temporário + `rename`: um crash no meio não deixa JSON truncado (e a feature órfã).
 pub fn save(inv: &Inventory) -> std::io::Result<()> {
     std::fs::create_dir_all(data_dir())?;
-    std::fs::write(
-        data_dir().join(format!("{}.json", inv.id)),
-        serde_json::to_string_pretty(inv)?,
-    )
+    let dst = data_dir().join(format!("{}.json", inv.id));
+    let tmp = dst.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(inv)?)?;
+    std::fs::rename(tmp, dst)
 }
 
 /// A primeira porta acima de 3000 que nenhuma feature usa (3000 fica com a main).
