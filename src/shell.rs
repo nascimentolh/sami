@@ -70,6 +70,9 @@ pub struct Shell {
     mascot_frame: u64,
     window_active: bool,
     maximized: bool,
+    /// larguras arrastadas: a lateral e o painel da direita (`None` = o padrão do protótipo)
+    left_w: f32,
+    right_w: Option<f32>,
     _blink: Option<Task<()>>,
     toast_seq: usize,
     want_dialog: bool,
@@ -106,6 +109,12 @@ const VAULT_HINTS: &[(&str, &str, bool)] = &[
     ("Hoje", "daily", true),
     ("?", "atalhos", true),
 ];
+
+#[derive(Clone, Copy)]
+enum Resize {
+    Left,
+    Right,
+}
 
 enum Glyph {
     Min,
@@ -244,6 +253,7 @@ impl Shell {
                         Err(e) => this.toast(format!("vault: não deu para escrever ({e})"), cx),
                     },
                     SidebarEvent::Audit => this.want_audit = true,
+                    SidebarEvent::Picked => this.leave_modes(),
                 }
                 cx.notify();
             })
@@ -329,6 +339,8 @@ impl Shell {
             mascot_frame: 0,
             window_active: true,
             maximized: false,
+            left_w: 270.,
+            right_w: None,
             _blink: None,
             toast_seq: 0,
             want_dialog: false,
@@ -388,7 +400,33 @@ impl Shell {
         if let Some(pane) = target {
             s.focus(pane);
         }
+        self.leave_modes();
+        window.focus(&self.terminal.read(cx).focus_handle(), cx);
         cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// A faixa de 4 px entre colunas que se arrasta para mudar a largura.
+    fn resize_handle(&self, side: Resize) -> impl IntoElement {
+        let t = &self.theme;
+        div()
+            .id(match side {
+                Resize::Left => "rz-left",
+                Resize::Right => "rz-right",
+            })
+            .w(px(4.))
+            .h_full()
+            .flex_none()
+            .cursor_col_resize()
+            .hover(|d| d.bg(t.accent_soft))
+            .on_drag(side, |_, _, _, cx| cx.new(|_| EmptyView))
+    }
+
+    /// Volta para o terminal de Features (feature escolhida pela lateral ou por Ctrl+Shift+1…9).
+    fn leave_modes(&mut self) {
+        self.in_vault = false;
+        self.in_mrs = false;
+        self.in_audit = false;
     }
 
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1256,6 +1294,9 @@ impl Shell {
                     }
                     Go::Audit => None,
                 };
+                if pane.is_some() {
+                    self.leave_modes();
+                }
                 focus(pane, cx);
                 match go {
                     Go::Audit => return self.run(Cmd::Audit(false), window, cx),
@@ -1275,7 +1316,10 @@ impl Shell {
                 sidebar.as_ref().and_then(|s| s.read(cx).first_blocked()),
                 cx,
             ),
-            Cmd::Feature(p) => focus(Some(p), cx),
+            Cmd::Feature(p) => {
+                self.leave_modes();
+                focus(Some(p), cx)
+            }
             Cmd::Help => self.help = true,
             Cmd::Files => {
                 self.left = true;
@@ -2360,9 +2404,31 @@ impl Render for Shell {
             .child(self.title(cx))
             .child(
                 div()
+                    .id("columns")
                     .flex_1()
                     .min_h_0()
                     .flex()
+                    .on_drag_move(cx.listener(|this, e: &DragMoveEvent<Resize>, _, cx| {
+                        let b = e.bounds;
+                        let x = e.event.position.x;
+                        match e.drag(cx) {
+                            Resize::Left => {
+                                // o terminal nunca fica com menos de 300 px
+                                let right = this.right_w.unwrap_or(0.);
+                                let max = (f32::from(b.size.width) * 0.45)
+                                    .min(f32::from(b.size.width) - right - 300.)
+                                    .max(180.);
+                                this.left_w = f32::from(x - b.left()).clamp(180., max)
+                            }
+                            Resize::Right => {
+                                this.right_w = Some(f32::from(b.right() - x).clamp(
+                                    320.,
+                                    (f32::from(b.size.width) - this.left_w - 300.).max(320.),
+                                ))
+                            }
+                        }
+                        cx.notify();
+                    }))
                     .when_some(self.vault.clone().filter(|_| self.in_vault), |d, v| {
                         d.child(v)
                     })
@@ -2370,7 +2436,15 @@ impl Render for Shell {
                     .children(
                         self.sidebar
                             .clone()
-                            .filter(|_| self.left && !self.in_vault && !self.in_mrs),
+                            .filter(|_| self.left && !self.in_vault && !self.in_mrs)
+                            .map(|s| {
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .h_full()
+                                    .child(div().w(px(self.left_w)).h_full().child(s))
+                                    .child(self.resize_handle(Resize::Left))
+                            }),
                     )
                     .when_some(self.audit.clone().filter(|_| self.in_audit), |d, a| {
                         d.child(a)
@@ -2396,13 +2470,23 @@ impl Render for Shell {
                             .filter(|_| !self.in_vault && !self.in_mrs && !self.in_audit)
                             .map(|r| {
                                 div()
-                                    .w(relative(0.46))
-                                    .max_w(px(640.))
+                                    .map(|d| match self.right_w {
+                                        Some(w) => d.w(px(w)),
+                                        None => d.w(relative(0.46)).max_w(px(640.)),
+                                    })
+                                    .flex()
                                     .flex_none()
                                     .h_full()
-                                    .border_l_1()
-                                    .border_color(t.line)
-                                    .child(r)
+                                    .child(self.resize_handle(Resize::Right))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .h_full()
+                                            .border_l_1()
+                                            .border_color(t.line)
+                                            .child(r),
+                                    )
                             }),
                     ),
             )

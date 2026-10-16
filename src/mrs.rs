@@ -357,6 +357,22 @@ pub fn seen(state: &str, path: &str, iid: u64, sha: &str) -> bool {
     state.lines().any(|l| l.trim() == k)
 }
 
+/// O seu estado de revisor no GitLab (`reviewed`, `approved`, `requested_changes`, `unreviewed`…).
+pub fn my_review_state(reviewers: &Value, me: &str) -> Option<String> {
+    reviewers
+        .as_array()?
+        .iter()
+        .find(|r| r["user"]["username"] == me)
+        .and_then(|r| r["state"].as_str())
+        .map(String::from)
+}
+
+/// Já revisado: você revisou este sha (aqui ou no `mr-review.sh`) ou o GitLab diz que você revisou/aprovou.
+pub fn reviewed(state: &str, r: &Row, gitlab: Option<&str>) -> bool {
+    seen(state, &r.path, r.iid, &r.sha)
+        || matches!(gitlab, Some("reviewed" | "approved" | "requested_changes"))
+}
+
 /// O último sha revisado deste MR (para "+N commits" e a revisão incremental).
 pub fn last_seen(state: &str, path: &str, iid: u64) -> Option<String> {
     let p = format!("{path}!{iid}@");
@@ -999,5 +1015,16 @@ mod tests {
             (1, "a.ts", Some(1))
         );
         assert!(*cost > 0.);
+    }
+
+    #[test]
+    fn reviewed_by_sha_or_gitlab_state() {
+        let r = rows(&json!([{"references":{"full":"g/p!7"},"iid":7,"sha":"abc"}]))[0].clone();
+        let revs = json!([{"user":{"username":"eu"},"state":"approved"},{"user":{"username":"x"},"state":"unreviewed"}]);
+        assert_eq!(my_review_state(&revs, "eu").as_deref(), Some("approved"));
+        assert!(reviewed("", &r, Some("approved")));
+        assert!(!reviewed("", &r, Some("unapproved")));
+        assert!(reviewed("g/p!7@abc\n", &r, None));
+        assert!(!reviewed("g/p!7@old\n", &r, Some("unreviewed")));
     }
 }

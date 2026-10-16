@@ -25,6 +25,8 @@ pub enum Event {
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
     Review,
+    /// os de "Para revisar" que você já revisou (fora da conta do título)
+    Reviewed,
     Mine,
     Group,
 }
@@ -50,6 +52,8 @@ pub struct MrsView {
     me: Option<String>,
     lists: [Option<Result<Vec<Row>, String>>; 3],
     ci: HashMap<String, Status>,
+    /// o seu estado de revisor no GitLab, por MR de "Para revisar"
+    states: HashMap<String, String>,
     tab: Tab,
     sel: usize,
     filter: Entity<TextField>,
@@ -105,6 +109,7 @@ impl MrsView {
             me: None,
             lists: [None, None, None],
             ci: HashMap::new(),
+            states: HashMap::new(),
             tab: Tab::Review,
             sel: 0,
             filter,
@@ -132,9 +137,29 @@ impl MrsView {
     /// Quantos MRs esperam a sua revisão (o número de "MRs" no título).
     pub fn waiting(&self) -> usize {
         match &self.lists[0] {
-            Some(Ok(v)) => v.len(),
+            Some(Ok(v)) => v.iter().filter(|r| !self.is_reviewed(r)).count(),
             _ => 0,
         }
+    }
+
+    fn is_reviewed(&self, r: &Row) -> bool {
+        mrs::reviewed(&self.seen, r, self.states.get(&r.key()).map(String::as_str))
+    }
+
+    /// As linhas de uma aba, antes do filtro de texto.
+    fn tab_rows(&self, tab: Tab) -> Option<Result<Vec<Row>, String>> {
+        let i = match tab {
+            Tab::Review | Tab::Reviewed => 0,
+            Tab::Mine => 1,
+            Tab::Group => 2,
+        };
+        self.lists[i].clone().map(|l| {
+            l.map(|v| match tab {
+                Tab::Review => v.into_iter().filter(|r| !self.is_reviewed(r)).collect(),
+                Tab::Reviewed => v.into_iter().filter(|r| self.is_reviewed(r)).collect(),
+                _ => v,
+            })
+        })
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -152,6 +177,8 @@ impl MrsView {
                 })
                 .await;
             let rows: Vec<Row> = lists.iter().flatten().flatten().cloned().collect();
+            let review: Vec<String> = lists[0].iter().flatten().map(Row::key).collect();
+            let me_name = me.clone().unwrap_or_default();
             let _ = this.update(cx, |this, cx| {
                 this.me = me;
                 this.seen = std::fs::read_to_string(mrs::seen_file()).unwrap_or_default();
@@ -161,24 +188,31 @@ impl MrsView {
             // o selo de CI vem do detalhe de cada MR (a lista não traz o pipeline)
             for r in rows {
                 let (path, iid, key) = (r.path.clone(), r.iid, r.key());
-                let ci = cx
+                // em "Para revisar", também o seu estado de revisor (a lista não traz)
+                let ask = review.contains(&key).then(|| me_name.clone());
+                let (ci, state) = cx
                     .background_executor()
                     .spawn(async move {
-                        mrs::read(
-                            &format!("projects/{}/merge_requests/{iid}", mrs::enc(&path)),
-                            false,
-                        )
-                        .map(|d| mrs::ci_of(&d))
+                        let base = format!("projects/{}/merge_requests/{iid}", mrs::enc(&path));
+                        let ci = mrs::read(&base, false).map(|d| mrs::ci_of(&d));
+                        let state = ask.and_then(|me| {
+                            mrs::read(&format!("{base}/reviewers"), false)
+                                .ok()
+                                .and_then(|v| mrs::my_review_state(&v, &me))
+                        });
+                        (ci, state)
                     })
                     .await;
-                if let Ok(ci) = ci
-                    && this
-                        .update(cx, |this, cx| {
-                            this.ci.insert(key, ci);
-                            cx.notify();
-                        })
-                        .is_err()
-                {
+                let alive = this.update(cx, |this, cx| {
+                    if let Ok(ci) = ci {
+                        this.ci.insert(key.clone(), ci);
+                    }
+                    if let Some(s) = state {
+                        this.states.insert(key, s);
+                    }
+                    cx.notify();
+                });
+                if alive.is_err() {
                     break;
                 }
             }
@@ -187,13 +221,8 @@ impl MrsView {
     }
 
     fn rows(&self, cx: &App) -> Vec<Row> {
-        let i = match self.tab {
-            Tab::Review => 0,
-            Tab::Mine => 1,
-            Tab::Group => 2,
-        };
         let q = self.filter.read(cx).value.to_lowercase();
-        match &self.lists[i] {
+        match &self.tab_rows(self.tab) {
             Some(Ok(v)) => v
                 .iter()
                 .filter(|m| {
@@ -210,6 +239,12 @@ impl MrsView {
 
     /// `novo`, `revisado` ou `+N commits` (o sha mudou desde a sua última revisão).
     fn pill(&self, r: &Row) -> (&'static str, String) {
+        match self.states.get(&r.key()).map(String::as_str) {
+            Some("approved") => return ("", "aprovado".into()),
+            Some("requested_changes") => return ("", "pediu mudanças".into()),
+            Some("reviewed") => return ("", "revisado".into()),
+            _ => {}
+        }
         if mrs::seen(&self.seen, &r.path, r.iid, &r.sha) {
             ("", "revisado".into())
         } else if mrs::last_seen(&self.seen, &r.path, r.iid).is_some() {
@@ -680,8 +715,8 @@ impl MrsView {
     fn inbox(&self, cx: &mut Context<Self>) -> Div {
         let t = self.theme.clone();
         let rows = self.rows(cx);
-        let tab = |id: &'static str, label: &str, which: Tab, i: usize| {
-            let n = match &self.lists[i] {
+        let tab = |id: &'static str, label: &str, which: Tab| {
+            let n = match &self.tab_rows(which) {
                 Some(Ok(v)) => v.len().to_string(),
                 _ => "…".into(),
             };
@@ -723,17 +758,13 @@ impl MrsView {
                 div()
                     .flex()
                     .gap(px(2.))
-                    .child(tab("ib-rev", "Para revisar", Tab::Review, 0))
-                    .child(tab("ib-mine", "Meus", Tab::Mine, 1))
-                    .child(tab("ib-grp", &group, Tab::Group, 2)),
+                    .child(tab("ib-rev", "Para revisar", Tab::Review))
+                    .child(tab("ib-done", "Revisados", Tab::Reviewed))
+                    .child(tab("ib-mine", "Meus", Tab::Mine))
+                    .child(tab("ib-grp", &group, Tab::Group)),
             )
             .child(div().flex_1())
             .child(div().w(px(200.)).child(self.filter.clone()));
-        let i = match self.tab {
-            Tab::Review => 0,
-            Tab::Mine => 1,
-            Tab::Group => 2,
-        };
         let q = self.filter.read(cx).value.clone();
         let mut list = div()
             .id("ib-list")
@@ -742,7 +773,7 @@ impl MrsView {
             .overflow_y_scroll()
             .relative()
             .child(tour::anchor(&self.anchors, "ilist"));
-        match &self.lists[i] {
+        match &self.tab_rows(self.tab) {
             None => list = list.child(div().p(px(24.)).text_color(t.muted).child("Lendo os MRs…")),
             Some(Err(e)) => {
                 list = list.child(self.empty("Não deu para ler os MRs".into(), e.clone()))

@@ -50,6 +50,8 @@ impl Theme {
     /// O `.ed` do protótipo no editor do gpui-component, que pinta pelo tema global dele.
     pub fn apply_to_editor(&self, cx: &mut App) {
         let th = gpui_kit::component::Theme::global_mut(cx);
+        // a moldura da janela (do Root) é cinza-claro em tema claro: fica escura como o Dracula
+        th.mode = gpui_kit::component::ThemeMode::Dark;
         th.foreground = self.fg;
         th.caret = self.fg;
         th.muted_foreground = self.comment;

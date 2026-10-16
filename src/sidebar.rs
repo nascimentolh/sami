@@ -34,6 +34,7 @@ pub enum SidebarEvent {
     /// o Maestro escreveu no vault (Histórico, daily)
     Vault(Result<crate::vault::Write, String>),
     Audit,
+    Picked,
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -425,6 +426,12 @@ impl Sidebar {
             .chain(self.agents.iter().map(|a| a.cwd.as_str()))
             .find_map(|c| herdr::repo_root(Path::new(c)))
             .map(Path::to_path_buf)
+    }
+
+    /// Clique numa feature ou terminal: foca e avisa o Shell para sair de MRs, Vault ou Auditoria.
+    fn pick(&mut self, focus: impl FnOnce(&Self), cx: &mut Context<Self>) {
+        focus(self);
+        cx.emit(SidebarEvent::Picked);
     }
 
     /// Ctrl+Shift+F: a aba Arquivos, relida do repo em foco.
@@ -1185,7 +1192,9 @@ impl Render for Sidebar {
                 let pane = a.pane_id.clone();
                 let this = this.clone();
                 let row = self.agent_row(a, branch_of(a).as_deref());
-                list = list.child(self.row(row, move |cx| this.read(cx).focus(pane.clone())));
+                list = list.child(self.row(row, move |cx| {
+                    this.update(cx, |s, cx| s.pick(|s| s.focus(pane.clone()), cx))
+                }));
             }
         }
         col = col.child(
@@ -1257,13 +1266,17 @@ impl Render for Sidebar {
                 unseen: None,
                 dim: false,
             };
-            terms = terms.child(self.row(row, move |cx| this.read(cx).focus_workspace(id.clone())));
+            terms = terms.child(self.row(row, move |cx| {
+                this.update(cx, |s, cx| s.pick(|s| s.focus_workspace(id.clone()), cx))
+            }));
         }
         for a in loose {
             let pane = a.pane_id.clone();
             let this = this.clone();
             let row = self.agent_row(a, None);
-            terms = terms.child(self.row(row, move |cx| this.read(cx).focus(pane.clone())));
+            terms = terms.child(self.row(row, move |cx| {
+                this.update(cx, |s, cx| s.pick(|s| s.focus(pane.clone()), cx))
+            }));
         }
         col = col.child(terms);
         if top.is_some() {
@@ -1272,7 +1285,7 @@ impl Render for Sidebar {
 
         div()
             .id("sidebar")
-            .w(px(270.))
+            .w_full()
             .flex_none()
             .h_full()
             .overflow_y_scroll()
