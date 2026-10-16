@@ -41,6 +41,10 @@ pub struct Shell {
     compare: Option<Entity<Compare>>,
     /// (id, texto, patch que refaz o que foi desfeito)
     toasts: Vec<(usize, String, Option<Redo>)>,
+    /// toast de notificação de MR: id do toast → `path!iid` do "Abrir"
+    toast_open: Vec<(usize, String)>,
+    want_merge: Option<(String, String, crate::mrs::MergeOpts, bool)>,
+    merge_dlg: Option<Entity<confirm::MergeDlg>>,
     review: Option<Entity<Review>>,
     want_review: Option<Option<String>>,
     want_file: Option<String>,
@@ -316,6 +320,9 @@ impl Shell {
             cleanup: None,
             compare: None,
             toasts: Vec::new(),
+            toast_open: Vec::new(),
+            want_merge: None,
+            merge_dlg: None,
             review: None,
             want_review: None,
             want_file: None,
@@ -531,6 +538,60 @@ impl Shell {
         cx.notify();
     }
 
+    /// MR novo ou resposta: toast com "Abrir" (6 s); com a janela fora de foco, também `notify-send`.
+    fn notify_mr(
+        &mut self,
+        text: String,
+        key: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toast_seq += 1;
+        let id = self.toast_seq;
+        self.toasts.push((id, text.clone(), None));
+        self.toast_open.push((id, key.clone()));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(6000))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.toasts.retain(|(i, _, _)| *i != id);
+                this.toast_open.retain(|(i, _)| *i != id);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+        if self.window_active {
+            return;
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            let open = cx
+                .background_executor()
+                .spawn(async move {
+                    std::process::Command::new("notify-send")
+                        .args(["-a", "Maestro", "-A", "open=Abrir", "Maestro", &text])
+                        .output()
+                        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "open")
+                })
+                .await;
+            if open {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    window.activate_window();
+                    this.open_mr(&key, window, cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn open_mr(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.run(Cmd::Mrs, window, cx);
+        if let Some(m) = &self.mrs {
+            m.update(cx, |m, cx| m.open_key(key, cx));
+        }
+    }
+
     pub fn toast(&mut self, msg: String, cx: &mut Context<Self>) {
         self.toast_undo(msg, None, cx);
     }
@@ -547,6 +608,7 @@ impl Shell {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.toasts.retain(|(i, _, _)| *i != id);
+                this.toast_open.retain(|(i, _)| *i != id);
                 cx.notify();
             });
         })
@@ -892,14 +954,27 @@ impl Shell {
             return m.clone();
         }
         let m = cx.new(|cx| MrsView::new(self.theme.clone(), self.anchors.clone(), cx));
-        cx.subscribe_in(&m, window, |this, _, e: &mrs_view::Event, _, cx| match e {
-            mrs_view::Event::Toast(t) => this.toast(t.clone(), cx),
-            mrs_view::Event::Discarded(t) => this.toast_undo(t.clone(), Some(Redo::MrDraft), cx),
-            mrs_view::Event::AskPublish(a, b) => {
-                this.want_publish = Some((a.clone(), b.clone()));
-                cx.notify();
-            }
-        })
+        cx.subscribe_in(
+            &m,
+            window,
+            |this, _, e: &mrs_view::Event, window, cx| match e {
+                mrs_view::Event::Toast(t) => this.toast(t.clone(), cx),
+                mrs_view::Event::Discarded(t) => {
+                    this.toast_undo(t.clone(), Some(Redo::MrDraft), cx)
+                }
+                mrs_view::Event::AskPublish(a, b) => {
+                    this.want_publish = Some((a.clone(), b.clone()));
+                    cx.notify();
+                }
+                mrs_view::Event::AskMerge(a, b, o, running) => {
+                    this.want_merge = Some((a.clone(), b.clone(), o.clone(), *running));
+                    cx.notify();
+                }
+                mrs_view::Event::Notify(text, key) => {
+                    this.notify_mr(text.clone(), key.clone(), window, cx)
+                }
+            },
+        )
         .detach();
         cx.observe(&m, |_, _, cx| cx.notify()).detach();
         self.mrs = Some(m.clone());
@@ -2273,6 +2348,30 @@ impl Render for Shell {
             let s = self.learn.remove(0);
             self.ask_learn(s, window, cx);
         }
+        // o polling da inbox roda desde o início: é ele que avisa de MR novo e de resposta
+        if self.mrs.is_none() {
+            self.mrs_view(window, cx);
+        }
+        if self.merge_dlg.is_none()
+            && let Some((title, text, opts, running)) = self.want_merge.take()
+        {
+            let theme = self.theme.clone();
+            let d =
+                cx.new(|cx| confirm::MergeDlg::new(theme, title, text, opts, running, window, cx));
+            cx.subscribe_in(&d, window, |this, _, a: &confirm::Merged, window, cx| {
+                this.merge_dlg = None;
+                if let Some(m) = &this.mrs {
+                    if let Some(o) = a.0.clone() {
+                        m.update(cx, |m, cx| m.merge(o, cx));
+                    }
+                    let f = m.read(cx).focus_handle();
+                    window.focus(&f, cx);
+                }
+                cx.notify();
+            })
+            .detach();
+            self.merge_dlg = Some(d);
+        }
         if self.confirm.is_none()
             && let Some((title, text)) = self.want_publish.take()
         {
@@ -2589,6 +2688,21 @@ impl Render for Shell {
                     .occlude()
                     .child(d)
             }))
+            .children(self.merge_dlg.clone().map(|d| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .pt(px(60.))
+                    .px(px(16.))
+                    .bg(rgba(0x0a0a1080))
+                    .occlude()
+                    .child(d)
+            }))
             .children(self.confirm.clone().map(|d| {
                 div()
                     .absolute()
@@ -2642,6 +2756,22 @@ impl Render for Shell {
                     .gap(px(8.));
                 for (id, m, redo) in &self.toasts {
                     let mut toast = confirm::toast(&t, m).flex().gap(px(12.)).items_center();
+                    if let Some((_, key)) = self.toast_open.iter().find(|(i, _)| i == id) {
+                        let (id, key) = (*id, key.clone());
+                        toast = toast.child(
+                            div()
+                                .id(("open", id))
+                                .underline()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.toasts.retain(|(i, _, _)| *i != id);
+                                    this.open_mr(&key, window, cx);
+                                    cx.notify();
+                                }))
+                                .child("Abrir"),
+                        );
+                    }
                     if let Some(redo) = redo.clone() {
                         let id = *id;
                         toast = toast.child(

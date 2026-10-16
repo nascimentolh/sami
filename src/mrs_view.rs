@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use futures::StreamExt;
 use gpui_kit::{prelude::FluentBuilder, *};
@@ -9,7 +12,8 @@ use crate::{
     editor,
     form::{FieldEvent, TextField, button, checkbox},
     mr::Status,
-    mrs::{self, Draft, Finding, Opened, Row, Run},
+    mr_notify::{self, Notice},
+    mrs::{self, Draft, Finding, MergeOpts, Opened, Row, Run},
     theme::{self, Theme},
     tour::{self, Anchors},
 };
@@ -20,6 +24,10 @@ pub enum Event {
     AskPublish(String, String),
     /// descarte com "Desfazer" no toast
     Discarded(String),
+    /// o diálogo de merge: título, `fonte → destino · CI`, opções do MR e se só dá para agendar
+    AskMerge(String, String, MergeOpts, bool),
+    /// MR novo ou resposta: toast com "Abrir" (e notify-send com a janela fora de foco)
+    Notify(String, String),
 }
 
 #[derive(Clone, Copy)]
@@ -67,7 +75,8 @@ pub struct MrsView {
     open: Option<(Row, Option<Result<Opened, String>>)>,
     drafts: HashMap<String, Vec<Draft>>,
     next_id: usize,
-    selected: Option<(String, u32)>,
+    /// a linha clicada: (arquivo, linha nova, linha velha); removida só tem a velha
+    selected: Option<(String, Option<u32>, Option<u32>)>,
     editing: Option<(usize, Entity<TextField>)>,
     drawer: Option<Drawer>,
     /// o `S.undo` do protótipo: (MR, [(posição, rascunho)]) por descarte
@@ -77,6 +86,20 @@ pub struct MrsView {
     focus: FocusHandle,
     files_w: f32,
     drawer_w: f32,
+    /// lado a lado (o padrão) ou unificado; `S` alterna
+    split: bool,
+    collapsed: HashSet<String>,
+    hide_gen: bool,
+    gen_open: bool,
+    /// a thread com a caixa de resposta aberta
+    replying: Option<(String, Entity<TextField>)>,
+    /// aprovar, merge ou resolver em andamento (o botão fica apagado)
+    busy: bool,
+    notify: mr_notify::State,
+    /// `path!iid` → quem respondeu (ponto laranja e "nova resposta" na inbox)
+    replied: HashMap<String, String>,
+    /// notas que chegaram por notificação: selo "nova" na thread
+    fresh: HashSet<u64>,
     theme: Theme,
     anchors: Anchors,
     _poll: Task<()>,
@@ -84,11 +107,59 @@ pub struct MrsView {
 
 impl EventEmitter<Event> for MrsView {}
 
+fn state_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+        .join(".config/maestro/state.toml")
+}
+
+/// `mr_unified = true` no `state.toml`: a escolha de Lado a lado/Unificado sobrevive ao reinício.
+fn unified_pref() -> bool {
+    std::fs::read_to_string(state_path())
+        .is_ok_and(|s| s.lines().any(|l| l.trim() == "mr_unified = true"))
+}
+
+fn save_unified(on: bool) {
+    let path = state_path();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.trim().starts_with("mr_unified"))
+        .collect();
+    let line = format!("mr_unified = {on}");
+    lines.push(&line);
+    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    let _ = std::fs::write(path, lines.join("\n") + "\n");
+}
+
 fn red() -> Hsla {
     rgb(0xff5555).into()
 }
 fn yellow() -> Hsla {
     rgb(0xf1fa8c).into()
+}
+
+/// Onde um cartão fica no diff.
+#[derive(Clone, Copy)]
+enum Side {
+    Unified,
+    Left,
+    Right,
+    Disc,
+}
+
+/// O `.pill` do protótipo; `dashed` é o `.pill.gen`.
+fn pill(t: &Theme, text: &str, c: Hsla, dashed: bool) -> Div {
+    div()
+        .font_family(t.mono.clone())
+        .text_size(px(12.))
+        .px(px(7.))
+        .rounded(px(10.))
+        .border_1()
+        .when(dashed, |d| d.border_dashed())
+        .border_color(c)
+        .text_color(c)
+        .whitespace_nowrap()
+        .child(text.to_string())
 }
 
 impl MrsView {
@@ -134,6 +205,15 @@ impl MrsView {
             focus: cx.focus_handle(),
             files_w: 270.,
             drawer_w: 440.,
+            split: !unified_pref(),
+            collapsed: HashSet::new(),
+            hide_gen: true,
+            gen_open: false,
+            replying: None,
+            busy: false,
+            notify: mr_notify::State::load(),
+            replied: HashMap::new(),
+            fresh: HashSet::new(),
             theme,
             anchors,
             _poll: poll,
@@ -189,12 +269,52 @@ impl MrsView {
             let rows: Vec<Row> = lists.iter().flatten().flatten().cloned().collect();
             let review: Vec<String> = lists[0].iter().flatten().map(Row::key).collect();
             let me_name = me.clone().unwrap_or_default();
+            // respostas: nos MRs que você revisa (inclui Revisados) e nos seus
+            let mut watch: Vec<Row> = Vec::new();
+            for r in lists[0].iter().chain(&lists[1]).flatten() {
+                if !watch.iter().any(|w| w.key() == r.key()) {
+                    watch.push(r.clone());
+                }
+            }
+            let fresh_review = lists[0].as_ref().ok().cloned();
             let _ = this.update(cx, |this, cx| {
                 this.me = me;
                 this.seen = std::fs::read_to_string(mrs::seen_file()).unwrap_or_default();
                 this.lists = lists.map(Some);
+                if let Some(v) = fresh_review {
+                    let n = this.notify.new_mrs(&v);
+                    this.announce(n, cx);
+                }
                 cx.notify();
             });
+            for r in watch {
+                let changed = this
+                    .update(cx, |this, _| this.notify.changed(&r))
+                    .unwrap_or(false);
+                if !changed || me_name.is_empty() {
+                    continue;
+                }
+                let (path, iid) = (r.path.clone(), r.iid);
+                let discussions = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let base = format!("projects/{}/merge_requests/{iid}", mrs::enc(&path));
+                        mrs::read(&format!("{base}/discussions?per_page=100"), true)
+                    })
+                    .await;
+                let Ok(d) = discussions else { continue };
+                let me = me_name.clone();
+                if this
+                    .update(cx, |this, cx| {
+                        let n = this.notify.replies(&r, &d, &me);
+                        this.announce(n, cx);
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            let _ = this.update(cx, |this, _| this.notify.save());
             // o selo de CI vem do detalhe de cada MR (a lista não traz o pipeline)
             for r in rows {
                 let (path, iid, key) = (r.path.clone(), r.iid, r.key());
@@ -230,6 +350,235 @@ impl MrsView {
         .detach();
     }
 
+    fn announce(&mut self, notices: Vec<Notice>, cx: &mut Context<Self>) {
+        let proj = |k: &str| {
+            let (p, iid) = k.rsplit_once('!').unwrap_or((k, ""));
+            format!("{} !{iid}", p.rsplit('/').next().unwrap_or(p))
+        };
+        for n in notices {
+            let (text, key) = match n {
+                Notice::NewMr { key, who, .. } => {
+                    (format!("{who} pediu sua revisão em {}", proj(&key)), key)
+                }
+                Notice::Reply { key, who, note, .. } => {
+                    self.fresh.insert(note);
+                    self.replied.insert(key.clone(), who.clone());
+                    (
+                        format!("{who} respondeu à sua thread em {}", proj(&key)),
+                        key,
+                    )
+                }
+            };
+            cx.emit(Event::Notify(text, key));
+        }
+    }
+
+    /// O "Abrir" da notificação: acha o MR nas listas e abre.
+    pub fn open_key(&mut self, key: &str, cx: &mut Context<Self>) {
+        let row = self
+            .lists
+            .iter()
+            .flatten()
+            .flatten()
+            .flatten()
+            .find(|r| r.key() == key)
+            .cloned();
+        if let Some(r) = row {
+            self.open_row(r, cx);
+        }
+    }
+
+    /// Roda uma escrita no GitLab fora da thread de UI e relê o MR no fim.
+    fn act(
+        &mut self,
+        ok: String,
+        f: impl FnOnce(&str, u64, &str) -> Result<(), String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((row, _)) = self.open.clone() else {
+            return;
+        };
+        let head = self.head();
+        self.busy = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let (path, iid) = (row.path.clone(), row.iid);
+            let r = cx
+                .background_executor()
+                .spawn(async move { f(&path, iid, &head) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                match r {
+                    Ok(()) => {
+                        cx.emit(Event::Toast(ok));
+                        this.open_row(row, cx);
+                        this.refresh(cx);
+                    }
+                    Err(e) => cx.emit(Event::Toast(format!("GitLab: {e}"))),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn toggle_approve(&mut self, cx: &mut Context<Self>) {
+        let Some((row, Some(Ok(o)))) = &self.open else {
+            return;
+        };
+        let name = format!("{} !{}", row.proj(), row.iid);
+        if o.approvals["user_has_approved"] == true {
+            self.act(
+                format!("Aprovação removida de {name}"),
+                |p, i, _| mrs::unapprove(p, i),
+                cx,
+            );
+        } else {
+            self.act(format!("Você aprovou {name}"), mrs::approve, cx);
+        }
+    }
+
+    /// `Merge…`: o diálogo do shell mostra as opções; `Cancelar merge agendado` cancela direto.
+    fn ask_merge(&mut self, cx: &mut Context<Self>) {
+        let Some((row, Some(Ok(o)))) = &self.open else {
+            return;
+        };
+        if o.detail["merge_when_pipeline_succeeds"] == true {
+            let iid = row.iid;
+            return self.act(
+                format!("Merge agendado de !{iid} cancelado"),
+                |p, i, _| mrs::cancel_auto_merge(p, i),
+                cx,
+            );
+        }
+        let d = &o.detail;
+        let running = d["detailed_merge_status"] == "ci_still_running";
+        let ci = Self::ci_label(self.ci.get(&row.key()).copied(), &self.theme).0;
+        let mut line = format!(
+            "{} → {} · {ci}",
+            d["source_branch"].as_str().unwrap_or(&row.source),
+            d["target_branch"].as_str().unwrap_or(&row.target)
+        );
+        if o.approvals["user_has_approved"] == true {
+            line.push_str(" · aprovado por você");
+        }
+        let mut opts = MergeOpts::from_detail(d);
+        opts.when_pipeline_succeeds = running;
+        cx.emit(Event::AskMerge(
+            format!("Merge de {} !{}?", row.proj(), row.iid),
+            line,
+            opts,
+            running,
+        ));
+    }
+
+    pub fn merge(&mut self, o: MergeOpts, cx: &mut Context<Self>) {
+        let Some((row, _)) = &self.open else { return };
+        let (iid, target) = (row.iid, row.target.clone());
+        let ok = if o.when_pipeline_succeeds {
+            format!("Merge de !{iid} agendado: sai quando o pipeline passar")
+        } else {
+            format!(
+                "!{iid} mergeado em {target}{}{}",
+                if o.squash { " (squash)" } else { "" },
+                if o.remove_branch {
+                    " · branch de origem apagada"
+                } else {
+                    ""
+                }
+            )
+        };
+        self.act(ok, move |p, i, h| mrs::merge(p, i, h, &o), cx);
+    }
+
+    fn resolve(&mut self, id: String, resolved: bool, cx: &mut Context<Self>) {
+        let ok = if resolved {
+            "Thread reaberta"
+        } else {
+            "Thread resolvida"
+        };
+        self.act(
+            ok.into(),
+            move |p, iid, _| {
+                let ep = format!(
+                    "projects/{}/merge_requests/{iid}/discussions/{id}",
+                    mrs::enc(p)
+                );
+                mrs::write("PUT", &ep, &serde_json::json!({ "resolved": !resolved })).map(drop)
+            },
+            cx,
+        );
+    }
+
+    fn start_reply(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let t = self.theme.clone();
+        let f = cx.new(|cx| {
+            TextField::new(
+                t,
+                "",
+                "Responder… (vira rascunho e sai junto com a review)",
+                true,
+                false,
+                cx,
+            )
+        });
+        let did = id.clone();
+        cx.subscribe(&f, move |this, _, e: &FieldEvent, cx| match e {
+            FieldEvent::Submit => this.add_reply(&did, cx),
+            FieldEvent::Cancel => {
+                this.replying = None;
+                cx.notify();
+            }
+            FieldEvent::Changed => {}
+        })
+        .detach();
+        window.focus(&f.read(cx).focus_handle(), cx);
+        self.replying = Some((id, f));
+        cx.notify();
+    }
+
+    /// O `addReply` do protótipo: a resposta vira rascunho e sai junto com a review.
+    fn add_reply(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some((_, f)) = self.replying.clone() else {
+            return;
+        };
+        let body = f.read(cx).value.trim().to_string();
+        if body.is_empty() {
+            return cx.emit(Event::Toast("Escreva a resposta antes".into()));
+        }
+        self.next_id += 1;
+        let (nid, head) = (self.next_id, self.head());
+        if let Some(v) = self.mr_drafts() {
+            v.push(Draft {
+                id: nid,
+                file: String::new(),
+                line: None,
+                old: None,
+                body,
+                by: "você".into(),
+                sev: None,
+                label: None,
+                head,
+                gitlab_id: None,
+                error: None,
+                general: false,
+                reply_to: Some(id.to_string()),
+            });
+        }
+        self.replying = None;
+        cx.emit(Event::Toast(
+            "Resposta adicionada à review. Sai quando você publicar.".into(),
+        ));
+        cx.notify();
+    }
+
+    fn toggle_split(&mut self, cx: &mut Context<Self>) {
+        self.split = !self.split;
+        save_unified(!self.split);
+        cx.notify();
+    }
+
     fn rows(&self, cx: &App) -> Vec<Row> {
         let q = self.filter.read(cx).value.to_lowercase();
         match &self.tab_rows(self.tab) {
@@ -249,6 +598,9 @@ impl MrsView {
 
     /// `novo`, `revisado` ou `+N commits` (o sha mudou desde a sua última revisão).
     fn pill(&self, r: &Row) -> (&'static str, String) {
+        if self.replied.contains_key(&r.key()) {
+            return ("reply", "nova resposta".into());
+        }
         match self.states.get(&r.key()).map(String::as_str) {
             Some("approved") => return ("", "aprovado".into()),
             Some("requested_changes") => return ("", "pediu mudanças".into()),
@@ -266,8 +618,15 @@ impl MrsView {
 
     pub fn open_row(&mut self, r: Row, cx: &mut Context<Self>) {
         let (path, iid) = (r.path.clone(), r.iid);
-        self.open = Some((r, None));
-        self.selected = None;
+        self.replied.remove(&r.key());
+        // reabrir o mesmo MR (depois de aprovar, resolver…) mantém a tela até o novo chegar
+        let same = self.open.as_ref().is_some_and(|(o, _)| o.key() == r.key());
+        if !same {
+            self.open = Some((r, None));
+            self.selected = None;
+            self.collapsed.clear();
+            self.replying = None;
+        }
         cx.spawn(async move |this, cx| {
             let o = cx
                 .background_executor()
@@ -308,7 +667,7 @@ impl MrsView {
     }
 
     fn new_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((file, line)) = self.selected.clone() else {
+        let Some((file, line, old)) = self.selected.clone() else {
             return cx.emit(Event::Toast("Clique numa linha do diff primeiro".into()));
         };
         self.next_id += 1;
@@ -318,7 +677,8 @@ impl MrsView {
             d.push(Draft {
                 id,
                 file,
-                line: Some(line),
+                line,
+                old: if line.is_none() { old } else { None },
                 body: String::new(),
                 by: "você".into(),
                 sev: None,
@@ -661,6 +1021,7 @@ impl MrsView {
                 id: self.next_id,
                 file: x.file,
                 line: x.line,
+                old: None,
                 body: x.body,
                 by: "Claude".into(),
                 sev: Some(x.severity),
@@ -693,6 +1054,7 @@ impl MrsView {
             ("enter", Some(_)) if k.modifiers.control => self.ask_publish(cx),
             ("z", Some(_)) if k.modifiers.control && !k.modifiers.shift => self.undo(cx),
             ("c", Some(_)) if !k.modifiers.modified() => self.new_draft(window, cx),
+            ("s", Some(_)) if !k.modifiers.modified() => self.toggle_split(cx),
             ("escape", Some(_)) => self.back(cx),
             ("j" | "down", None) => {
                 self.sel = (self.sel + 1).min(self.rows(cx).len().saturating_sub(1))
@@ -807,11 +1169,15 @@ impl MrsView {
                     let (pk, pt) = self.pill(&r);
                     let pc = match pk {
                         "new" => t.accent,
-                        "inc" => t.orange,
+                        "inc" | "reply" => t.orange,
                         _ => t.muted,
                     };
                     let (ci, cc) = Self::ci_label(self.ci.get(&r.key()).copied(), &t);
-                    let unread = pk == "new";
+                    let dot = match pk {
+                        "new" => Some(t.accent),
+                        "reply" => Some(t.orange),
+                        _ => None,
+                    };
                     let r2 = r.clone();
                     list = list.child(
                         div()
@@ -833,8 +1199,8 @@ impl MrsView {
                                 }
                                 cx.notify();
                             }))
-                            .child(div().w(px(14.)).flex_none().when(unread, |d| {
-                                d.child(div().size(px(7.)).rounded_full().bg(t.accent))
+                            .child(div().w(px(14.)).flex_none().when_some(dot, |d, c| {
+                                d.child(div().size(px(7.)).rounded_full().bg(c))
                             }))
                             .child(
                                 div()
@@ -909,14 +1275,57 @@ impl MrsView {
         StyledText::new(text.to_string()).with_highlights(hl)
     }
 
-    fn thread(&self, d: &Value, i: usize, cx: &mut Context<Self>) -> Div {
+    /// Onde fica um cartão (thread ou rascunho): na coluna do diff unificado, numa das metades
+    /// do lado a lado ou na seção Discussões (o `.thr`, `.thr.l`, `.thr.r` e `.disc .thr` do protótipo).
+    fn place(&self, side: Side, card: Div) -> Div {
+        let card = card.my(px(6.));
+        match side {
+            Side::Unified => div().pl(px(94.)).pr(px(12.)).child(card.max_w(px(720.))),
+            Side::Disc => div().pl(px(12.)).pr(px(12.)).child(card.max_w(px(720.))),
+            Side::Left => div()
+                .flex()
+                .child(
+                    div()
+                        .w(relative(0.5))
+                        .flex_none()
+                        .pl(px(58.))
+                        .pr(px(12.))
+                        .child(card),
+                )
+                .child(div().flex_1()),
+            Side::Right => div()
+                .flex()
+                .child(div().w(relative(0.5)).flex_none())
+                .child(div().flex_1().min_w_0().pl(px(58.)).pr(px(12.)).child(card)),
+        }
+    }
+
+    fn thread(&self, d: &Value, i: usize, side: Side, cx: &mut Context<Self>) -> Div {
         let t = self.theme.clone();
         let notes = d["notes"].as_array().cloned().unwrap_or_default();
         let resolved = notes.first().is_some_and(|n| n["resolved"] == true);
         let resolvable = notes.first().is_some_and(|n| n["resolvable"] == true);
         let id = d["id"].as_str().unwrap_or_default().to_string();
         let who = |n: &Value| format!("@{}", n["author"]["username"].as_str().unwrap_or_default());
+        let date = |n: &Value| {
+            n["created_at"]
+                .as_str()
+                .unwrap_or_default()
+                .chars()
+                .take(10)
+                .collect::<String>()
+        };
         let first = notes.first().cloned().unwrap_or_default();
+        let pos = &first["position"];
+        let removed = pos["new_line"]
+            .is_null()
+            .then(|| pos["old_line"].as_u64())
+            .flatten();
+        let replying = self
+            .replying
+            .as_ref()
+            .filter(|(r, _)| *r == id)
+            .map(|(_, f)| f.clone());
         let mut bd = div()
             .px(px(10.))
             .py(px(8.))
@@ -925,21 +1334,71 @@ impl MrsView {
             .gap(px(8.))
             .child(first["body"].as_str().unwrap_or_default().to_string());
         for n in notes.iter().skip(1) {
+            let fresh = n["id"].as_u64().is_some_and(|x| self.fresh.contains(&x));
             bd = bd.child(
                 div()
                     .border_l_2()
                     .border_color(t.line)
                     .pl(px(8.))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(who(n)))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .child(div().font_weight(FontWeight::MEDIUM).child(who(n)))
+                            .child(div().text_size(px(12.)).text_color(t.muted).child(date(n)))
+                            .when(fresh, |x| x.child(pill(&t, "nova", t.accent, false))),
+                    )
                     .child(n["body"].as_str().unwrap_or_default().to_string()),
             );
         }
-        let path = self.open.as_ref().map(|(r, _)| (r.path.clone(), r.iid));
-        div()
-            .ml(px(94.))
-            .mr(px(12.))
-            .my(px(6.))
-            .max_w(px(720.))
+        let replies: Vec<Draft> = self
+            .open
+            .as_ref()
+            .and_then(|(row, _)| self.drafts.get(&row.key()))
+            .map(|v| {
+                v.iter()
+                    .filter(|d| d.reply_to.as_deref() == Some(id.as_str()))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        for r in &replies {
+            bd = bd.child(self.reply_draft(r, cx));
+        }
+        if let Some(f) = replying.clone() {
+            let rid = id.clone();
+            bd = bd.child(
+                div().flex().flex_col().gap(px(6.)).child(f).child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(6.))
+                        .items_center()
+                        .child(
+                            button(&t, ("radd", i), "Adicionar à review", true).on_click(
+                                cx.listener(move |this, _, _, cx| this.add_reply(&rid, cx)),
+                            ),
+                        )
+                        .child(
+                            button(&t, ("rcn", i), "Cancelar", false).on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.replying = None;
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(t.muted)
+                                .child("Ctrl+⏎ adiciona · Esc cancela"),
+                        ),
+                ),
+            );
+        }
+        let rid = id.clone();
+        let card = div()
             .border_1()
             .border_color(t.line)
             .rounded(px(6.))
@@ -950,6 +1409,7 @@ impl MrsView {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(8.))
                     .items_center()
                     .px(px(10.))
@@ -964,16 +1424,22 @@ impl MrsView {
                             .font_weight(FontWeight::MEDIUM)
                             .child(who(&first)),
                     )
-                    .child(
-                        first["created_at"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .chars()
-                            .take(10)
-                            .collect::<String>(),
-                    )
+                    .child(date(&first))
+                    .when_some(removed, |d, o| {
+                        d.child(
+                            div()
+                                .font_family(t.mono.clone())
+                                .child(format!("linha removida {o}")),
+                        )
+                    })
                     .child(div().flex_1())
+                    .when(replying.is_none(), |d| {
+                        d.child(button(&t, ("rep", i), "Responder", false).on_click(
+                            cx.listener(move |this, _, w, cx| this.start_reply(rid.clone(), w, cx)),
+                        ))
+                    })
                     .when(resolvable, |d| {
+                        let id = id.clone();
                         d.child(
                             button(
                                 &t,
@@ -981,28 +1447,94 @@ impl MrsView {
                                 if resolved { "Reabrir" } else { "✓ Resolver" },
                                 false,
                             )
+                            .when(self.busy, |b| b.opacity(0.45))
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    let Some((p, iid)) = path.clone() else { return };
-                                    let ep = format!(
-                                        "projects/{}/merge_requests/{iid}/discussions/{id}",
-                                        mrs::enc(&p)
-                                    );
-                                    let body = serde_json::json!({ "resolved": !resolved });
-                                    match mrs::write("PUT", &ep, &body) {
-                                        Ok(_) => {
-                                            if let Some((row, _)) = this.open.clone() {
-                                                this.open_row(row, cx);
-                                            }
-                                        }
-                                        Err(e) => cx.emit(Event::Toast(format!("GitLab: {e}"))),
+                                    if !this.busy {
+                                        this.resolve(id.clone(), resolved, cx)
                                     }
                                 },
                             )),
                         )
                     }),
             )
-            .child(bd)
+            .child(bd);
+        self.place(side, card)
+    }
+
+    /// Resposta ainda não publicada, dentro da thread (o `.rp.draftrp` do protótipo).
+    fn reply_draft(&self, d: &Draft, cx: &mut Context<Self>) -> Div {
+        let t = self.theme.clone();
+        let id = d.id;
+        let editing = self
+            .editing
+            .as_ref()
+            .filter(|(i, _)| *i == id)
+            .map(|(_, f)| f.clone());
+        let body = d.body.clone();
+        div()
+            .border_l_2()
+            .border_dashed()
+            .border_color(yellow())
+            .bg(Hsla {
+                a: 0.07,
+                ..yellow()
+            })
+            .rounded_r(px(4.))
+            .px(px(8.))
+            .py(px(4.))
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .items_center()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(yellow())
+                            .child("RASCUNHO · resposta"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(t.muted)
+                            .child("sai junto com a review"),
+                    ),
+            )
+            .map(|x| match editing {
+                Some(f) => x.child(f).child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(t.muted)
+                        .child("Ctrl+⏎ salva · Esc cancela"),
+                ),
+                None => x.child(d.body.clone()).when(!self.posting, |x| {
+                    x.child(
+                        div()
+                            .flex()
+                            .gap(px(6.))
+                            .child(
+                                button(&t, ("red", id), "Editar", false).on_click(cx.listener(
+                                    move |this, _, w, cx| this.edit(id, body.clone(), w, cx),
+                                )),
+                            )
+                            .child(
+                                button(&t, ("rdel", id), "Descartar", false)
+                                    .text_color(red())
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| this.discard(id, cx)),
+                                    ),
+                            ),
+                    )
+                }),
+            })
+            .when_some(d.error.clone(), |x, e| {
+                x.child(div().text_size(px(13.)).text_color(red()).child(e))
+            })
     }
 
     fn draft_box(&self, d: &Draft, cx: &mut Context<Self>) -> Div {
@@ -1020,10 +1552,6 @@ impl MrsView {
             _ => t.muted,
         };
         div()
-            .ml(px(94.))
-            .mr(px(12.))
-            .my(px(6.))
-            .max_w(px(720.))
             .rounded(px(6.))
             .font_family(t.sans)
             .text_size(px(14.))
@@ -1068,7 +1596,12 @@ impl MrsView {
                                 .child(s),
                         )
                     })
-                    .when(d.general || d.line.is_none(), |x| x.child("nota geral"))
+                    .when(d.general || (d.line.is_none() && d.old.is_none()), |x| {
+                        x.child("nota geral")
+                    })
+                    .when_some(d.old.filter(|_| d.line.is_none()), |x, o| {
+                        x.child(format!("linha removida {o}"))
+                    })
                     .child(div().flex_1())
                     .when(self.posting, |x| x.child("publicando…"))
                     .when(editing.is_none() && !self.posting, |x| {
@@ -1137,6 +1670,249 @@ impl MrsView {
             )
     }
 
+    fn is_gen(o: &Opened, path: &str) -> bool {
+        diff::boilerplate(path, o.generated.iter().any(|g| g == path))
+    }
+
+    /// As discussões que não são de sistema, com o índice original (id dos botões).
+    fn threads(o: &Opened) -> Vec<(usize, Value)> {
+        o.discussions
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter(|(_, d)| d["notes"][0]["system"] != true)
+            .map(|(i, d)| (i, d.clone()))
+            .collect()
+    }
+
+    /// Em que posição da rolagem está cada arquivo: Discussões (se houver) vem antes.
+    fn scroll_to_file(&mut self, path: &str, cx: &mut Context<Self>) {
+        let Some((_, Some(Ok(o)))) = &self.open else {
+            return;
+        };
+        if self.hide_gen && Self::is_gen(o, path) {
+            self.hide_gen = false;
+        }
+        let disc = Self::threads(o)
+            .iter()
+            .any(|(_, d)| d["notes"][0]["position"].is_null());
+        let i = o
+            .files
+            .iter()
+            .filter(|f| !(self.hide_gen && Self::is_gen(o, &f.path)))
+            .position(|f| f.path == path);
+        if let Some(i) = i {
+            self.scroll.scroll_to_top_of_item(i + disc as usize);
+        }
+        cx.notify();
+    }
+
+    fn toggle_collapsed(&mut self, path: &str, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(path) {
+            self.collapsed.insert(path.to_string());
+        }
+        cx.notify();
+    }
+
+    /// Clique numa linha: guarda (arquivo, nova, velha); removida só tem a velha.
+    fn select_line(
+        &mut self,
+        path: &str,
+        new: Option<u32>,
+        old: Option<u32>,
+        draft: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected = Some((
+            path.to_string(),
+            new,
+            if new.is_none() { old } else { None },
+        ));
+        if draft {
+            self.new_draft(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn is_selected(&self, path: &str, l: &diff::Line) -> bool {
+        self.selected.as_ref().is_some_and(|(p, n, o)| {
+            p == path
+                && match l.new {
+                    Some(x) => *n == Some(x),
+                    None => n.is_none() && *o == l.old,
+                }
+        })
+    }
+
+    /// Os cartões presos a uma linha: threads e rascunhos da nova, ou da velha se ela foi removida.
+    fn extras(
+        &self,
+        f: &FileDiff,
+        l: &diff::Line,
+        threads: &[(usize, Value)],
+        drafts: &[Draft],
+        side: Side,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let mut out = Vec::new();
+        let at = |d: &Value| -> (bool, Option<u64>, Option<u64>) {
+            let p = &d["notes"][0]["position"];
+            let file = p["new_path"] == f.path.as_str() || p["old_path"] == f.path.as_str();
+            (file, p["new_line"].as_u64(), p["old_line"].as_u64())
+        };
+        match (l.new, l.kind) {
+            (Some(n), _) => {
+                for (ti, d) in threads.iter().filter(|(_, d)| {
+                    let (file, new, _) = at(d);
+                    file && new == Some(n as u64)
+                }) {
+                    out.push(self.thread(d, *ti, side, cx));
+                }
+                for d in drafts
+                    .iter()
+                    .filter(|d| d.reply_to.is_none() && d.file == f.path && d.line == Some(n))
+                {
+                    out.push(self.place(side, self.draft_box(d, cx)));
+                }
+            }
+            (None, Kind::Del) => {
+                let o = l.old.unwrap_or_default();
+                for (ti, d) in threads.iter().filter(|(_, d)| {
+                    let (file, new, old) = at(d);
+                    file && new.is_none() && old == Some(o as u64)
+                }) {
+                    out.push(self.thread(d, *ti, side, cx));
+                }
+                for d in drafts.iter().filter(|d| {
+                    d.reply_to.is_none() && d.file == f.path && d.line.is_none() && d.old == Some(o)
+                }) {
+                    out.push(self.place(side, self.draft_box(d, cx)));
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// O "+" que aparece no hover da linha (o `.cm` do protótipo).
+    fn comment_btn(
+        &self,
+        id: usize,
+        left: f32,
+        (path, new, old): (&str, Option<u32>, Option<u32>),
+        sel: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let t = &self.theme;
+        let path = path.to_string();
+        div()
+            .id(("mcm", id))
+            .absolute()
+            .left(px(left))
+            .top(px(2.))
+            .size(px(16.))
+            .rounded(px(3.))
+            .bg(t.accent)
+            .text_color(rgb(0x282a36))
+            .font_family(t.sans)
+            .text_size(px(13.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .invisible()
+            .group_hover("ml", |s| s.visible())
+            .when(sel, |x| x.visible())
+            .on_click(
+                cx.listener(move |this, _, w, cx| this.select_line(&path, new, old, true, w, cx)),
+            )
+            .child("+")
+    }
+
+    /// Uma metade do lado a lado: a velha à esquerda, a nova à direita (o `halfRow` do protótipo).
+    fn half(
+        &self,
+        id: usize,
+        f: &FileDiff,
+        l: Option<&diff::Line>,
+        left: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let t = self.theme.clone();
+        let empty = || {
+            div()
+                .id(("mh", id))
+                .w(relative(0.5))
+                .flex_none()
+                .h(px(20.))
+                .bg(rgba(0x6272a414))
+        };
+        let Some(l) = l else { return empty() };
+        if (left && l.kind == Kind::Add) || (!left && l.kind == Kind::Del) {
+            return empty();
+        }
+        let del = left && l.kind == Kind::Del;
+        let add = !left && l.kind == Kind::Add;
+        let num = if left { l.old } else { l.new };
+        let sel = self.is_selected(&f.path, l) && (del || !left);
+        let (path, new, old) = (f.path.clone(), l.new, l.old);
+        let can_comment = del || !left;
+        div()
+            .id(("mh", id))
+            .group("ml")
+            .relative()
+            .w(relative(0.5))
+            .flex_none()
+            .flex()
+            .h(px(20.))
+            .cursor_pointer()
+            .when(!left, |x| x.border_l_1().border_color(t.line))
+            .when(del, |x| x.bg(rgba(0xff55551f)))
+            .when(add, |x| x.bg(rgba(0x50fa7b1a)))
+            .hover(|x| x.bg(rgba(0x44475a73)))
+            .when(sel, |x| x.border_l_3().border_color(t.accent))
+            .on_click(cx.listener(move |this, _, w, cx| {
+                let n = if del { None } else { new };
+                this.select_line(&path, n, old, false, w, cx)
+            }))
+            .child(
+                div()
+                    .w(px(40.))
+                    .flex_none()
+                    .pr(px(8.))
+                    .text_right()
+                    .text_color(t.comment)
+                    .child(num.map(|x| x.to_string()).unwrap_or_default()),
+            )
+            .child(
+                div()
+                    .w(px(16.))
+                    .flex_none()
+                    .text_color(t.muted)
+                    .child(if del {
+                        "−"
+                    } else if add {
+                        "+"
+                    } else {
+                        ""
+                    }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .pr(px(8.))
+                    .child(self.code(&l.text)),
+            )
+            .when(can_comment, |x| {
+                let n = if del { None } else { new };
+                x.child(self.comment_btn(id, 22., (&f.path, n, old), sel, cx))
+            })
+    }
+
     fn file_block(&self, fi: usize, f: &FileDiff, o: &Opened, cx: &mut Context<Self>) -> Div {
         let t = self.theme.clone();
         let (a, r) = f.counts();
@@ -1146,44 +1922,60 @@ impl MrsView {
             .and_then(|(row, _)| self.drafts.get(&row.key()))
             .cloned()
             .unwrap_or_default();
-        let threads: Vec<(usize, Value)> = o
-            .discussions
-            .as_array()
-            .into_iter()
-            .flatten()
-            .enumerate()
-            .filter(|(_, d)| d["notes"][0]["system"] != true)
-            .map(|(i, d)| (i, d.clone()))
-            .collect();
-        let mut block = div().flex().flex_col().child(
-            div()
-                .flex()
-                .gap(px(10.))
-                .items_center()
-                .px(px(12.))
-                .py(px(6.))
-                .bg(t.panel)
-                .border_t_1()
-                .border_b_1()
-                .border_color(t.line)
-                .font_family(t.sans)
-                .child(div().font_family(t.mono.clone()).child(f.path.clone()))
-                .when(f.new, |x| {
-                    x.child(
+        let threads = Self::threads(o);
+        let collapsed = self.collapsed.contains(&f.path);
+        let n_threads = threads
+            .iter()
+            .filter(|(_, d)| d["notes"][0]["position"]["new_path"] == f.path.as_str())
+            .count();
+        let path = f.path.clone();
+        let mut block =
+            div().flex().flex_col().child(
+                div()
+                    .id(("fh", fi))
+                    .flex()
+                    .gap(px(10.))
+                    .items_center()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .bg(t.panel)
+                    .border_t_1()
+                    .border_b_1()
+                    .border_color(t.line)
+                    .font_family(t.sans)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_collapsed(&path, cx)))
+                    .child(
                         div()
-                            .font_family(t.mono.clone())
+                            .w(px(16.))
+                            .flex_none()
+                            .text_center()
                             .text_size(px(12.))
-                            .px(px(7.))
-                            .rounded(px(10.))
-                            .border_1()
-                            .border_color(t.accent)
-                            .text_color(t.accent)
-                            .child("novo"),
+                            .font_family(t.mono.clone())
+                            .text_color(t.muted)
+                            .child(if collapsed { "▸" } else { "▾" }),
                     )
-                })
-                .child(div().text_color(t.ok).child(format!("+{a}")))
-                .child(div().text_color(red()).child(format!("−{r}"))),
-        );
+                    .child(div().font_family(t.mono.clone()).child(f.path.clone()))
+                    .when(f.new, |x| x.child(pill(&t, "novo", t.accent, false)))
+                    .when(Self::is_gen(o, &f.path), |x| {
+                        x.child(pill(&t, "gerado", t.comment, true))
+                    })
+                    .child(div().text_color(t.ok).child(format!("+{a}")))
+                    .child(div().text_color(red()).child(format!("−{r}")))
+                    .child(div().flex_1())
+                    .when(collapsed, |x| {
+                        x.child(div().text_size(px(12.)).text_color(t.muted).child(
+                            if n_threads > 0 {
+                                format!("{n_threads} thread(s) · colapsado")
+                            } else {
+                                "colapsado".into()
+                            },
+                        ))
+                    }),
+            );
+        if collapsed {
+            return block;
+        }
         for (hi, h) in f.hunks.iter().enumerate() {
             block = block.child(
                 div()
@@ -1192,12 +1984,29 @@ impl MrsView {
                     .bg(rgba(0x6272a41f))
                     .child(h.header.clone()),
             );
+            if self.split {
+                for (li, (l, r)) in diff::side_by_side(&h.lines).into_iter().enumerate() {
+                    let id = (fi * 1000 + hi) * 10_000 + li;
+                    block = block.child(
+                        div()
+                            .flex()
+                            .child(self.half(id * 2, f, l, true, cx))
+                            .child(self.half(id * 2 + 1, f, r, false, cx)),
+                    );
+                    if let Some(l) = l.filter(|l| l.kind == Kind::Del) {
+                        block =
+                            block.children(self.extras(f, l, &threads, &drafts, Side::Left, cx));
+                    }
+                    if let Some(r) = r {
+                        block =
+                            block.children(self.extras(f, r, &threads, &drafts, Side::Right, cx));
+                    }
+                }
+                continue;
+            }
             for (li, l) in h.lines.iter().enumerate() {
-                let sel = self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|(p, n)| *p == f.path && Some(*n) == l.new);
-                let (path, n) = (f.path.clone(), l.new);
+                let sel = self.is_selected(&f.path, l);
+                let (path, n, old) = (f.path.clone(), l.new, l.old);
                 let bg = match l.kind {
                     Kind::Add => Some(Hsla::from(rgba(0x50fa7b1a))),
                     Kind::Del => Some(Hsla::from(rgba(0xff55551f))),
@@ -1229,11 +2038,8 @@ impl MrsView {
                         .when_some(bg, |x, c| x.bg(c))
                         .hover(|x| x.bg(rgba(0x44475a73)))
                         .when(sel, |x| x.border_l_3().border_color(t.accent))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(n) = n {
-                                this.selected = Some((path.clone(), n));
-                            }
-                            cx.notify();
+                        .on_click(cx.listener(move |this, _, w, cx| {
+                            this.select_line(&path, n, old, false, w, cx)
                         }))
                         .child(num(l.old))
                         .child(num(l.new))
@@ -1247,53 +2053,14 @@ impl MrsView {
                                 .pr(px(8.))
                                 .child(self.code(&l.text)),
                         )
-                        .when(l.new.is_some(), |x| {
-                            let path = f.path.clone();
-                            let n = l.new.unwrap();
-                            x.child(
-                                div()
-                                    .id(("mcm", id))
-                                    .absolute()
-                                    .left(px(62.))
-                                    .top(px(2.))
-                                    .size(px(16.))
-                                    .rounded(px(3.))
-                                    .bg(t.accent)
-                                    .text_color(rgb(0x282a36))
-                                    .font_family(t.sans)
-                                    .text_size(px(13.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .invisible()
-                                    .group_hover("ml", |s| s.visible())
-                                    .when(sel, |x| x.visible())
-                                    .on_click(cx.listener(move |this, _, w, cx| {
-                                        this.selected = Some((path.clone(), n));
-                                        this.new_draft(w, cx);
-                                    }))
-                                    .child("+"),
-                            )
-                        }),
+                        .child(self.comment_btn(id, 62., (&f.path, l.new, l.old), sel, cx)),
                 );
-                if let Some(n) = l.new {
-                    for (ti, d) in threads.iter().filter(|(_, d)| {
-                        d["notes"][0]["position"]["new_path"] == f.path.as_str()
-                            && d["notes"][0]["position"]["new_line"].as_u64() == Some(n as u64)
-                    }) {
-                        block = block.child(self.thread(d, *ti, cx));
-                    }
-                    for d in drafts
-                        .iter()
-                        .filter(|d| d.file == f.path && d.line == Some(n))
-                    {
-                        block = block.child(self.draft_box(d, cx));
-                    }
-                }
+                block = block.children(self.extras(f, l, &threads, &drafts, Side::Unified, cx));
             }
         }
         for d in drafts.iter().filter(|d| {
-            d.file == f.path
+            d.reply_to.is_none()
+                && d.file == f.path
                 && d.line.is_some_and(|l| {
                     !f.hunks
                         .iter()
@@ -1301,12 +2068,12 @@ impl MrsView {
                         .any(|x| x.new == Some(l))
                 })
         }) {
-            block = block.child(self.draft_box(d, cx));
+            block = block.child(self.place(Side::Unified, self.draft_box(d, cx)));
         }
         block
     }
 
-    /// A coluna "Arquivos do MR" (o `renderMRFiles` do protótipo).
+    /// A coluna "Arquivos do MR" (o `renderMRFiles` do protótipo), com os gerados numa seção recolhível.
     pub fn files_panel(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let (row, Some(Ok(o))) = self.open.as_ref()? else {
             return None;
@@ -1332,54 +2099,114 @@ impl MrsView {
                     .text_color(t.muted)
                     .border_b_1()
                     .border_color(t.line)
-                    .child("ARQUIVOS DO MR"),
+                    .child("ARQUIVOS DO MR")
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .font_family(t.mono.clone())
+                            .child(o.files.len().to_string()),
+                    ),
             );
-        for (i, f) in o.files.iter().enumerate() {
+        let row_of = |i: usize, f: &FileDiff, cx: &mut Context<Self>| {
             let (a, r) = f.counts();
-            let n = drafts.iter().filter(|d| d.file == f.path).count();
+            let n = drafts
+                .iter()
+                .filter(|d| d.file == f.path && d.reply_to.is_none())
+                .count();
             let (dir, name) = f
                 .path
                 .rsplit_once('/')
                 .map_or((String::new(), f.path.clone()), |(d, n)| {
                     (format!("{d}/"), n.into())
                 });
+            let collapsed = self.collapsed.contains(&f.path);
+            let (p1, p2) = (f.path.clone(), f.path.clone());
+            div()
+                .id(("mf", i))
+                .flex()
+                .gap(px(6.))
+                .px(px(12.))
+                .py(px(3.))
+                .cursor_pointer()
+                .hover(|d| d.bg(t.raise))
+                .on_click(cx.listener(move |this, _, _, cx| this.scroll_to_file(&p1, cx)))
+                .child(
+                    div()
+                        .id(("mtw", i))
+                        .w(px(12.))
+                        .flex_none()
+                        .text_size(px(11.))
+                        .font_family(t.mono.clone())
+                        .text_color(t.muted)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_collapsed(&p2, cx)
+                        }))
+                        .child(if collapsed { "▸" } else { "▾" }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .font_family(t.mono.clone())
+                        .text_size(px(13.))
+                        .child(div().text_color(t.muted).child(dir))
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .font_family(t.mono.clone())
+                        .text_size(px(12.))
+                        .text_color(if n > 0 { yellow() } else { t.muted })
+                        .child(if n > 0 {
+                            format!("{n} rasc.")
+                        } else {
+                            format!("+{a} −{r}")
+                        }),
+                )
+        };
+        let gens: Vec<(usize, &FileDiff)> = o
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| Self::is_gen(o, &f.path))
+            .collect();
+        for (i, f) in o.files.iter().enumerate() {
+            if !Self::is_gen(o, &f.path) {
+                col = col.child(row_of(i, f, cx));
+            }
+        }
+        if !gens.is_empty() {
             col = col.child(
                 div()
-                    .id(("mf", i))
+                    .id("mf-gen")
                     .flex()
-                    .gap(px(6.))
+                    .justify_between()
                     .px(px(12.))
-                    .py(px(3.))
+                    .pt(px(6.))
+                    .pb(px(2.))
+                    .text_size(px(11.))
+                    .text_color(t.muted)
                     .cursor_pointer()
-                    .hover(|d| d.bg(t.raise))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.scroll.scroll_to_item(i);
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.gen_open = !this.gen_open;
                         cx.notify();
                     }))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .font_family(t.mono.clone())
-                            .text_size(px(13.))
-                            .child(div().text_color(t.muted).child(dir))
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .font_family(t.mono.clone())
-                            .text_size(px(12.))
-                            .text_color(if n > 0 { yellow() } else { t.muted })
-                            .child(if n > 0 {
-                                format!("{n} rasc.")
-                            } else {
-                                format!("+{a} −{r}")
-                            }),
-                    ),
+                    .child(format!(
+                        "{} GERADOS ({})",
+                        if self.gen_open { "▾" } else { "▸" },
+                        gens.len()
+                    ))
+                    .child(if self.hide_gen { "OCULTOS NO DIFF" } else { "" }),
             );
+            if self.gen_open {
+                for (i, f) in gens {
+                    col = col.child(row_of(i, f, cx));
+                }
+            }
         }
         Some(col)
     }
@@ -1390,6 +2217,14 @@ impl MrsView {
             return div();
         };
         let ci = Self::ci_label(self.ci.get(&row.key()).copied(), &t);
+        let o = opened.as_ref().and_then(|o| o.as_ref().ok());
+        let detail = o.map(|o| &o.detail);
+        let merged = detail.is_some_and(|d| d["state"] == "merged");
+        let scheduled = detail.is_some_and(|d| d["merge_when_pipeline_succeeds"] == true);
+        let approved = o.is_some_and(|o| o.approvals["user_has_approved"] == true);
+        let can_approve = o.is_some_and(|o| o.approvals["user_can_approve"] == true) || approved;
+        let blocker = detail.and_then(mrs::merge_blocker);
+        let busy = self.busy;
         let header = div()
             .flex()
             .flex_col()
@@ -1417,11 +2252,19 @@ impl MrsView {
                             .child(format!("{} !{}", row.proj(), row.iid)),
                     )
                     .child(div().text_color(t.muted).child(row.who.clone()))
-                    .child(div().text_color(ci.1).child(ci.0)),
+                    .child(div().text_color(ci.1).child(ci.0))
+                    .when(merged, |d| d.child(pill(&t, "mergeado", t.ok, false)))
+                    .when(scheduled && !merged, |d| {
+                        d.child(pill(&t, "merge quando o pipeline passar", t.orange, false))
+                    })
+                    .when(approved, |d| {
+                        d.child(pill(&t, "aprovado por você", t.ok, false))
+                    }),
             )
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(10.))
                     .items_center()
                     .pb(px(6.))
@@ -1430,6 +2273,58 @@ impl MrsView {
                             .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
                     )
                     .child(div().flex_1())
+                    .when_some(blocker.filter(|_| !merged && !scheduled), |d, why| {
+                        d.child(
+                            div()
+                                .text_size(px(13.))
+                                .text_color(t.orange)
+                                .child(format!("⚠ {why}")),
+                        )
+                    })
+                    .when(o.is_some() && !merged, |d| {
+                        d.child(
+                            button(
+                                &t,
+                                "mr-approve",
+                                if approved {
+                                    "Remover aprovação"
+                                } else {
+                                    "✓ Aprovar"
+                                },
+                                false,
+                            )
+                            .when(busy || !can_approve, |b| b.opacity(0.45))
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if !this.busy && can_approve {
+                                        this.toggle_approve(cx)
+                                    }
+                                },
+                            )),
+                        )
+                        .child(
+                            button(
+                                &t,
+                                "mr-merge",
+                                if scheduled {
+                                    "Cancelar merge agendado"
+                                } else {
+                                    "Merge…"
+                                },
+                                false,
+                            )
+                            .when(busy || (blocker.is_some() && !scheduled), |b| {
+                                b.opacity(0.45)
+                            })
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if !this.busy && (blocker.is_none() || scheduled) {
+                                        this.ask_merge(cx)
+                                    }
+                                },
+                            )),
+                        )
+                    })
                     .child(
                         button(&t, "mr-rev", "Revisar com Claude ⇧R", true)
                             .on_click(cx.listener(|this, _, _, cx| this.start_review(cx))),
@@ -1439,33 +2334,175 @@ impl MrsView {
             None => div().p(px(24.)).text_color(t.muted).child("Lendo o MR…"),
             Some(Err(e)) => self.empty("Não deu para abrir o MR".into(), e.clone()),
             Some(Ok(o)) => {
-                let mut list = div()
-                    .flex()
-                    .flex_col()
+                let gens: Vec<&FileDiff> = o
+                    .files
+                    .iter()
+                    .filter(|f| Self::is_gen(o, &f.path))
+                    .collect();
+                let seg = |id: &'static str, label: &'static str, on: bool, split: bool| {
+                    div()
+                        .id(id)
+                        .px(px(10.))
+                        .py(px(3.))
+                        .rounded(px(5.))
+                        .cursor_pointer()
+                        .text_color(if on { t.fg } else { t.muted })
+                        .when(on, |d| d.bg(t.accent_soft))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if this.split != split {
+                                this.toggle_split(cx)
+                            }
+                        }))
+                        .child(label)
+                };
+                let hide = self.hide_gen;
+                let tool =
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(8.))
+                        .items_center()
+                        .px(px(10.))
+                        .py(px(6.))
+                        .bg(t.panel)
+                        .border_b_1()
+                        .border_color(t.line)
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(2.))
+                                .child(seg("lay-split", "Lado a lado", self.split, true))
+                                .child(seg("lay-uni", "Unificado", !self.split, false)),
+                        )
+                        .child(
+                            div()
+                                .id("gen-t")
+                                .flex()
+                                .gap(px(6.))
+                                .items_center()
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.hide_gen = !this.hide_gen;
+                                    cx.notify();
+                                }))
+                                .child(checkbox(&t, hide))
+                                .child(format!("Ocultar gerados ({})", gens.len())),
+                        )
+                        .child(div().flex_1())
+                        .child(button(&t, "exp-all", "Expandir todos", false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.collapsed.clear();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(button(&t, "col-all", "Colapsar todos", false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                if let Some((_, Some(Ok(o)))) = &this.open {
+                                    this.collapsed =
+                                        o.files.iter().map(|f| f.path.clone()).collect();
+                                }
+                                cx.notify();
+                            }),
+                        ));
+                let mut scroll = div()
+                    .id("mr-diff")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .pb(px(40.))
                     .font_family(t.mono.clone())
                     .text_size(px(13.5))
                     .line_height(px(22.));
-                for (i, f) in o.files.iter().enumerate() {
-                    list = list.child(self.file_block(i, f, o, cx));
+                let general: Vec<(usize, Value)> = Self::threads(o)
+                    .into_iter()
+                    .filter(|(_, d)| d["notes"][0]["position"].is_null())
+                    .collect();
+                if !general.is_empty() {
+                    let n = general.len();
+                    let mut disc = div()
+                        .flex()
+                        .flex_col()
+                        .pb(px(6.))
+                        .border_b_1()
+                        .border_color(t.line)
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(10.))
+                                .items_center()
+                                .px(px(12.))
+                                .py(px(6.))
+                                .bg(t.panel)
+                                .border_b_1()
+                                .border_color(t.line)
+                                .font_family(t.sans)
+                                .child("Discussões")
+                                .child(div().text_color(t.muted).child(format!(
+                                    "{n} gera{}, fora do código",
+                                    if n > 1 { "is" } else { "l" }
+                                ))),
+                        );
+                    for (i, d) in &general {
+                        disc = disc.child(self.thread(d, *i, Side::Disc, cx));
+                    }
+                    scroll = scroll.child(disc);
                 }
-                let general: Vec<Draft> = self
+                for (i, f) in o.files.iter().enumerate() {
+                    if !(hide && Self::is_gen(o, &f.path)) {
+                        scroll = scroll.child(self.file_block(i, f, o, cx));
+                    }
+                }
+                let lone: Vec<Draft> = self
                     .drafts
                     .get(&row.key())
-                    .map(|v| v.iter().filter(|d| d.line.is_none()).cloned().collect())
+                    .map(|v| {
+                        v.iter()
+                            .filter(|d| d.line.is_none() && d.old.is_none() && d.reply_to.is_none())
+                            .cloned()
+                            .collect()
+                    })
                     .unwrap_or_default();
-                for d in &general {
-                    list = list.child(self.draft_box(d, cx));
+                for d in &lone {
+                    scroll = scroll.child(self.place(Side::Unified, self.draft_box(d, cx)));
                 }
-                div().flex_1().min_h_0().flex().flex_col().child(
-                    div()
-                        .id("mr-diff")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.scroll)
-                        .child(list),
-                )
+                if hide && !gens.is_empty() {
+                    let names: Vec<&str> = gens
+                        .iter()
+                        .map(|f| f.path.rsplit('/').next().unwrap_or(&f.path))
+                        .collect();
+                    let n = gens.len();
+                    scroll =
+                        scroll.child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(8.))
+                                .items_center()
+                                .px(px(12.))
+                                .py(px(10.))
+                                .font_family(t.sans)
+                                .text_color(t.muted)
+                                .child(format!(
+                                    "{n} arquivo{s} gerado{s} oculto{s} ({}).",
+                                    names.join(", "),
+                                    s = if n > 1 { "s" } else { "" }
+                                ))
+                                .child(button(&t, "gen-show", "Mostrar", false).on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.hide_gen = false;
+                                        cx.notify();
+                                    }),
+                                )),
+                        );
+                }
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(tool)
+                    .child(scroll)
             }
         };
         let pend = self.pending().len();

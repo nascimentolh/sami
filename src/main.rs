@@ -15,6 +15,8 @@ mod graph;
 mod herdr;
 mod jira;
 mod keys;
+#[allow(dead_code, unused_imports, clippy::collapsible_if)]
+// ponytail: o fork do LSP liga no editor; tira quando juntar
 mod lsp;
 mod mascot;
 mod mouse;

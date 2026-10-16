@@ -404,6 +404,19 @@ pub fn position(refs: &Value, file: &str, old_path: &str, line: u32, diff: &str)
     p
 }
 
+/// Linha removida: só `old_line`, sem `new_line`.
+pub fn position_old(refs: &Value, file: &str, old_path: &str, old_line: u32) -> Value {
+    json!({
+        "position_type": "text",
+        "base_sha": refs["base_sha"],
+        "start_sha": refs["start_sha"],
+        "head_sha": refs["head_sha"],
+        "new_path": file,
+        "old_path": old_path,
+        "old_line": old_line,
+    })
+}
+
 /// O corpo de nota geral: o `arquivo:linha` vai no texto.
 pub fn general_body(body: &str, file: &str, line: Option<u32>) -> String {
     if file.is_empty() {
@@ -623,6 +636,16 @@ pub fn merge(path: &str, iid: u64, sha: &str, o: &MergeOpts) -> Result<(), Strin
     write("PUT", &format!("{base}/merge"), &body).map(drop)
 }
 
+pub fn cancel_auto_merge(path: &str, iid: u64) -> Result<(), String> {
+    let base = format!("projects/{}/merge_requests/{iid}", enc(path));
+    write(
+        "POST",
+        &format!("{base}/cancel_merge_when_pipeline_succeeds"),
+        &json!({}),
+    )
+    .map(drop)
+}
+
 /// Por que o Merge está apagado (`detailed_merge_status` do GitLab); `None` quando dá para mergear.
 pub fn merge_blocker(detail: &Value) -> Option<&'static str> {
     if detail["state"] != "opened" {
@@ -634,7 +657,9 @@ pub fn merge_blocker(detail: &Value) -> Option<&'static str> {
             "not_approved" => "precisa de aprovação",
             "draft_status" => "o MR é rascunho",
             "discussions_not_resolved" => "há discussões não resolvidas",
-            "ci_must_pass" | "ci_still_running" => "o pipeline precisa passar",
+            // pipeline rodando: dá para agendar ("merge quando o pipeline passar")
+            "ci_still_running" => return None,
+            "ci_must_pass" => "o pipeline precisa passar",
             "conflict" | "need_rebase" => "conflito com a branch de destino",
             "blocked_status" => "bloqueado por outro MR",
             "checking" | "unchecked" | "preparing" | "approvals_syncing" => {
@@ -710,6 +735,8 @@ pub struct Draft {
     pub id: usize,
     pub file: String,
     pub line: Option<u32>,
+    /// comentário numa linha removida (só existe do lado velho)
+    pub old: Option<u32>,
     pub body: String,
     pub by: String,
     pub sev: Option<String>,
@@ -739,7 +766,7 @@ pub fn publish(path: &str, iid: u64, opened: &Opened, drafts: &mut [Draft]) -> R
             (Some(l), Some(s)) if !l.is_empty() => format!("**{l}** ({s}): {}", d.body),
             _ => d.body.clone(),
         };
-        let inline = !d.general && d.line.is_some() && d.reply_to.is_none();
+        let inline = !d.general && (d.line.is_some() || d.old.is_some()) && d.reply_to.is_none();
         if inline && d.head != head_now {
             d.error = Some("O MR recebeu um commit novo depois deste rascunho; a linha pode ter mudado de lugar.".into());
             failed += 1;
@@ -750,7 +777,11 @@ pub fn publish(path: &str, iid: u64, opened: &Opened, drafts: &mut [Draft]) -> R
         } else if inline {
             let raw = opened.raw.iter().find(|r| r.0 == d.file);
             let (old, diff) = raw.map_or((d.file.as_str(), ""), |r| (r.1.as_str(), r.2.as_str()));
-            json!({"note": body, "position": position(refs, &d.file, old, d.line.unwrap(), diff)})
+            let pos = match (d.line, d.old) {
+                (Some(n), _) => position(refs, &d.file, old, n, diff),
+                (None, o) => position_old(refs, &d.file, old, o.unwrap_or_default()),
+            };
+            json!({"note": body, "position": pos})
         } else {
             json!({"note": general_body(&body, &d.file, d.line)})
         };
@@ -1049,6 +1080,7 @@ mod tests {
             id,
             file: "a.ts".into(),
             line,
+            old: None,
             body: body.into(),
             by: "você".into(),
             sev: None,
@@ -1093,6 +1125,16 @@ mod tests {
         let third = std::fs::read_to_string(&log).unwrap();
         assert!(third.contains("\"in_reply_to_discussion_id\":\"abc123\""));
         assert!(!third.contains("position"));
+        // comentário numa linha removida: só old_line na position
+        std::fs::remove_file(&log).unwrap();
+        let mut gone = vec![Draft {
+            line: None,
+            old: Some(7),
+            ..d(5, None, "por que saiu?")
+        }];
+        assert!(publish("g/p", 3, &opened, &mut gone).is_ok());
+        let removed = std::fs::read_to_string(&log).unwrap();
+        assert!(removed.contains("\"old_line\":7") && !removed.contains("new_line"));
         // aprovar e mergear, travados no sha revisado
         std::fs::remove_file(&log).unwrap();
         approve("g/p", 3, "h").unwrap();
@@ -1123,8 +1165,9 @@ mod tests {
             merge_blocker(&st("not_approved")),
             Some("precisa de aprovação")
         );
+        assert_eq!(merge_blocker(&st("ci_still_running")), None);
         assert_eq!(
-            merge_blocker(&st("ci_still_running")),
+            merge_blocker(&st("ci_must_pass")),
             Some("o pipeline precisa passar")
         );
         assert_eq!(

@@ -32,6 +32,8 @@ pub enum Notice {
         key: String,
         title: String,
         who: String,
+        /// id da nota nova, para o selo "nova" na thread
+        note: u64,
     },
 }
 
@@ -115,6 +117,7 @@ impl State {
                 key: key.clone(),
                 title: r.title.clone(),
                 who: format!("@{}", author(&n)),
+                note: n["id"].as_u64().unwrap_or_default(),
             })
             .collect()
     }
@@ -180,7 +183,7 @@ mod tests {
             1,
             "a thread b não é minha, nota minha e de sistema não contam"
         );
-        assert!(matches!(&got[0], Notice::Reply { who, .. } if who == "@ana"));
+        assert!(matches!(&got[0], Notice::Reply { who, note: 20, .. } if who == "@ana"));
         assert!(s.replies(&r2, &d2, "eu").is_empty(), "não notifica de novo");
     }
 }

@@ -1,6 +1,10 @@
 use gpui_kit::{prelude::FluentBuilder, *};
 
-use crate::{form::button, theme::Theme};
+use crate::{
+    form::{button, checkbox},
+    mrs::MergeOpts,
+    theme::Theme,
+};
 
 pub enum Answer {
     Ok,
@@ -210,4 +214,156 @@ pub fn toast(t: &Theme, msg: &str) -> Div {
         .shadow_lg()
         .text_size(px(13.5))
         .child(msg.to_string())
+}
+
+/// O `mergeDlg` do protótipo: opções que vêm do MR; com o pipeline rodando, só dá para agendar.
+pub struct MergeDlg {
+    title: String,
+    text: String,
+    opts: MergeOpts,
+    running: bool,
+    focus: FocusHandle,
+    theme: Theme,
+}
+
+/// As opções escolhidas, ou `None` no Cancelar/Esc.
+pub struct Merged(pub Option<MergeOpts>);
+
+impl EventEmitter<Merged> for MergeDlg {}
+
+impl MergeDlg {
+    pub fn new(
+        theme: Theme,
+        title: String,
+        text: String,
+        opts: MergeOpts,
+        running: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        Self {
+            title,
+            text,
+            opts,
+            running,
+            focus,
+            theme,
+        }
+    }
+}
+
+impl Render for MergeDlg {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme.clone();
+        let o = self.opts.clone();
+        let opt = |id: &'static str, on: bool, label: &'static str, flip: fn(&mut MergeOpts)| {
+            div()
+                .id(id)
+                .flex()
+                .gap(px(8.))
+                .items_center()
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    flip(&mut this.opts);
+                    cx.notify();
+                }))
+                .child(checkbox(&t, on))
+                .child(label)
+        };
+        let auto = div()
+            .flex()
+            .gap(px(8.))
+            .items_center()
+            .when(!self.running, |d| d.opacity(0.5))
+            .child(checkbox(&t, self.running))
+            .child("Merge quando o pipeline passar")
+            .child(div().text_color(t.muted).child(if self.running {
+                "(pipeline rodando)"
+            } else {
+                "(pipeline já passou)"
+            }));
+        let ok_label = if self.running {
+            "Agendar merge Ctrl+⏎"
+        } else {
+            "Merge Ctrl+⏎"
+        };
+        div()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                let k = &e.keystroke;
+                match k.key.as_str() {
+                    "escape" => cx.emit(Merged(None)),
+                    "enter" if k.modifiers.control => cx.emit(Merged(Some(this.opts.clone()))),
+                    _ => {}
+                }
+            }))
+            .w(px(480.))
+            .max_w_full()
+            .p(px(16.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .bg(t.raise)
+            .border_1()
+            .border_color(t.line)
+            .rounded(px(8.))
+            .shadow_lg()
+            .text_color(t.fg)
+            .font_family(t.sans)
+            .text_size(px(14.))
+            .child(
+                div()
+                    .text_size(px(16.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(self.title.clone()),
+            )
+            .child(div().text_color(t.muted).child(self.text.clone()))
+            .child(
+                div()
+                    .border_1()
+                    .border_color(t.line)
+                    .rounded(px(6.))
+                    .px(px(12.))
+                    .py(px(8.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(t.muted)
+                            .child("Opções (vêm do MR)"),
+                    )
+                    .child(opt("mg-sq", o.squash, "Squash dos commits", |o| {
+                        o.squash = !o.squash
+                    }))
+                    .child(opt(
+                        "mg-rm",
+                        o.remove_branch,
+                        "Apagar a branch de origem",
+                        |o| o.remove_branch = !o.remove_branch,
+                    ))
+                    .child(auto),
+            )
+            .child(
+                div()
+                    .text_color(t.muted)
+                    .child("Escreve no GitLab e notifica o autor."),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(6.))
+                    .child(
+                        button(&t, "mg-no", "Cancelar", false)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Merged(None)))),
+                    )
+                    .child(button(&t, "mg-ok", ok_label, true).on_click(
+                        cx.listener(|this, _, _, cx| cx.emit(Merged(Some(this.opts.clone())))),
+                    )),
+            )
+    }
 }
