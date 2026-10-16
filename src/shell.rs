@@ -1894,18 +1894,19 @@ impl Shell {
             }
             Cmd::Work(i) => {
                 if let Some(s) = &self.sidebar {
-                    s.read(cx).go_work(i);
+                    s.update(cx, |s, cx| s.go_work(i, cx));
                 }
                 self.leave_modes();
                 window.focus(&self.terminal.read(cx).focus_handle(), cx);
             }
             Cmd::NextWork(d) => {
                 let Some(s) = &self.sidebar else { return };
-                let s = s.read(cx);
-                let n = s.works.len() as i32;
-                if n > 1 {
-                    s.go_work((s.cur as i32 + d).rem_euclid(n) as usize);
-                }
+                s.update(cx, |s, cx| {
+                    let n = s.works.len() as i32;
+                    if n > 1 {
+                        s.go_work((s.cur as i32 + d).rem_euclid(n) as usize, cx);
+                    }
+                });
                 self.leave_modes();
                 window.focus(&self.terminal.read(cx).focus_handle(), cx);
             }

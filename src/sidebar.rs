@@ -46,6 +46,7 @@ impl EventEmitter<SidebarEvent> for Sidebar {}
 /// Lateral "Features" do protótipo: agentes por repositório e, embaixo, os workspaces ("Terminais").
 pub struct Sidebar {
     herdr: Arc<Herdr>,
+    kick: futures::channel::mpsc::UnboundedSender<()>,
     pub agents: Vec<Agent>,
     pub workspaces: Vec<Workspace>,
     /// cwd de cada workspace do herdr (o pane em foco nele)
@@ -153,7 +154,10 @@ impl Sidebar {
         // ponytail: polling de 500 ms (status não tem evento global no protocolo 19, só por pane);
         // trocar por events.subscribe por pane se a latência ou a CPU incomodarem
         let h = herdr.clone();
+        let (kick, mut kicked) = futures::channel::mpsc::unbounded::<()>();
         let poll = cx.spawn(async move |this, cx| {
+            // troca de aba acorda o polling: as Mudanças da aba nova não esperam os 3 s
+            let mut heavy = false;
             for tick in 0u64.. {
                 let h = h.clone();
                 let state = cx
@@ -185,6 +189,7 @@ impl Sidebar {
                     if this.focused_cwd != cwd {
                         this.focused_cwd = cwd;
                         changed = true;
+                        heavy = true;
                     }
                     for n in notes {
                         cx.emit(SidebarEvent::Notify(n));
@@ -197,7 +202,7 @@ impl Sidebar {
                     break;
                 }
                 // custo/contexto e Mudanças são mais caros (JSONL e git): a cada 3 s
-                if tick % 6 == 0 {
+                if tick % 6 == 0 || std::mem::take(&mut heavy) {
                     let Ok((jobs, root, sessions, merged)) = this.read_with(cx, |this, _| {
                         let jobs: Vec<_> = this
                             .agents
@@ -348,9 +353,12 @@ impl Sidebar {
                         }
                     });
                 }
-                cx.background_executor()
-                    .timer(Duration::from_millis(500))
-                    .await;
+                let timer = cx.background_executor().timer(Duration::from_millis(500));
+                if let futures::future::Either::Right(_) =
+                    futures::future::select(timer, futures::StreamExt::next(&mut kicked)).await
+                {
+                    heavy = true;
+                }
             }
         });
         let works_file = works_file(herdr.session());
@@ -361,6 +369,7 @@ impl Sidebar {
             works,
             works_file,
             herdr,
+            kick,
             agents: Vec::new(),
             workspaces: Vec::new(),
             ws_cwd: HashMap::new(),
@@ -567,7 +576,16 @@ impl Sidebar {
             .find(|s| mine.contains(s))
     }
 
-    pub fn go_work(&self, i: usize) {
+    /// A faixa e a lateral trocam já; o polling confirma quando o herdr focar.
+    pub fn go_work(&mut self, i: usize, cx: &mut Context<Self>) {
+        if i < self.works.len() && i != self.cur {
+            self.cur = i;
+            cx.notify();
+        }
+        self.focus_work(i);
+    }
+
+    fn focus_work(&self, i: usize) {
         if let Some(w) = self.works.get(i) {
             self.focus_workspace(w.last.clone());
         }
@@ -587,7 +605,7 @@ impl Sidebar {
             return Err("É a única aba. Abra outra (Alt+T) antes de fechar esta.");
         }
         if i == self.cur {
-            self.go_work(if i > 0 { i - 1 } else { 1 });
+            self.focus_work(if i > 0 { i - 1 } else { 1 });
         }
         let h = self.herdr.clone();
         let ws = w.ws.clone();
@@ -805,8 +823,11 @@ impl Sidebar {
     }
 
     pub fn focus_workspace(&self, id: String) {
-        let h = self.herdr.clone();
-        std::thread::spawn(move || h.focus_workspace(&id));
+        let (h, kick) = (self.herdr.clone(), self.kick.clone());
+        std::thread::spawn(move || {
+            let _ = h.focus_workspace(&id);
+            let _ = kick.unbounded_send(());
+        });
     }
 
     /// Próximo da fila: quem precisa de você primeiro, depois quem terminou.
