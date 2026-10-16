@@ -965,6 +965,7 @@ impl MrsView {
                             }
                             (Run::Tool(t), Phase::Run(s)) => s.push(("sub", t)),
                             (Run::Done(mut f, cost), _) => {
+                                d.pid = None;
                                 mrs::mark_outside(&mut f, &raw);
                                 d.phase = Phase::Done(
                                     f.into_iter()
