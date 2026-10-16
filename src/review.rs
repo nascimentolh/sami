@@ -738,26 +738,32 @@ impl Review {
         let t = self.theme.clone();
         let f = cx
             .new(|cx| TextField::new(t, value, "O que o Claude deve mudar aqui?", true, false, cx));
-        cx.subscribe(&f, move |this, f, e: &FieldEvent, cx| match e {
-            FieldEvent::Submit => {
-                let body = f.read(cx).value.trim().to_string();
-                if let Some(d) = this.drafts.iter_mut().find(|d| d.id == id) {
-                    d.body = body;
-                    d.field = None;
+        cx.subscribe_in(
+            &f,
+            window,
+            move |this, f, e: &FieldEvent, window, cx| match e {
+                FieldEvent::Submit => {
+                    window.focus(&this.focus, cx);
+                    let body = f.read(cx).value.trim().to_string();
+                    if let Some(d) = this.drafts.iter_mut().find(|d| d.id == id) {
+                        d.body = body;
+                        d.field = None;
+                    }
+                    this.drafts
+                        .retain(|d| !d.body.is_empty() || d.field.is_some());
+                    cx.notify();
                 }
-                this.drafts
-                    .retain(|d| !d.body.is_empty() || d.field.is_some());
-                cx.notify();
-            }
-            FieldEvent::Cancel => {
-                this.drafts.retain(|d| d.id != id || !d.body.is_empty());
-                if let Some(d) = this.drafts.iter_mut().find(|d| d.id == id) {
-                    d.field = None;
+                FieldEvent::Cancel => {
+                    window.focus(&this.focus, cx);
+                    this.drafts.retain(|d| d.id != id || !d.body.is_empty());
+                    if let Some(d) = this.drafts.iter_mut().find(|d| d.id == id) {
+                        d.field = None;
+                    }
+                    cx.notify();
                 }
-                cx.notify();
-            }
-            FieldEvent::Changed => {}
-        })
+                FieldEvent::Changed => {}
+            },
+        )
         .detach();
         window.focus(&f.read(cx).focus_handle(), cx);
         f
@@ -773,8 +779,9 @@ impl Review {
     ) {
         let t = self.theme.clone();
         let f = cx.new(|cx| TextField::new(t, &text, "", false, true, cx));
-        cx.subscribe(&f, |this, f, e: &FieldEvent, cx| match e {
+        cx.subscribe_in(&f, window, |this, f, e: &FieldEvent, window, cx| match e {
             FieldEvent::Submit => {
+                window.focus(&this.focus, cx);
                 let value = f.read(cx).value.clone();
                 if let Some((path, line, _)) = this.editing.take() {
                     this.write_line(&path, line, &value, cx);
@@ -782,6 +789,7 @@ impl Review {
                 cx.notify();
             }
             FieldEvent::Cancel => {
+                window.focus(&this.focus, cx);
                 this.editing = None;
                 cx.notify();
             }
@@ -865,7 +873,8 @@ impl Review {
     }
 
     fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tab != Tab::Review {
+        // tecla vinda de um campo (comentário, edição de linha) é texto, não atalho
+        if self.tab != Tab::Review || !self.focus.is_focused(window) {
             return;
         }
         let k = &e.keystroke;

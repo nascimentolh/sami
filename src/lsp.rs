@@ -376,11 +376,15 @@ impl Client {
         );
     }
 
+    /// Os erros do buffer fechado saem da aba Problemas: as edições dele foram descartadas.
     pub fn did_close(&self, path: &Path) {
+        let uri = file_uri(path);
         self.notify(
             "textDocument/didClose",
-            json!({"textDocument": {"uri": file_uri(path)}}),
+            json!({"textDocument": {"uri": uri}}),
         );
+        self.diagnostics.lock().unwrap().remove(&uri);
+        self.generation.fetch_add(1, Ordering::Relaxed);
     }
 
     fn pull_diagnostics(self: &Arc<Self>, uri: String) {

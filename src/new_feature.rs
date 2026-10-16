@@ -61,9 +61,15 @@ impl NewFeature {
             let t = theme.clone();
             cx.new(|cx| TextField::new(t, v, ph, multi, mono, cx))
         };
-        let jira = field("", "ex.: PRD-171500", false, true, cx);
+        let jira = field("", "ex.: PROJ-123", false, true, cx);
         let branch = field("feat/", "", false, true, cx);
-        let prompt = field("", "ex.: adiciona paginação no GET /bots", true, false, cx);
+        let prompt = field(
+            "",
+            "ex.: adiciona paginação no GET /pedidos",
+            true,
+            false,
+            cx,
+        );
         for f in [&jira, &branch, &prompt] {
             cx.subscribe(f, |this, f, e: &FieldEvent, cx| match e {
                 FieldEvent::Changed => {

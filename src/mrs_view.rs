@@ -526,14 +526,22 @@ impl MrsView {
             )
         });
         let did = id.clone();
-        cx.subscribe(&f, move |this, _, e: &FieldEvent, cx| match e {
-            FieldEvent::Submit => this.add_reply(&did, cx),
-            FieldEvent::Cancel => {
-                this.replying = None;
-                cx.notify();
-            }
-            FieldEvent::Changed => {}
-        })
+        cx.subscribe_in(
+            &f,
+            window,
+            move |this, _, e: &FieldEvent, window, cx| match e {
+                FieldEvent::Submit => {
+                    window.focus(&this.focus, cx);
+                    this.add_reply(&did, cx)
+                }
+                FieldEvent::Cancel => {
+                    window.focus(&this.focus, cx);
+                    this.replying = None;
+                    cx.notify();
+                }
+                FieldEvent::Changed => {}
+            },
+        )
         .detach();
         window.focus(&f.read(cx).focus_handle(), cx);
         self.replying = Some((id, f));
@@ -699,7 +707,7 @@ impl MrsView {
         let t = self.theme.clone();
         let f =
             cx.new(|cx| TextField::new(t, &body, "Comentário para o autor do MR", true, false, cx));
-        cx.subscribe(&f, move |this, f, e: &FieldEvent, cx| {
+        cx.subscribe_in(&f, window, move |this, f, e: &FieldEvent, window, cx| {
             let text = f.read(cx).value.trim().to_string();
             match e {
                 FieldEvent::Submit if text.is_empty() => {
@@ -720,6 +728,7 @@ impl MrsView {
                 }
                 FieldEvent::Changed => return,
             }
+            window.focus(&this.focus, cx);
             this.editing = None;
             cx.notify();
         })
@@ -1042,7 +1051,8 @@ impl MrsView {
     }
 
     fn on_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_some() || self.filter.read(cx).focus_handle().is_focused(window) {
+        // tecla vinda de um campo (filtro, rascunho, resposta) é texto, não atalho
+        if self.editing.is_some() || !self.focus.is_focused(window) {
             if e.keystroke.key == "escape" && self.editing.is_none() {
                 self.filter.update(cx, |f, cx| f.set(String::new(), cx));
                 window.focus(&self.focus, cx);

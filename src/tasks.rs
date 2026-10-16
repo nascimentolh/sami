@@ -265,25 +265,25 @@ pub fn relative(root: &Path, file: &str) -> String {
         .unwrap_or_else(|_| file.to_string())
 }
 
-const MARK: &str = "@@maestro-fim-";
+const MARK: &str = "── fim (";
 
 /// O comando como vai para o split: no fim imprime a marca com o código de saída.
 /// O texto digitado tem `%s`, então a marca de verdade só aparece quando a tarefa termina.
 pub fn wrapped(cmd: &str) -> String {
-    format!("{cmd}; printf '\\n@@maestro-%s-%d@@\\n' fim $?\r")
+    format!("{cmd}; printf '\\n── %s (%d) ──\\n' fim $?\r")
 }
 
 /// (código de saída, saída da tarefa) quando a marca do fim já apareceu na tela do split.
 pub fn finished(screen: &str) -> Option<(i32, &str)> {
     let end = screen.rfind(MARK)?;
     let code = screen[end + MARK.len()..]
-        .split("@@")
+        .split(')')
         .next()?
         .trim()
         .parse()
         .ok()?;
     let start = screen[..end]
-        .rfind("@@maestro-%s")
+        .rfind("── %s (%d)")
         .and_then(|i| screen[i..end].find('\n').map(|n| i + n + 1))
         .unwrap_or(0);
     Some((code, &screen[start.min(end)..end]))
@@ -425,7 +425,7 @@ mod tests {
         let typed = wrapped("npm test");
         assert!(typed.ends_with("fim $?\r") && !typed.contains(MARK));
         let screen = format!(
-            "~/repo ❯ {}\n> x@1 test\nsrc/a.ts(1,1): error TS1: x\n\n@@maestro-fim-2@@\n~/repo ❯",
+            "~/repo ❯ {}\n> x@1 test\nsrc/a.ts(1,1): error TS1: x\n\n── fim (2) ──\n~/repo ❯",
             typed.trim_end()
         );
         let (code, out) = finished(&screen).unwrap();
