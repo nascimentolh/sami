@@ -2,12 +2,12 @@
 
 use std::{
     collections::HashMap,
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicI64, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     },
 };
 
@@ -137,12 +137,13 @@ pub fn uri_path(uri: &str) -> Option<PathBuf> {
     let mut out = Vec::with_capacity(raw.len());
     let mut i = 0;
     while i < raw.len() {
-        if raw[i] == b'%' && i + 2 < raw.len() {
-            if let Ok(b) = u8::from_str_radix(std::str::from_utf8(&raw[i + 1..i + 3]).ok()?, 16) {
-                out.push(b);
-                i += 3;
-                continue;
-            }
+        if raw[i] == b'%'
+            && i + 2 < raw.len()
+            && let Ok(b) = u8::from_str_radix(std::str::from_utf8(&raw[i + 1..i + 3]).ok()?, 16)
+        {
+            out.push(b);
+            i += 3;
+            continue;
         }
         out.push(raw[i]);
         i += 1;
@@ -189,6 +190,10 @@ pub struct Client {
     /// sobe a cada `publishDiagnostics`: o editor compara com o último que aplicou
     pub generation: Arc<AtomicU64>,
     pub server: &'static Server,
+    /// o binário que subiu, para a barra de status
+    pub bin: String,
+    /// o servidor só entrega diagnóstico quando pedido (`textDocument/diagnostic`), como o TS 7
+    pull: AtomicBool,
 }
 
 impl Client {
@@ -225,6 +230,11 @@ impl Client {
             diagnostics: Arc::default(),
             generation: Arc::default(),
             server,
+            bin: bin
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            pull: AtomicBool::new(false),
         });
         let weak = Arc::downgrade(&client);
         let (pending, diagnostics, generation) = (
@@ -313,8 +323,9 @@ impl Client {
                 "hover": {"contentFormat": ["markdown", "plaintext"]},
                 "definition": {"linkSupport": true},
                 "completion": {"completionItem": {"snippetSupport": false, "documentationFormat": ["markdown", "plaintext"]}},
-                "codeAction": {"codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["", "quickfix", "refactor", "source"]}}},
-                "publishDiagnostics": {"relatedInformation": false}
+                "codeAction": {"codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["", "quickfix", "refactor", "source"]}}, "resolveSupport": {"properties": ["edit"]}, "dataSupport": true},
+                "publishDiagnostics": {"relatedInformation": false},
+                "diagnostic": {"dynamicRegistration": false}
             },
             "workspace": {"configuration": true, "workspaceFolders": true},
             "window": {"workDoneProgress": false}
@@ -328,9 +339,70 @@ impl Client {
                 "capabilities": caps,
             }),
         );
-        futures::executor::block_on(rx).map_err(|_| "o servidor fechou".to_string())??;
+        let init =
+            futures::executor::block_on(rx).map_err(|_| "o servidor fechou".to_string())??;
+        self.pull.store(
+            !init["capabilities"]["diagnosticProvider"].is_null(),
+            Ordering::Relaxed,
+        );
         self.notify("initialized", json!({}));
         Ok(())
+    }
+
+    pub fn did_open(self: &Arc<Self>, path: &Path, text: &str) {
+        let uri = file_uri(path);
+        let lang = language_id(&path.to_string_lossy());
+        self.notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {"uri": uri, "languageId": lang, "version": 1, "text": text}}),
+        );
+        self.pull_diagnostics(uri);
+    }
+
+    // ponytail: sync completo a cada mudança; incremental se arquivo grande pesar
+    pub fn did_change(self: &Arc<Self>, path: &Path, version: i32, text: &str) {
+        let uri = file_uri(path);
+        self.notify(
+            "textDocument/didChange",
+            json!({"textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": text}]}),
+        );
+        self.pull_diagnostics(uri);
+    }
+
+    pub fn did_save(&self, path: &Path) {
+        self.notify(
+            "textDocument/didSave",
+            json!({"textDocument": {"uri": file_uri(path)}}),
+        );
+    }
+
+    pub fn did_close(&self, path: &Path) {
+        self.notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": file_uri(path)}}),
+        );
+    }
+
+    fn pull_diagnostics(self: &Arc<Self>, uri: String) {
+        if !self.pull.load(Ordering::Relaxed) {
+            return;
+        }
+        let rx = self.request(
+            "textDocument/diagnostic",
+            json!({"textDocument": {"uri": uri}}),
+        );
+        let (diagnostics, generation) = (self.diagnostics.clone(), self.generation.clone());
+        std::thread::spawn(move || {
+            let Ok(Ok(r)) = futures::executor::block_on(rx) else {
+                return;
+            };
+            if r["kind"] != "full" {
+                return;
+            }
+            let list = serde_json::from_value(r["items"].clone()).unwrap_or_default();
+            diagnostics.lock().unwrap().insert(uri, list);
+            generation.fetch_add(1, Ordering::Relaxed);
+        });
     }
 }
 
@@ -425,10 +497,7 @@ mod tests {
         std::fs::write(&file, text).unwrap();
         let c = client(&dir, server_for("a.ts").unwrap()).unwrap();
         let uri = file_uri(&file);
-        c.notify(
-            "textDocument/didOpen",
-            json!({"textDocument": {"uri": uri, "languageId": "typescript", "version": 1, "text": text}}),
-        );
+        c.did_open(&file, text);
         let t0 = std::time::Instant::now();
         while c.diagnostics(&uri).is_empty() && t0.elapsed().as_secs() < 30 {
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -446,6 +515,58 @@ mod tests {
         assert!(comp.to_string().contains("toUpperCase"));
         stop(&dir);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn diagnostico_real(name: &str, files: &[(&str, &str)], line: u32) {
+        let dir = std::env::temp_dir().join(format!("maestro-lsp-{name}-{}", std::process::id()));
+        for (f, t) in files {
+            std::fs::create_dir_all(dir.join(f).parent().unwrap()).unwrap();
+            std::fs::write(dir.join(f), t).unwrap();
+        }
+        let (f, t) = files[files.len() - 1];
+        let c = client(&dir, server_for(f).unwrap()).unwrap();
+        c.did_open(&dir.join(f), t);
+        let uri = file_uri(&dir.join(f));
+        let t0 = std::time::Instant::now();
+        while c.diagnostics(&uri).is_empty() && t0.elapsed().as_secs() < 90 {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+        let d = c.diagnostics(&uri);
+        stop(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(d.iter().any(|d| d.range.start.line == line), "{d:?}");
+    }
+
+    #[test]
+    #[ignore]
+    fn go_de_verdade() {
+        diagnostico_real(
+            "go",
+            &[
+                ("go.mod", "module x\n\ngo 1.21\n"),
+                (
+                    "main.go",
+                    "package main\n\nfunc main() {\n\tvar n string = 1\n}\n",
+                ),
+            ],
+            3,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn rust_de_verdade() {
+        diagnostico_real(
+            "rs",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+                ),
+                ("src/main.rs", "fn main() {\n    let n: String = 1;\n}\n"),
+            ],
+            1,
+        );
     }
 
     #[test]

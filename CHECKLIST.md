@@ -204,42 +204,42 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] conferido no app de teste
 
 **C. Revisão de MR**
-- [ ] `diff::side_by_side` + teste
-- [ ] `diff::boilerplate` + teste
-- [ ] `mrs::approve`/`unapprove`/`merge` + rascunho de resposta (`in_reply_to_discussion_id`), cobertos no teste do glab falso
-- [ ] lado a lado (padrão, salvo) e unificado
-- [ ] colapsar/expandir por arquivo e todos
-- [ ] filtro de boilerplate com seção "Gerados (N)"
-- [ ] Discussões gerais, threads em linha removida, Responder
-- [ ] Resolver fora da thread de UI
-- [ ] Aprovar e Merge no cabeçalho, com confirmação
-- [ ] conferido no app de teste (MR real só leitura; escrita no glab falso)
+- [x] `diff::side_by_side` + teste
+- [x] `diff::boilerplate` + teste
+- [x] `mrs::approve`/`unapprove`/`merge` + rascunho de resposta (`in_reply_to_discussion_id`), cobertos no teste do glab falso
+- [x] lado a lado (padrão, salvo) e unificado
+- [x] colapsar/expandir por arquivo e todos
+- [x] filtro de boilerplate com seção "Gerados (N)"
+- [x] Discussões gerais, threads em linha removida, Responder
+- [x] Resolver fora da thread de UI
+- [x] Aprovar e Merge no cabeçalho, com confirmação
+- [x] conferido no app de teste (MR real só leitura; escrita no glab falso)
 
 **D. Notificações de MR**
-- [ ] polling desde a abertura do app
-- [ ] `mr_notify` (MR novo, resposta a nota minha, sem renotificar) + teste
-- [ ] toast com Abrir + ponto na inbox
-- [ ] `notify-send` com ação Abrir quando a janela está fora de foco
-- [ ] conferido no app de teste
+- [x] polling desde a abertura do app
+- [x] `mr_notify` (MR novo, resposta a nota minha, sem renotificar) + teste
+- [x] toast com Abrir + ponto na inbox
+- [x] `notify-send` com ação Abrir quando a janela está fora de foco (disparo conferido; o clique em "Abrir" na notificação do GNOME não deu para automatizar)
+- [x] conferido no app de teste
 
 **E. LSP**
-- [ ] `lsp.rs`: processo, JSON-RPC, initialize, diagnósticos + teste do enquadramento
-- [ ] didOpen/didChange/didSave/didClose no editor
-- [ ] completar, hover, ir para definição (inclusive outro arquivo), code actions
-- [ ] diagnósticos no editor e contagem na status bar
-- [ ] faixa com o comando de instalação quando falta o servidor
-- [ ] conferido num clone TS (erro proposital, hover, completar, definição) e num `.py`
+- [x] `lsp.rs`: processo, JSON-RPC, initialize, diagnósticos + teste do enquadramento
+- [x] didOpen/didChange/didSave/didClose no editor
+- [x] completar, hover, ir para definição (F12, inclusive outro arquivo), code actions. O Ctrl+clique não navegou no teste; ficou F12
+- [x] diagnósticos no editor e contagem na status bar
+- [x] faixa com o comando de instalação quando falta o servidor
+- [x] conferido num clone TS (erro proposital, hover, completar, definição) e num `.py`
 
 **F. Extras**
-- [ ] F1 feature multi-repo (worktrees, lateral, revisão por repo, aviso de env fora do configmap, MRs relacionados, remoção)
-- [ ] F2 blame na linha (com MR de origem) e aba Histórico
-- [ ] F3 tarefas por repo num split + painel Problemas (matcher com teste)
-- [ ] F4 Perguntar ao Claude sobre um trecho (só leitura, com continuação)
-- [ ] F5 MRs empilhados (rebase, Mover para main) + teste da decisão
-- [ ] F6 Ctrl+Shift+K: comando por descrição, digitado sem executar
-- [ ] F7 News do daily.dev (perfil local, pontuação com teste, reordenação diária, modo News, Resumo do dia)
+- [x] F1 feature multi-repo (worktrees, lateral, revisão por repo, aviso de env fora do configmap, remoção). "Relacionados" no MR depende do `/mr` seguir o contexto; falta botão "+ repo" depois de criada
+- [x] F2 blame na linha (com MR de origem) e aba Histórico ("Abrir MR !n" sem teste contra remote real)
+- [x] F3 tarefas por repo num split + painel Problemas (matcher com teste)
+- [x] F4 Perguntar ao Claude sobre um trecho (só leitura, com continuação)
+- [x] F5 MRs empilhados (rebase, Mover para main) + teste da decisão
+- [x] F6 Ctrl+Shift+K: comando por descrição, digitado sem executar
+- [x] F7 News do daily.dev (perfil local, pontuação com teste, reordenação diária, modo News, Resumo do dia). Bookmark testado só com curl falso
 
-**Pendente com você:** aprovar e dar merge de verdade num MR de teste seu.
+**Pendente com você:** aprovar e dar merge de verdade num MR de teste seu; clicar "Abrir" numa notificação real do GNOME.
 
 ---
 

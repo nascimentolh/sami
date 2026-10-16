@@ -2,6 +2,7 @@ mod ask;
 mod audit;
 mod audit_view;
 mod binds;
+mod blame;
 mod braille;
 mod changes;
 mod cleanup;
@@ -16,9 +17,8 @@ mod graph;
 mod herdr;
 mod jira;
 mod keys;
-#[allow(dead_code, unused_imports, clippy::collapsible_if)]
-// ponytail: o fork do LSP liga no editor; tira quando juntar
 mod lsp;
+mod lsp_editor;
 mod mascot;
 mod mouse;
 mod mr;
@@ -97,6 +97,12 @@ fn main() {
             KeyBinding::new(
                 "ctrl-shift-left",
                 editor::LeaveEditor,
+                Some("MaestroEditor > Input"),
+            ),
+            // ponytail: o Ctrl+clique do gpui-base não navegou no teste; F12 chama o mesmo GoToDefinition
+            KeyBinding::new(
+                "f12",
+                gpui_kit::component::input::GoToDefinition,
                 Some("MaestroEditor > Input"),
             ),
         ]);
