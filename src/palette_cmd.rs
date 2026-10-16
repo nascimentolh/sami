@@ -100,7 +100,7 @@ pub fn commands() -> Vec<Item> {
         ),
         c(
             "Fila: Ver tudo que espera por você",
-            "",
+            "Alt+6",
             Some(AttentionMenu),
         ),
         c("Feature: Nova…", "Alt+N", Some(NewFeature)),
@@ -111,7 +111,7 @@ pub fn commands() -> Vec<Item> {
         c("Vault: Nota do repo", "", Some(Vault(VaultGo::RepoNote))),
         c("Vault: Daily de hoje", "", Some(Vault(VaultGo::Today))),
         c("Vault: Atividade", "", Some(Vault(VaultGo::Log))),
-        c("Ir para: Vault", "Alt+3", Some(Vault(VaultGo::Open))),
+        c("Ir para: Vault", "Alt+4", Some(Vault(VaultGo::Open))),
         c("Ajuda: Rever tutorial desta tela", "", Some(Tutorial)),
         c("Feature: Remover a atual…", "", Some(RemoveFeature)),
         // não está no protótipo; o desenho (5.4) pede o comando
@@ -162,7 +162,7 @@ pub fn commands() -> Vec<Item> {
             "Ctrl+Shift+B",
             Some(ToggleLeft),
         ),
-        c("Auditoria: Abrir relatório", "Alt+4", Some(Audit(false))),
+        c("Auditoria: Abrir relatório", "", Some(Audit(false))),
         c(
             "Auditoria: Nova auditoria incremental",
             "",
@@ -174,7 +174,7 @@ pub fn commands() -> Vec<Item> {
         c("MR: Revisar com Claude", "⇧R", Some(MrReview)),
         c("Ir para: News", "Alt+5", Some(News)),
         c("News: Resumo do dia", "", Some(NewsBrief)),
-        c("Ir para: Bancos", "Alt+6", Some(Db)),
+        c("Ir para: Bancos", "Alt+3", Some(Db)),
         c("Banco: ligar ou desligar…", "Ctrl+Shift+D", Some(DbMenu)),
         c("Banco: desligar todos", "", Some(TunnelsOff)),
         c("Ajuda: Atalhos e decisões de UX", "?", Some(Help)),

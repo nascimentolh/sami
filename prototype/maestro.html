@@ -504,9 +504,9 @@ legend{color:var(--muted);font-size:12px;padding:0 4px}
     <nav class="modes" aria-label="Modo">
       <button id="mFeat" aria-pressed="true">Features<span class="count" id="attCount"></span></button>
       <button id="mMrs" aria-pressed="false">MRs<span class="count" id="mrCount" style="color:var(--accent)"></span></button>
+      <button id="mDb" aria-pressed="false" title="Alt+3 · túneis cloud-sql-proxy dos aliases sql_* do zsh">Bancos<span class="count" id="dbCount" style="color:var(--ok)"></span></button>
       <button id="mVault" aria-pressed="false">Vault</button>
       <button id="mNews" aria-pressed="false" title="Alt+5">News<span class="count" id="newsCount" style="color:var(--cyan)"></span></button>
-      <button id="mDb" aria-pressed="false" title="Alt+6 · túneis cloud-sql-proxy dos aliases sql_* do zsh">Bancos<span class="count" id="dbCount" style="color:var(--ok)"></span></button>
     </nav>
     <button class="qbtn" id="qBtn" title="Fila de atenção (Ctrl+Shift+Espaço = próximo)">Fila <b id="qCount"></b></button>
     <span class="sp"></span>
@@ -2142,7 +2142,7 @@ const HINTS={
   vault:[['clique','abrir nota'],['[[link]]','navegar'],['◎ Grafo','visão geral'],['Hoje','daily'],['?','atalhos']],
   audit:[['Nova auditoria…','incremental ou completa'],['espaço','marcar achado'],['?','atalhos']],
   mr:[['C','comentar linha'],['?','perguntar sobre o bloco'],['S','lado a lado/unificado'],['⇧R','revisar com Claude'],['Ctrl+⏎','publicar'],['Ctrl+Z','desfazer descarte'],['Esc','voltar']],
-  db:[['Alt+6','Bancos'],['j k','navegar'],['Enter','liga/desliga'],['/','filtrar'],['Ctrl+Shift+D','ligar de qualquer tela']],
+  db:[['Alt+3','Bancos'],['j k','navegar'],['Enter','liga/desliga'],['/','filtrar'],['Ctrl+Shift+D','ligar de qualquer tela']],
   news:[['Alt+5','News'],['título','abrir'],['Não relevante','oculta só aqui'],['?','atalhos']],
 };
 function renderHints(){ $('#hints').innerHTML=HINTS[S.mode].map(([k,v])=>`<span><kbd>${k}</kbd> ${v}</span>`).join(''); }
@@ -2174,7 +2174,7 @@ const CMDS=[
   ['Trabalho: Fechar aba','Alt+W',()=>closeWork(WI)],
   ['Trabalho: Próxima aba','Alt+]',()=>goWork((WI+1)%WORKS.length)],
   ['Trabalho: Aba anterior','Alt+[',()=>goWork((WI-1+WORKS.length)%WORKS.length)],
-  ['Fila: Ver tudo que espera por você','',()=>openPal('att')],
+  ['Fila: Ver tudo que espera por você','Alt+6',()=>openPal('att')],
   ['Feature: Nova…','Alt+N',newFeatureDlg],
   ['Feature: Adicionar repo…','',()=>{ const f=feat(); if(f.kind==='ws'){ toast('Abra uma feature criada pelo Maestro para adicionar um repo'); return; } const have=(f.repos||[]).map(r=>r.name); const opts=['k8s-configmap','vault-roleset','pipeline','email-service'].filter(r=>!have.includes(r)).map((r,i)=>({label:r,pri:i===0,run:()=>{ f.repos=f.repos||[]; f.repos.push({name:r,files:0}); renderLeft(); toast(`${r} entrou na feature; /add-dir enviado ao Claude`); }})); choiceDlg(`Adicionar repo a ${f.branch}`,'A mesma branch vira uma worktree nesse repo e o Claude da feature passa a enxergar a pasta. Use quando descobrir que precisa mexer nele.',opts.concat([{label:'Cancelar'}])); }],
   ['Feature: Rodar testes afetados','',()=>{ S.mode='feat'; render(); runAffected(feat()); }],
@@ -2184,7 +2184,7 @@ const CMDS=[
   ['Vault: Nota do repo (bots-api)','',()=>openVault('repos/bots-api.md')],
   ['Vault: Daily de hoje','',()=>openVault(DKEY)],
   ['Vault: Atividade','',()=>openVault(null,'log')],
-  ['Ir para: Vault','',()=>openVault()],
+  ['Ir para: Vault','Alt+4',()=>openVault()],
   ['Ajuda: Rever tutorial desta tela','',()=>{ const id=tourId(); if(id) tour(id,true); }],
   ['Feature: Remover a atual…','',()=>removeFeatureDlg()],
   ['Feature: Ir para a que precisa de você','',()=>{ const f=FEATS.find(x=>x.st==='blocked')||FEATS.find(x=>x.unseen); f?selectFeat(f.id):toast('Nenhuma feature esperando você'); }],
@@ -2217,7 +2217,7 @@ const CMDS=[
   ['MR: Abrir bots-api !124','',()=>openMR(MRS[0])],
   ['Simular: notificação de MR (resposta à sua thread)','',()=>simNotify(true)],
   ['Ir para: News','Alt+5',openNews],
-  ['Ir para: Bancos','Alt+6',()=>setMode('db')],
+  ['Ir para: Bancos','Alt+3',()=>setMode('db')],
   ['News: Resumo do dia','',openBrief],
   ['News: Simular sem token / com token','',()=>{ S.newsToken=!S.newsToken; if(!S.newsToken) closeBrief(); render(); toast(S.newsToken?'Token do daily.dev encontrado':'Sem ~/.config/maestro/dailydev.token'); }],
   ['Simular: feature de fundo pede permissão','',()=>{ const f=FEATS.find(x=>x.id!==S.fid&&x.id!=='main'&&x.kind!=='ws'&&x.st!=='blocked'&&x.st!=='working')||FEATS.find(x=>x.id!==S.fid&&x.kind!=='ws'&&x.st!=='blocked'); if(!f){ toast('Todas as outras já estão esperando você'); return; } f.ask='npm run migrate'; f.tab=0; f.term.push({c:'dotw',t:'⏺ Preciso rodar a migration.'}); setSt(f,'blocked','pediu permissão: npm run migrate'); }],
@@ -2272,7 +2272,7 @@ function openHelp(){
       <tr><td>10</td><td><b>▶ Rodar tarefa…</b> na barra do terminal → <span class="mono">build</span>: os erros caem em Problemas.</td></tr>
       <tr><td>11</td><td><kbd>Ctrl+Shift+K</kbd> no terminal: descreva o comando; ele é digitado, nunca executado.</td></tr>
       <tr><td>12</td><td><kbd>Alt+5</kbd> abre News. Respostas a threads suas chegam como toast (e notificação do sistema com a janela fora de foco).</td></tr></table></div>
-    <div><h4>Atalhos desta tela</h4><table>${HINTS[S.mode].concat([['Ctrl+P','abrir arquivo'],['Ctrl+Shift+P','comandos'],['Alt+1…5','Features · MRs · Vault · Auditoria · News'],['Ctrl+Shift+←/→','terminal ↔ editor: na borda do último pane, o foco passa para o editor'],['Shift+Alt+←/→','selecionar por palavra no editor'],['Ctrl+Shift+K','comando por descrição']].filter(([k])=>!HINTS[S.mode].some(h=>h[0]===k))).map(([k,v])=>`<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table>
+    <div><h4>Atalhos desta tela</h4><table>${HINTS[S.mode].concat([['Ctrl+P','abrir arquivo'],['Ctrl+Shift+P','comandos'],['Alt+1…6','Features · MRs · Bancos · Vault · News · Fila'],['Ctrl+Shift+←/→','terminal ↔ editor: na borda do último pane, o foco passa para o editor'],['Shift+Alt+←/→','selecionar por palavra no editor'],['Ctrl+Shift+K','comando por descrição']].filter(([k])=>!HINTS[S.mode].some(h=>h[0]===k))).map(([k,v])=>`<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table>
       <p style="margin-top:8px"><b>Regra dos atalhos:</b> com o foco no terminal, Ctrl+tecla vai para o terminal (Ctrl+A herdr, Ctrl+C, Ctrl+L, Ctrl+R, Ctrl+E de readline). Ctrl+Shift+tecla é do Maestro, como no seu Ghostty, e os binds de split do seu ghostty/config viram ações do herdr.</p>
       <p style="margin-top:6px">Visual: fonte, paleta, padding, opacidade e cursor vêm do ghostty/config; o prompt vem do starship.toml; <span class="mono">ls</span>/<span class="mono">cat</span> seguem seus aliases eza/bat. No navegador, os ícones Nerd Font só aparecem porque a JetBrainsMono Nerd Font está instalada na sua máquina. Alt+N aqui é o Ctrl+Shift+N do app (o navegador reserva esse).</p></div></div>
     <h4>Heurísticas de Nielsen aplicadas</h4><table>${N.map(([a,b],i)=>`<tr><td>${i+1}. ${a}</td><td>${b}</td></tr>`).join('')}</table>
@@ -2316,7 +2316,7 @@ document.addEventListener('keydown',e=>{
   if(OV&&OV.type==='dlg'){ if(ctrl&&k==='Enter'){ e.preventDefault(); OV.ok(); } return; }
   if(OV) return;
   if(ctrl&&e.shiftKey&&e.altKey&&(k==='ArrowLeft'||k==='ArrowRight')&&e.target.id==='code'){ e.preventDefault(); wordSel(e.target,k==='ArrowRight'); return; }
-  if(e.altKey&&!ctrl&&/^Digit[1-6]$/.test(e.code)){ e.preventDefault(); [()=>setMode('feat'),()=>setMode('mrs'),()=>openVault(),()=>setMode('audit'),openNews,()=>setMode('db')][+e.code.slice(5)-1](); return; }
+  if(e.altKey&&!ctrl&&/^Digit[1-6]$/.test(e.code)){ e.preventDefault(); [()=>setMode('feat'),()=>setMode('mrs'),()=>setMode('db'),()=>openVault(),openNews,()=>openPal('att')][+e.code.slice(5)-1](); return; }
   if(!ctrl&&!e.altKey&&!e.shiftKey&&!inField&&e.key==='s'&&S.mode==='mr'){ e.preventDefault(); S.layout=S.layout==='split'?'unified':'split'; rerender(); return; }
   if(ctrl&&e.shiftKey){
     const c=e.code, f=feat(), act={

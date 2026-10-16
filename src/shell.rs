@@ -126,7 +126,7 @@ const AUDIT_HINTS: &[(&str, &str, bool)] = &[
 ];
 
 const DB_HINTS: &[(&str, &str, bool)] = &[
-    ("Alt+6", "Bancos", true),
+    ("Alt+3", "Bancos", true),
     ("j k", "navegar", true),
     ("Enter", "liga/desliga", true),
     ("/", "filtrar", true),
@@ -453,10 +453,10 @@ impl Shell {
                 "[" => Cmd::NextWork(-1),
                 "1" => Cmd::Features,
                 "2" => Cmd::Mrs,
-                "3" => Cmd::Vault(crate::palette_cmd::VaultGo::Open),
-                "4" => Cmd::Audit(false),
+                "3" => Cmd::Db,
+                "4" => Cmd::Vault(crate::palette_cmd::VaultGo::Open),
                 "5" => Cmd::News,
-                "6" => Cmd::Db,
+                "6" => Cmd::AttentionMenu,
                 _ => return,
             };
             cx.stop_propagation();
@@ -2426,6 +2426,32 @@ impl Shell {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Mrs, w, cx))),
                     )
+                    .child({
+                        let n = self.tunnels.read(cx).up();
+                        div()
+                            .id("m-db")
+                            .flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .px(px(10.))
+                            .py(px(3.))
+                            .rounded(px(5.))
+                            .text_color(if self.in_db { t.fg } else { t.muted })
+                            .when(self.in_db, |d| d.bg(t.raise))
+                            .child("Bancos")
+                            .when(n > 0, |d| {
+                                d.child(
+                                    div()
+                                        .font_family(t.mono.clone())
+                                        .text_size(px(12.))
+                                        .text_color(t.ok)
+                                        .child(n.to_string()),
+                                )
+                            })
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Db, w, cx)))
+                    })
                     .child(
                         mode("Vault", self.in_vault, None)
                             .id("m-vault")
@@ -2462,32 +2488,6 @@ impl Shell {
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::News, w, cx)))
-                    })
-                    .child({
-                        let n = self.tunnels.read(cx).up();
-                        div()
-                            .id("m-db")
-                            .flex()
-                            .gap(px(6.))
-                            .items_center()
-                            .px(px(10.))
-                            .py(px(3.))
-                            .rounded(px(5.))
-                            .text_color(if self.in_db { t.fg } else { t.muted })
-                            .when(self.in_db, |d| d.bg(t.raise))
-                            .child("Bancos")
-                            .when(n > 0, |d| {
-                                d.child(
-                                    div()
-                                        .font_family(t.mono.clone())
-                                        .text_size(px(12.))
-                                        .text_color(t.ok)
-                                        .child(n.to_string()),
-                                )
-                            })
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Db, w, cx)))
                     }),
             )
             .child(
@@ -2872,7 +2872,7 @@ impl Shell {
             [
                 ("Ctrl+Shift+O", "abrir arquivo", true),
                 ("Ctrl+Shift+F", "árvore de arquivos", true),
-                ("Alt+1…5", "Features, MRs, Vault, Auditoria, News", true),
+                ("Alt+1…6", "Features, MRs, Bancos, Vault, News, Fila", true),
                 ("Ctrl+Shift+P", "comandos", true),
                 ("Ctrl+Shift+K", "comando por descrição", true),
             ]
