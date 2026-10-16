@@ -243,6 +243,18 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 
 ---
 
+## README
+
+- [x] ambiente demo isolado (repos `loja-api`/`infra-config`, vault, MR fictício via glab falso, News por fixture)
+- [x] print hero
+- [x] GIFs das principais: features e terminal; revisão da feature; editor com LSP; MRs
+- [x] prints das demais: Perguntar ao Claude e Ctrl+Shift+K; tarefas e Problemas; pilha e repo extra; vault; auditoria; News
+- [x] README em PT-BR: o porquê, funcionalidades, instalação, configuração, atalhos, arquitetura, desenvolvimento
+- [x] varredura: nenhuma menção à empresa no texto nem nos frames; sem token; mídia ≤ 25 MB
+- [x] commit, push, CI verde, ambiente demo apagado (CI conferido após o push)
+
+---
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
