@@ -27,6 +27,8 @@ pub enum Redo {
     Vault(crate::vault::Write),
     /// "Não é problema" na auditoria: desfazer tira do `audit-ignore.json`
     Audit(crate::audit::Ignored),
+    /// descarte de rascunho no MR alheio
+    MrDraft,
 }
 
 pub enum Event {

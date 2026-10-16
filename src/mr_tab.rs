@@ -381,8 +381,13 @@ impl MrTab {
                                 let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
                             })),
                     )
-                    // ponytail: "Histórico do vault atualizado" chega com o vault (Etapa 7)
-                    .when(m.merged, |d| d.child(div().text_color(t.ok).child("Mergeado.")))
+                    .when(m.merged, |d| {
+                        d.child(
+                            div()
+                                .text_color(t.ok)
+                                .child("Mergeado. Histórico do vault atualizado."),
+                        )
+                    })
                     .when(m.closed, |d| d.child(div().text_color(t.muted).child("Fechado sem merge."))),
             )
             .child(

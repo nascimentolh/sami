@@ -45,6 +45,8 @@ pub enum Cmd {
     Go(crate::sidebar::Go),
     /// o modo Auditoria; `true` já abre a "Nova auditoria…"
     Audit(bool),
+    Help,
+    Home,
 }
 
 #[derive(Clone)]
@@ -119,7 +121,7 @@ pub fn commands() -> Vec<Item> {
             "Ctrl+Shift+Z",
             Some(Herdr("zoom")),
         ),
-        c("Terminal: Abrir terminal da home", "", None),
+        c("Terminal: Abrir terminal da home", "", Some(Home)),
         c("Claude: Interromper", "Esc / Ctrl+C", Some(Interrupt)),
         c("Arquivo: Abrir…", "Ctrl+Shift+O", Some(OpenFileMenu)),
         c("Arquivo: Salvar", "Ctrl+S", Some(Save)),
@@ -137,7 +139,7 @@ pub fn commands() -> Vec<Item> {
         c("Ir para: Features", "", Some(Features)),
         c("Ir para: MRs", "", Some(Mrs)),
         c("MR: Revisar com Claude", "⇧R", Some(MrReview)),
-        c("Ajuda: Atalhos e decisões de UX", "?", None),
+        c("Ajuda: Atalhos e decisões de UX", "?", Some(Help)),
     ]
 }
 

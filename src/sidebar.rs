@@ -490,7 +490,7 @@ impl Sidebar {
         std::thread::spawn(move || h.new_tab(&workspace_id));
     }
 
-    fn focus_workspace(&self, id: String) {
+    pub fn focus_workspace(&self, id: String) {
         let h = self.herdr.clone();
         std::thread::spawn(move || h.focus_workspace(&id));
     }

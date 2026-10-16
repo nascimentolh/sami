@@ -16,6 +16,8 @@ pub struct Attempt {
 pub enum Event {
     Close,
     Keep(usize),
+    /// "Ver diff": a feature da tentativa com o painel Revisar aberto
+    Diff(usize),
 }
 
 pub struct Compare {
@@ -68,62 +70,59 @@ impl Render for Compare {
                 .model
                 .clone()
                 .unwrap_or_else(|| "padrão do claude".into());
-            cols = cols.child(
-                div()
-                    .flex_1()
-                    .min_w(px(200.))
-                    .p(px(10.))
-                    .border_1()
-                    .border_color(t.line)
-                    .rounded(px(6.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .font_family(t.mono.clone())
-                            .text_size(px(12.5))
-                            .font_weight(FontWeight::BOLD)
-                            .child(a.inv.branch.clone()),
-                    )
-                    .child(row("modelo", div().child(model)))
-                    .child(row(
-                        "estado",
-                        div().text_color(a.state.1).child(a.state.0.clone()),
-                    ))
-                    .child(row(
-                        "arquivos",
-                        div().child(format!("{} · +{} −{}", a.files, a.added, a.removed)),
-                    ))
-                    // ponytail: testes por tentativa chegam com os "testes afetados" da Etapa 4
-                    .child(row("testes", div().child("—")))
-                    .child(row(
-                        "custo",
-                        div().child(a.cost.map_or("—".into(), |c| format!("US$ {}", brl(c)))),
-                    ))
-                    .child(
-                        div()
-                            .mt(px(6.))
-                            .flex()
-                            .gap(px(6.))
-                            // ponytail: "Ver diff" abre a revisão da Etapa 4
-                            .child(div().opacity(0.45).child(button(
-                                &t,
-                                ("cv", i),
-                                "Ver diff",
-                                false,
-                            )))
-                            .child(
-                                button(&t, ("keep", i), "Ficar com esta", true)
-                                    .when(!a.done, |d| d.opacity(0.45))
-                                    .when(a.done, |d| {
-                                        d.on_click(
-                                            cx.listener(move |_, _, _, cx| cx.emit(Event::Keep(i))),
-                                        )
-                                    }),
-                            ),
-                    ),
-            );
+            cols =
+                cols.child(
+                    div()
+                        .flex_1()
+                        .min_w(px(200.))
+                        .p(px(10.))
+                        .border_1()
+                        .border_color(t.line)
+                        .rounded(px(6.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .font_family(t.mono.clone())
+                                .text_size(px(12.5))
+                                .font_weight(FontWeight::BOLD)
+                                .child(a.inv.branch.clone()),
+                        )
+                        .child(row("modelo", div().child(model)))
+                        .child(row(
+                            "estado",
+                            div().text_color(a.state.1).child(a.state.0.clone()),
+                        ))
+                        .child(row(
+                            "arquivos",
+                            div().child(format!("{} · +{} −{}", a.files, a.added, a.removed)),
+                        ))
+                        // ponytail: testes por tentativa chegam com os "testes afetados" da Etapa 4
+                        .child(row("testes", div().child("—")))
+                        .child(row(
+                            "custo",
+                            div().child(a.cost.map_or("—".into(), |c| format!("US$ {}", brl(c)))),
+                        ))
+                        .child(
+                            div()
+                                .mt(px(6.))
+                                .flex()
+                                .gap(px(6.))
+                                .child(button(&t, ("cv", i), "Ver diff", false).on_click(
+                                    cx.listener(move |_, _, _, cx| cx.emit(Event::Diff(i))),
+                                ))
+                                .child(
+                                    button(&t, ("keep", i), "Ficar com esta", true)
+                                        .when(!a.done, |d| d.opacity(0.45))
+                                        .when(a.done, |d| {
+                                            d.on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.emit(Event::Keep(i))
+                                            }))
+                                        }),
+                                ),
+                        ),
+                );
         }
         div()
             .track_focus(&self.focus)

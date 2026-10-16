@@ -9,6 +9,7 @@ use crate::{
     compare::{self, Attempt, Compare},
     confirm::{self, Answer, Choice, Chose, Confirm},
     feature,
+    form::button,
     herdr::{self, Status},
     keys,
     mascot::{self, Note},
@@ -61,6 +62,8 @@ pub struct Shell {
     want_audit: bool,
     want_create: Option<(String, String)>,
     want_fix: Option<(String, String, String, String)>,
+    /// o `openHelp` do protótipo
+    help: bool,
     want_publish: Option<(String, String)>,
     mascot: Option<(Note, usize, bool)>,
     mascot_seq: usize,
@@ -83,7 +86,7 @@ const MR_HINTS: &[(&str, &str, bool)] = &[
     ("C", "comentar linha", true),
     ("⇧R", "revisar com Claude", true),
     ("Ctrl+⏎", "publicar", true),
-    ("Ctrl+Z", "desfazer descarte", false),
+    ("Ctrl+Z", "desfazer descarte", true),
     ("Esc", "voltar", true),
 ];
 
@@ -92,7 +95,7 @@ const MR_HINTS: &[(&str, &str, bool)] = &[
 const AUDIT_HINTS: &[(&str, &str, bool)] = &[
     ("Nova auditoria…", "incremental ou completa", true),
     ("espaço", "marcar achado", true),
-    ("?", "atalhos", false),
+    ("?", "atalhos", true),
 ];
 
 const VAULT_HINTS: &[(&str, &str, bool)] = &[
@@ -100,7 +103,61 @@ const VAULT_HINTS: &[(&str, &str, bool)] = &[
     ("[[link]]", "navegar", true),
     ("◎ Grafo", "visão geral", true),
     ("Hoje", "daily", true),
-    ("?", "atalhos", false),
+    ("?", "atalhos", true),
+];
+
+/// Os passos do "Experimente" da ajuda, com o app de verdade.
+const HELP_STEPS: &[&str] = &[
+    "Alt+N cria uma feature: worktree, .env copiado, setup do repo e o Claude com o seu prompt.",
+    "Quando um Claude pede permissão ou termina, o mascote aparece; clique nele para ir ao pane.",
+    "Ctrl+Shift+E abre as mudanças da feature: comente linhas e clique em Enviar ao Claude.",
+    "Ctrl+Shift+Espaço leva ao próximo da fila de atenção; Fila lista tudo.",
+    "Ctrl+Shift+\\ divide claude | zsh lado a lado; Ctrl+A c abre outra aba.",
+    "Em Terminais ficam os workspaces sem Claude; ~ é o terminal da home.",
+];
+
+/// As heurísticas do `openHelp` do protótipo.
+const NIELSEN: &[(&str, &str)] = &[
+    (
+        "Status visível",
+        "Cada feature mostra o estado do agente (precisa de você, trabalhando, pronto, parado); a barra de status conta quantos esperam por você.",
+    ),
+    (
+        "Linguagem do mundo real",
+        "“Feature” em vez de “worktree”; termos do GitLab nos MRs.",
+    ),
+    (
+        "Controle e liberdade",
+        "Esc interrompe o Claude; comentários se descartam e se desfazem; nada vai ao Claude ou ao GitLab sem o seu clique.",
+    ),
+    (
+        "Consistência",
+        "Terminal com o mesmo visual e os mesmos atalhos do seu Ghostty; o mesmo diff para revisar o Claude e MRs; nenhum atalho do Maestro rouba Ctrl+tecla do shell.",
+    ),
+    (
+        "Prevenção de erros",
+        "Remover feature avisa sobre arquivos não commitados; nome de branch repetido é barrado no formulário.",
+    ),
+    (
+        "Reconhecer, não lembrar",
+        "A lateral substitui decorar qual aba do herdr é qual feature; a paleta acha feature pelo nome.",
+    ),
+    (
+        "Eficiência",
+        "Ctrl+Shift+1…9 troca de feature, Ctrl+Shift+L manda a seleção, os binds de split do seu Ghostty funcionam igual, Alt+N cria worktree com .env e npm ci prontos.",
+    ),
+    (
+        "Minimalismo",
+        "O terminal ocupa o centro; o editor só aparece quando você pede para revisar.",
+    ),
+    (
+        "Recuperação de erros",
+        "Erros do formulário dizem o que fazer; comentário que falhou no GitLab mostra o motivo e uma saída.",
+    ),
+    (
+        "Ajuda",
+        "Esta tela; dicas da faixa inferior mudam por modo.",
+    ),
 ];
 
 /// Dicas do modo Features do protótipo; `false` = ainda não existe e aparece apagada.
@@ -114,7 +171,7 @@ const HINTS: &[(&str, &str, bool)] = &[
     ("Ctrl+A", "herdr", true),
     ("Ctrl+Shift+L", "seleção → Claude", true),
     ("Alt+N", "nova feature", true),
-    ("?", "atalhos", false),
+    ("?", "atalhos", true),
 ];
 
 impl Shell {
@@ -245,6 +302,7 @@ impl Shell {
             want_audit: false,
             want_create: None,
             want_fix: None,
+            help: false,
             want_publish: None,
             mascot: None,
             mascot_seq: 0,
@@ -275,6 +333,19 @@ impl Shell {
         }
         if m.control && m.shift && !m.alt && k.key == "space" {
             return self.run(Cmd::NextAttention, window, cx);
+        }
+        // `?` só fora do terminal e dos campos de texto: no shell ele é só um caractere
+        let views = [
+            self.mrs.as_ref().map(|v| v.read(cx).focus_handle()),
+            self.vault.as_ref().map(|v| v.read(cx).focus_handle()),
+            self.audit.as_ref().map(|v| v.read(cx).focus_handle()),
+        ];
+        if (k.key == "?" || k.key_char.as_deref() == Some("?"))
+            && views.iter().flatten().any(|f| f.is_focused(window))
+        {
+            self.help = true;
+            cx.stop_propagation();
+            return cx.notify();
         }
         let Some(sidebar) = &self.sidebar else { return };
         let s = sidebar.read(cx);
@@ -550,6 +621,15 @@ impl Shell {
             move |this, _, e: &compare::Event, window, cx| {
                 this.compare = None;
                 window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                if let compare::Event::Diff(i) = e {
+                    let inv = &invs[*i];
+                    if let (Some(s), Some(ws)) = (&this.sidebar, inv.workspace_id.clone()) {
+                        s.read(cx).focus_workspace(ws);
+                    }
+                    if let Some(w) = inv.worktrees.first() {
+                        this.open_review_at(w.path.clone(), None, window, cx);
+                    }
+                }
                 if let compare::Event::Keep(i) = e {
                     let keep = invs[*i].clone();
                     let rest: Vec<_> = invs.iter().filter(|x| x.id != keep.id).cloned().collect();
@@ -727,6 +807,7 @@ impl Shell {
         let m = cx.new(|cx| MrsView::new(self.theme.clone(), self.anchors.clone(), cx));
         cx.subscribe_in(&m, window, |this, _, e: &mrs_view::Event, _, cx| match e {
             mrs_view::Event::Toast(t) => this.toast(t.clone(), cx),
+            mrs_view::Event::Discarded(t) => this.toast_undo(t.clone(), Some(Redo::MrDraft), cx),
             mrs_view::Event::AskPublish(a, b) => {
                 this.want_publish = Some((a.clone(), b.clone()));
                 cx.notify();
@@ -1164,9 +1245,37 @@ impl Shell {
                 cx,
             ),
             Cmd::Feature(p) => focus(Some(p), cx),
+            Cmd::Help => self.help = true,
+            Cmd::Home => {
+                let Some(s) = &self.sidebar else { return };
+                let s = s.read(cx);
+                if let Some(w) = s.workspaces.iter().find(|w| w.label == "~") {
+                    s.focus_workspace(w.workspace_id.clone());
+                } else {
+                    let herdr = s.herdr();
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    std::thread::spawn(move || {
+                        herdr.call(
+                            "workspace.create",
+                            serde_json::json!({ "cwd": home, "label": "~", "focus": true }),
+                        )
+                    });
+                }
+                self.in_vault = false;
+                self.in_mrs = false;
+                self.in_audit = false;
+                window.focus(&self.terminal.read(cx).focus_handle(), cx);
+            }
             Cmd::Tutorial => {
                 let on_mr = self.review.as_ref().is_some_and(|r| r.read(cx).on_mr());
-                self.tour = Some(if on_mr {
+                let mrs_open = self.in_mrs;
+                self.tour = Some(if self.in_audit {
+                    (tour::AUDIT, "audit", 0)
+                } else if self.in_vault {
+                    (tour::VAULT, "vault", 0)
+                } else if mrs_open {
+                    (tour::MRS, "mrs", 0)
+                } else if on_mr {
                     (tour::MRTAB, "mrtab", 0)
                 } else if self.review.is_some() {
                     (tour::REVIEW, "review", 0)
@@ -1572,7 +1681,17 @@ impl Shell {
                             .child(self.kbd("Ctrl+Shift+P"))
                             .child("comandos"),
                     )
-                    .child(div().opacity(0.45).child(self.kbd("?"))),
+                    .child(
+                        div()
+                            .id("help-btn")
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.help = true;
+                                cx.notify();
+                            }))
+                            .child(self.kbd("?")),
+                    ),
             )
     }
 
@@ -1678,6 +1797,129 @@ impl Shell {
         }
     }
 
+    /// As dicas da tela atual (o `HINTS[S.mode]` do protótipo).
+    fn screen_hints(&self, cx: &App) -> &'static [(&'static str, &'static str, bool)] {
+        let mr_open = self.mrs.as_ref().is_some_and(|m| m.read(cx).in_mr());
+        if self.in_audit {
+            AUDIT_HINTS
+        } else if self.in_vault {
+            VAULT_HINTS
+        } else if self.in_mrs && mr_open {
+            MR_HINTS
+        } else if self.in_mrs {
+            MRS_HINTS
+        } else {
+            HINTS
+        }
+    }
+
+    /// O `openHelp` do protótipo. "Experimente" traz os passos do app, não os dados de exemplo do protótipo.
+    fn help_overlay(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let t = self.theme.clone();
+        let h4 = |s: &str| {
+            div()
+                .text_size(px(11.))
+                .text_color(t.muted)
+                .font_weight(FontWeight::MEDIUM)
+                .child(s.to_uppercase())
+        };
+        let row = |w: f32, a: Div, b: Div| {
+            div()
+                .flex()
+                .gap(px(16.))
+                .py(px(4.))
+                .border_b_1()
+                .border_color(t.line)
+                .child(a.w(px(w)).flex_none().whitespace_nowrap())
+                .child(b.flex_1().min_w_0())
+        };
+        let mut steps = div().flex().flex_col().text_size(px(12.5));
+        for (i, s) in HELP_STEPS.iter().enumerate() {
+            steps = steps.child(row(10., div().child((i + 1).to_string()), div().child(*s)));
+        }
+        let mut keys = div().flex().flex_col().text_size(px(12.5));
+        for (k, v, _) in self.screen_hints(cx).iter().chain(
+            [
+                ("Ctrl+Shift+O", "abrir arquivo", true),
+                ("Ctrl+Shift+P", "comandos", true),
+            ]
+            .iter(),
+        ) {
+            keys = keys.child(row(130., div().flex().child(self.kbd(k)), div().child(*v)));
+        }
+        let mut nielsen = div().flex().flex_col().text_size(px(12.5));
+        for (i, (a, b)) in NIELSEN.iter().enumerate() {
+            nielsen = nielsen.child(row(
+                170.,
+                div().child(format!("{}. {a}", i + 1)),
+                div().child(*b),
+            ));
+        }
+        let p = |s: &str| {
+            div()
+                .text_color(t.muted)
+                .text_size(px(12.5))
+                .child(s.to_string())
+        };
+        div()
+            .id("help")
+            .w(px(780.))
+            .max_w_full()
+            .max_h(relative(0.9))
+            .overflow_y_scroll()
+            .bg(t.raise)
+            .border_1()
+            .border_color(t.line)
+            .rounded(px(8.))
+            .px(px(20.))
+            .py(px(18.))
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Ajuda"))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(18.))
+                    .child(div().flex_1().min_w(px(260.)).flex().flex_col().gap(px(6.)).child(h4("Experimente")).child(steps))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(260.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(h4("Atalhos desta tela"))
+                            .child(keys)
+                            .child(p("Regra dos atalhos: com o foco no terminal, Ctrl+tecla vai para o terminal (Ctrl+A herdr, Ctrl+C, Ctrl+L, Ctrl+R, Ctrl+E de readline). Ctrl+Shift+tecla é do Maestro, como no seu Ghostty, e os binds de split do seu ghostty/config viram ações do herdr."))
+                            .child(p("Visual: fonte, paleta, padding, opacidade e cursor vêm do ghostty/config; o prompt vem do starship.toml; ls/cat seguem seus aliases eza/bat.")),
+                    ),
+            )
+            .child(h4("Heurísticas de Nielsen aplicadas"))
+            .child(nielsen)
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .justify_end()
+                    .child(button(&t, "hT", "Rever tutorial desta tela", false).on_click(
+                        cx.listener(|this, _, w, cx| {
+                            this.help = false;
+                            this.run(Cmd::Tutorial, w, cx);
+                        }),
+                    ))
+                    .child(
+                        button(&t, "hC", "Fechar", false)
+                            .child(self.kbd("Esc"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.help = false;
+                                cx.notify();
+                            })),
+                    ),
+            )
+    }
+
     fn hints(&self, cx: &App) -> Div {
         let t = &self.theme;
         let mut bar = div()
@@ -1694,19 +1936,7 @@ impl Shell {
             .border_color(t.line)
             .overflow_hidden()
             .whitespace_nowrap();
-        let mr_open = self.mrs.as_ref().is_some_and(|m| m.read(cx).in_mr());
-        let hints = if self.in_audit {
-            AUDIT_HINTS
-        } else if self.in_vault {
-            VAULT_HINTS
-        } else if self.in_mrs && mr_open {
-            MR_HINTS
-        } else if self.in_mrs {
-            MRS_HINTS
-        } else {
-            HINTS
-        };
-        for (k, label, ready) in hints {
+        for (k, label, ready) in self.screen_hints(cx) {
             bar = bar.child(
                 div()
                     .flex()
@@ -2010,7 +2240,10 @@ impl Render for Shell {
                         .review
                         .as_ref()
                         .is_some_and(|r| r.read(cx).editing_open());
-                if this.tour.is_some() {
+                if this.help {
+                    this.help = false;
+                    cx.notify();
+                } else if this.tour.is_some() {
                     this.end_tour(cx);
                 } else if !overlay && this.mascot.as_ref().is_some_and(|m| !m.2) {
                     this.dismiss_mascot(cx);
@@ -2079,6 +2312,30 @@ impl Render for Shell {
             .child(self.hints(cx))
             .child(self.status(cx))
             .children(overlay)
+            .when(self.help, |d| {
+                d.child(
+                    div()
+                        .id("help-scrim")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .flex()
+                        .justify_center()
+                        .items_center()
+                        .px(px(16.))
+                        .bg(rgba(0x0a0a1080))
+                        .occlude()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.help = false;
+                            cx.notify();
+                        }))
+                        .child(
+                            self.help_overlay(cx)
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
+                        ),
+                )
+            })
             .children(self.compare.clone().map(|d| {
                 div()
                     .absolute()
@@ -2195,6 +2452,12 @@ impl Render for Shell {
                                         }
                                         Redo::Restore(root, sha) => feature::restore(root, sha),
                                         Redo::Vault(w) => crate::vault::undo(w),
+                                        Redo::MrDraft => {
+                                            if let Some(m) = &this.mrs {
+                                                m.update(cx, |m, cx| m.undo(cx));
+                                            }
+                                            Ok(())
+                                        }
                                         Redo::Audit(ig) => {
                                             if let Some(a) = &this.audit {
                                                 a.update(cx, |a, cx| a.unignore(ig, cx));

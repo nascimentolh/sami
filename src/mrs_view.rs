@@ -18,6 +18,8 @@ pub enum Event {
     Toast(String),
     /// confirmação antes de publicar: (título, texto)
     AskPublish(String, String),
+    /// descarte com "Desfazer" no toast
+    Discarded(String),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -58,6 +60,8 @@ pub struct MrsView {
     selected: Option<(String, u32)>,
     editing: Option<(usize, Entity<TextField>)>,
     drawer: Option<Drawer>,
+    /// o `S.undo` do protótipo: (MR, [(posição, rascunho)]) por descarte
+    undo: Vec<(String, Vec<(usize, Draft)>)>,
     posting: bool,
     scroll: ScrollHandle,
     focus: FocusHandle,
@@ -111,6 +115,7 @@ impl MrsView {
             selected: None,
             editing: None,
             drawer: None,
+            undo: Vec::new(),
             posting: false,
             scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
@@ -407,13 +412,53 @@ impl MrsView {
         .detach();
     }
 
+    fn discard(&mut self, id: usize, cx: &mut Context<Self>) {
+        let Some((row, _)) = &self.open else { return };
+        let key = row.key();
+        let Some(v) = self.mr_drafts() else { return };
+        let Some(i) = v.iter().position(|d| d.id == id) else {
+            return;
+        };
+        let d = v.remove(i);
+        self.undo.push((key, vec![(i, d)]));
+        cx.emit(Event::Discarded("Comentário descartado".into()));
+        cx.notify();
+    }
+
+    /// O `undo()` do protótipo: devolve o último descarte no lugar.
+    pub fn undo(&mut self, cx: &mut Context<Self>) {
+        let Some((key, mut g)) = self.undo.pop() else {
+            cx.emit(Event::Toast("Nada para desfazer".into()));
+            return;
+        };
+        g.sort_by_key(|x| x.0);
+        let v = self.drafts.entry(key).or_default();
+        for (i, mut d) in g {
+            // a draft note remota já foi apagada: volta como rascunho local
+            d.gitlab_id = None;
+            v.insert(i.min(v.len()), d);
+        }
+        cx.emit(Event::Toast("Desfeito".into()));
+        cx.notify();
+    }
+
     fn discard_all(&mut self, cx: &mut Context<Self>) {
         let Some((row, _)) = &self.open else { return };
-        let (path, iid) = (row.path.clone(), row.iid);
+        let (path, iid, key) = (row.path.clone(), row.iid, row.key());
         let ids: Vec<u64> = self.pending().iter().filter_map(|d| d.gitlab_id).collect();
-        if let Some(v) = self.mr_drafts() {
-            v.clear();
+        let gone: Vec<(usize, Draft)> = self
+            .mr_drafts()
+            .map(|v| v.drain(..).enumerate().collect())
+            .unwrap_or_default();
+        if gone.is_empty() {
+            return;
         }
+        let n = gone.len();
+        self.undo.push((key, gone));
+        cx.emit(Event::Discarded(format!(
+            "{n} descartado{}",
+            if n > 1 { "s" } else { "" }
+        )));
         // o que já tinha ido como draft note sai do GitLab também
         std::thread::spawn(move || mrs::discard_remote(&path, iid, &ids));
         cx.notify();
@@ -599,6 +644,7 @@ impl MrsView {
         match (k.key.as_str(), &self.open) {
             _ if shift_r => self.start_review(cx),
             ("enter", Some(_)) if k.modifiers.control => self.ask_publish(cx),
+            ("z", Some(_)) if k.modifiers.control && !k.modifiers.shift => self.undo(cx),
             ("c", Some(_)) if !k.modifiers.modified() => self.new_draft(window, cx),
             ("escape", Some(_)) => self.back(cx),
             ("j" | "down", None) => {
@@ -990,13 +1036,7 @@ impl MrsView {
                         .child(
                             button(&t, ("del", id), "Descartar", false)
                                 .text_color(red())
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(v) = this.mr_drafts() {
-                                        v.retain(|d| d.id != id);
-                                    }
-                                    cx.emit(Event::Toast("Comentário descartado".into()));
-                                    cx.notify();
-                                })),
+                                .on_click(cx.listener(move |this, _, _, cx| this.discard(id, cx))),
                         )
                     }),
             )
