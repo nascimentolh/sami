@@ -36,13 +36,13 @@ Preto e branco, no espírito do Zed. Nenhuma cor de marca.
 Em temas escuros da IDE use a versão branca; o branco pesa mais que o preto, então prefira o tamanho um degrau menor.
 
 ## 5. Tipografia
-O wordmark `maestro` é desenhado à mão (monoline, pontas arredondadas, mesmo vocabulário do M). Não é uma fonte: nunca o redigite.
-Para textos ao redor (site, docs, splash), Inter combina bem.
+O wordmark `maestro` é **IBM Plex Sans SemiBold** convertida em contornos: a mesma família da interface do app (`assets/fonts`). Licença OFL. Nunca redigite o wordmark; use os arquivos.
+Para textos ao redor (site, docs), use IBM Plex Sans.
 
 ## 6. Não faça
 Não estique nem achate · não gire · não mude o ângulo da batuta · não separe a batuta do M · não adicione sombra, contorno, gradiente ou brilho · não reorganize nem redimensione as partes de um lockup · não use sobre fundos poluídos sem o tile.
 
 ## 7. Notas de entrega
 - Testado: 16/32/48 px, uma cor, invertido, ícone em tile e mockups (README, terminal, site, app, sticker, social).
-- Os mestres usam `stroke` (traço) no M e no wordmark; para gráfica ou corte, expanda os traços em contornos (Inkscape: *Caminho → Traço para caminho*).
+- O símbolo usa `stroke` (traço) no M; para gráfica ou corte, expanda os traços em contornos (Inkscape: *Caminho → Traço para caminho*).
 - Não há garantia de anterioridade de marca: faça uma busca no INPI antes de registrar.
