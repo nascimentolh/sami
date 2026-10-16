@@ -148,7 +148,12 @@ fn glab(root: &Path, endpoint: &str) -> Result<Value, Fetch> {
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(
-            if err.contains("401") || err.contains("auth login") || err.contains("authenticat") {
+            // sem token, o GitLab responde 404 (não 401) para projeto privado
+            if err.contains("401")
+                || err.contains("auth login")
+                || err.contains("authenticat")
+                || (err.contains("404") && !logged_in())
+            {
                 Fetch::NoAuth
             } else {
                 Fetch::Err(err.lines().next().unwrap_or("glab falhou").into())
@@ -156,6 +161,13 @@ fn glab(root: &Path, endpoint: &str) -> Result<Value, Fetch> {
         );
     }
     serde_json::from_slice(&out.stdout).map_err(|e| Fetch::Err(e.to_string()))
+}
+
+fn logged_in() -> bool {
+    Command::new("glab")
+        .args(["api", "user"])
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
 /// "Mover p/ main" da pilha: o alvo do MR muda no GitLab (só depois da confirmação, pelo `mrs::write`).
