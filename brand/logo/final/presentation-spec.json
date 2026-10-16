@@ -1,0 +1,34 @@
+{
+  "brand": "Maestro",
+  "tagline": "Você rege. A IDE executa.",
+  "brief": "Uma IDE AI-first escrita em Rust sobre o GPUI do Zed: rápida, simples e feita para automatizar as tarefas do dia a dia de desenvolvimento.",
+  "adjectives": ["rápida", "simples", "no comando", "precisa"],
+  "criteria": "Sucesso: fugir dos clichês de IA e dev tools (</>, >_, brilhos, robôs), ser reconhecível em 16 px, funcionar em uma cor e conversar com o minimalismo do Zed.",
+  "industry": "software",
+  "nav": ["Recursos", "Docs", "Download"],
+  "brand_color": "#000000",
+  "greyscale": true,
+  "designer": "Rafael Maestro",
+  "round": 3,
+  "concepts": [
+    {
+      "name": "M batuta",
+      "symbol": "maestro-symbol.svg",
+      "lockup": "maestro-horizontal.svg",
+      "idea": "A perna direita do M é a batuta do maestro: você rege, a IDE executa.",
+      "rationale": [
+        "Monograma liga a marca direto ao nome",
+        "Cabo em gota + haste fina: lê como batuta, não como lápis",
+        "Gesto ascendente sugere velocidade e um ✓ de tarefa feita",
+        "Preto e branco, no espírito minimalista do Zed",
+        "Wordmark monoline próprio, desenhado com as mesmas pontas arredondadas do M"
+      ]
+    }
+  ],
+  "recommendation": "M batuta: a única ideia que junta o nome, o papel do usuário (reger) e a automação num só gesto.",
+  "next_steps": [
+    "Usar o ícone no app (dock/splash) e o favicon nas docs",
+    "Busca de anterioridade de marca antes de registrar",
+    "Opcional: animação da batuta (downbeat) para o splash"
+  ]
+}
