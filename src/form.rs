@@ -47,6 +47,11 @@ impl TextField {
         self.focus.clone()
     }
 
+    pub fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
+        self.placeholder = placeholder;
+        cx.notify();
+    }
+
     pub fn set(&mut self, value: String, cx: &mut Context<Self>) {
         self.value = value;
         cx.emit(FieldEvent::Changed);

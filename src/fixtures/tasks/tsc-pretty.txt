@@ -1,0 +1,13 @@
+[96msrc/a.ts[0m:[93m4[0m:[93m7[0m - [91merror[0m[90m TS2322: [0mType 'number' is not assignable to type 'string'.
+
+[7m4[0m const n: string = soma(1, 2)
+[7m [0m [91m      ~[0m
+
+[96msrc/a.ts[0m:[93m5[0m:[93m15[0m - [91merror[0m[90m TS2339: [0mProperty 'foo' does not exist on type 'string'.
+
+[7m5[0m console.log(n.foo)
+[7m [0m [91m              ~~~[0m
+
+
+Found 2 errors in the same file, starting at: src/a.ts[90m:4[0m
+

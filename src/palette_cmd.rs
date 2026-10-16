@@ -49,6 +49,12 @@ pub enum Cmd {
     Home,
     /// a árvore do projeto na lateral e o editor, se houver arquivo aberto
     Files,
+    /// "▶ Rodar tarefa…": as tarefas da worktree em foco
+    TaskMenu,
+    /// (nome, comando) de uma tarefa do repo
+    Task(String, String),
+    Problems,
+    Kcmd,
 }
 
 #[derive(Clone)]
@@ -143,6 +149,13 @@ pub fn commands() -> Vec<Item> {
         c("Arquivos: Árvore do projeto", "Ctrl+Shift+F", Some(Files)),
         c("MR: Revisar com Claude", "⇧R", Some(MrReview)),
         c("Ajuda: Atalhos e decisões de UX", "?", Some(Help)),
+        c("Terminal: Rodar tarefa…", "", Some(TaskMenu)),
+        c("Editor: Problemas", "", Some(Problems)),
+        c(
+            "Terminal: Comando por descrição",
+            "Ctrl+Shift+K",
+            Some(Kcmd),
+        ),
     ]
 }
 

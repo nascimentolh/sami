@@ -1,0 +1,5 @@
+--- FAIL: TestSoma (0.00s)
+    soma_test.go:7: Soma(1, 1) = 2, want 3
+FAIL
+FAIL	x	0.003s
+FAIL

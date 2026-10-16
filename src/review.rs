@@ -17,6 +17,7 @@ enum Tab {
     Review,
     Mr,
     File,
+    Prob,
 }
 
 /// Como desfazer o que o painel acabou de fazer (o "Desfazer" do toast).
@@ -44,6 +45,8 @@ pub enum Event {
     Conclude,
     /// a aba MR abriu (o tutorial dela)
     MrOpened,
+    /// "?" num bloco: a gaveta "Perguntar ao Claude"
+    AskClaude(crate::ask::Ctx),
 }
 
 struct Draft {
@@ -82,6 +85,8 @@ pub struct Review {
     /// × num arquivo com edição não salva: o segundo × descarta
     close_armed: Option<String>,
     mr: Option<Entity<MrTab>>,
+    /// os erros da última execução de cada tarefa (a aba Problemas junta com os do LSP)
+    task_probs: Vec<(String, crate::tasks::Problem)>,
     /// `S.rtab` do protótipo
     tab: Tab,
     focus: FocusHandle,
@@ -142,6 +147,10 @@ impl Review {
                             this.env_warn = warn;
                             cx.notify();
                         }
+                        // os diagnósticos do LSP chegam sozinhos: a aba aberta relê
+                        if this.tab == Tab::Prob {
+                            cx.notify();
+                        }
                         let (base, files) = d.unwrap_or_default();
                         if this.files.as_ref() != Some(&files) {
                             this.base = base;
@@ -178,6 +187,7 @@ impl Review {
             active: 0,
             close_armed: None,
             mr: None,
+            task_probs: Vec::new(),
             tab: Tab::Review,
             focus: cx.focus_handle(),
             theme,
@@ -279,6 +289,153 @@ impl Review {
         }
         cx.emit(Event::MrOpened);
         cx.notify();
+    }
+
+    /// Troca os erros de uma tarefa pelos da execução que acabou de terminar.
+    pub fn set_task_problems(
+        &mut self,
+        task: String,
+        probs: Vec<crate::tasks::Problem>,
+        cx: &mut Context<Self>,
+    ) {
+        self.task_probs.retain(|(t, _)| *t != task);
+        self.task_probs
+            .extend(probs.into_iter().map(|p| (task.clone(), p)));
+        cx.notify();
+    }
+
+    pub fn show_problems(&mut self, cx: &mut Context<Self>) {
+        self.tab = Tab::Prob;
+        cx.notify();
+    }
+
+    /// Diagnósticos do LSP e erros das tarefas: (grupo, erro?, mensagem, arquivo relativo, linha).
+    fn problems(&self) -> Vec<(String, bool, String, String, u32)> {
+        let mut out: Vec<_> = crate::lsp::diagnostics_under(&self.root)
+            .into_iter()
+            .filter(|(_, d)| {
+                d.severity.is_none_or(|s| {
+                    s == lsp_types::DiagnosticSeverity::ERROR
+                        || s == lsp_types::DiagnosticSeverity::WARNING
+                })
+            })
+            .map(|(p, d)| {
+                let file = p
+                    .strip_prefix(&self.root)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .into_owned();
+                let err = d.severity != Some(lsp_types::DiagnosticSeverity::WARNING);
+                (String::new(), err, d.message, file, d.range.start.line + 1)
+            })
+            .collect();
+        out.extend(self.task_probs.iter().map(|(t, p)| {
+            (
+                t.clone(),
+                !p.warn,
+                p.msg.clone(),
+                crate::tasks::relative(&self.root, &p.file),
+                p.line,
+            )
+        }));
+        out
+    }
+
+    /// O `renderProb` do protótipo: LSP primeiro, depois uma seção por tarefa.
+    fn problems_list(
+        &self,
+        probs: Vec<(String, bool, String, String, u32)>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let t = &self.theme;
+        let list = div().id("prob").flex_1().min_h_0().overflow_y_scroll();
+        if probs.is_empty() {
+            return list.child(
+                div()
+                    .p(px(24.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .items_center()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Nenhum problema"),
+                    )
+                    .child(div().text_color(t.muted).child(
+                        "Diagnósticos do servidor de linguagem e erros das tarefas aparecem aqui.",
+                    )),
+            );
+        }
+        let mut groups: Vec<String> = Vec::new();
+        for (g, ..) in &probs {
+            if !groups.contains(g) {
+                groups.push(g.clone());
+            }
+        }
+        groups.sort_by_key(|g| !g.is_empty());
+        let mut out = list.flex().flex_col();
+        for g in groups {
+            out = out.child(
+                div()
+                    .px(px(12.))
+                    .pt(px(8.))
+                    .pb(px(2.))
+                    .text_size(px(11.))
+                    .text_color(t.muted)
+                    .child(if g.is_empty() {
+                        "SERVIDOR DE LINGUAGEM".to_string()
+                    } else {
+                        format!("TAREFA: {}", g.to_uppercase())
+                    }),
+            );
+            for (i, (_, err, msg, file, line)) in probs.iter().enumerate().filter(|(_, p)| p.0 == g)
+            {
+                let path = file.clone();
+                out = out.child(
+                    div()
+                        .id(("pb", i))
+                        .flex()
+                        .gap(px(8.))
+                        .items_start()
+                        .px(px(12.))
+                        .py(px(4.))
+                        .cursor_pointer()
+                        .hover(|d| d.bg(t.raise))
+                        .on_click(cx.listener(move |this, _, w, cx| {
+                            // ponytail: abre o arquivo; pular para a linha depende do editor ganhar um "ir para linha"
+                            if this.root.join(&path).is_file() {
+                                this.open_file(path.clone(), w, cx);
+                            }
+                        }))
+                        .child(
+                            div()
+                                .w(px(18.))
+                                .flex_none()
+                                .text_color(if *err { rgb(0xff5555) } else { rgb(0xf1fa8c) })
+                                .child(if *err { "✗" } else { "⚠" }),
+                        )
+                        .child(div().flex_1().min_w_0().child(msg.clone()))
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_family(t.mono.clone())
+                                .text_size(px(11.5))
+                                .text_color(t.comment)
+                                .child(format!("{file}:{line}")),
+                        ),
+                );
+            }
+        }
+        out
+    }
+
+    /// O contexto do "Perguntar ao Claude" para o bloco `hi` do arquivo `fi`.
+    fn ask_ctx(&self, fi: usize, hi: usize) -> Option<crate::ask::Ctx> {
+        let f = self.files.as_ref()?.get(fi)?;
+        let mut c = crate::ask::Ctx::of_hunk(f, hi, format!("worktree de {}", self.branch))?;
+        c.root = Some(self.root.clone());
+        Some(c)
     }
 
     /// O `openFile` do protótipo: o arquivo vira a aba ao lado de Revisar.
@@ -604,6 +761,18 @@ impl Review {
         let k = &e.keystroke;
         match k.key.as_str() {
             "c" if !k.modifiers.modified() => self.new_draft(window, cx),
+            _ if k.key_char.as_deref() == Some("?") && self.selected.is_some() => {
+                let (path, line) = self.selected.clone().unwrap_or_default();
+                let fi = self.files.iter().flatten().position(|f| f.path == path);
+                let ctx = fi.and_then(|fi| {
+                    let hi = crate::ask::hunk_at(&self.files.as_ref()?[fi], line);
+                    self.ask_ctx(fi, hi)
+                });
+                match ctx {
+                    Some(c) => cx.emit(Event::AskClaude(c)),
+                    None => return,
+                }
+            }
             "enter" if k.modifiers.control => self.send(cx),
             "escape" => cx.emit(Event::Close),
             _ => return,
@@ -870,6 +1039,16 @@ impl Review {
                             .when(fi == 0 && hi == 0, |x| {
                                 x.relative().child(tour::anchor(&self.anchors, "hunkacts"))
                             })
+                            .child(
+                                small(("ask", fi * 1000 + hi), "?")
+                                    .font_family(t.mono.clone())
+                                    .text_color(t.muted)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(c) = this.ask_ctx(fi, hi) {
+                                            cx.emit(Event::AskClaude(c));
+                                        }
+                                    })),
+                            )
                             .when(ok, |x| x.child("✓ aceito"))
                             .when(!ok, |x| {
                                 x.child(small(("acc", fi * 1000 + hi), "✓ Aceitar").on_click(
@@ -1010,6 +1189,7 @@ impl Render for Review {
                 .when(on, |x| x.bg(t.win).border_b_2().border_color(t.accent))
                 .child(label.to_string())
         };
+        let probs = self.problems();
         let file_tabs: Vec<_> = self
             .editors
             .iter()
@@ -1083,6 +1263,25 @@ impl Render for Review {
                     .overflow_x_scroll()
                     .children(file_tabs),
             )
+            .child({
+                let n = probs.len();
+                tab("rt-prob", "Problemas", self.tab == Tab::Prob)
+                    .flex_none()
+                    .cursor_pointer()
+                    .when(n > 0, |d| {
+                        d.child(
+                            div()
+                                .font_family(t.mono.clone())
+                                .text_color(rgb(0xff5555))
+                                .child(n.to_string()),
+                        )
+                    })
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        this.tab = Tab::Prob;
+                        w.focus(&this.focus, cx);
+                        cx.notify();
+                    }))
+            })
             .child(div().flex_1())
             .child(
                 div()
@@ -1093,6 +1292,19 @@ impl Render for Review {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Close)))
                     .child("×"),
             );
+        if self.tab == Tab::Prob {
+            return div()
+                .track_focus(&self.focus)
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(t.win)
+                .text_color(t.fg)
+                .font_family(t.sans)
+                .text_size(px(14.))
+                .child(tabs)
+                .child(self.problems_list(probs, cx));
+        }
         let mr_body = self.mr.clone().filter(|_| self.tab == Tab::Mr);
         if let Some(m) = mr_body {
             return div()

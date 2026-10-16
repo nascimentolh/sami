@@ -1,3 +1,4 @@
+mod ask;
 mod audit;
 mod audit_view;
 mod binds;
@@ -34,6 +35,7 @@ mod review;
 mod session;
 mod shell;
 mod sidebar;
+mod tasks;
 mod terminal;
 mod theme;
 mod tour;
@@ -88,6 +90,7 @@ fn main() {
             KeyBinding::new("shift-tab", terminal::SendBackTab, Some("Terminal")),
             KeyBinding::new("tab", new_feature::NextField, Some("NewFeature")),
             KeyBinding::new("shift-tab", new_feature::PrevField, Some("NewFeature")),
+            KeyBinding::new("tab", ask::NextOption, Some("Kcmd")),
             // Ctrl+Shift+setas trocam o foco como no Ghostty; seleção por palavra fica no Shift+Alt
             KeyBinding::new(
                 "ctrl-shift-left",
