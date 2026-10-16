@@ -90,12 +90,7 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
 }
 
 pub fn changes(root: &Path) -> Option<Changes> {
-    let base = crate::feature::stack_base(root).or_else(|| {
-        ["main", "master"]
-            .into_iter()
-            .find(|b| git(root, &["rev-parse", "--verify", "--quiet", b]).is_some())
-            .map(String::from)
-    })?;
+    let base = crate::diff::base(root)?;
     let fork = git(root, &["merge-base", "HEAD", &base])?;
     let mut files = parse_numstat(&git(root, &["diff", "--numstat", fork.trim()])?);
     let created = git(
