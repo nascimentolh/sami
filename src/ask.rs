@@ -85,6 +85,9 @@ pub fn parse(line: &str) -> Option<Ev> {
             crate::mrs::Step::Tool(t) => Some(Ev::Tool(t)),
             _ => None,
         },
+        "result" if v["subtype"].as_str().is_some_and(|s| s.contains("budget")) => {
+            Some(Ev::Failed("teto de gasto atingido".into()))
+        }
         "result" if v["is_error"] == true || v["subtype"] != "success" => Some(Ev::Failed(
             v["result"].as_str().unwrap_or("o Claude falhou").into(),
         )),
@@ -104,6 +107,8 @@ pub fn args(resume: Option<&str>) -> Vec<String> {
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        "--max-budget-usd",
+        "0.50",
         "--restricted",
         "--strict-mcp-config",
         "--tools",

@@ -257,6 +257,8 @@ pub fn claude_args(rubric: Option<&Path>) -> Vec<String> {
         "--verbose",
         "--json-schema",
         SCHEMA,
+        "--max-budget-usd",
+        "2.00",
         "--no-session-persistence",
         // roda no checkout do MR: o `.claude/` dele (hooks) não pode carregar; skills do usuário ficam
         "--setting-sources",
@@ -324,8 +326,16 @@ pub fn parse_event(line: &str) -> Option<Step> {
             }),
         "result" => {
             if v["is_error"] == true || v["subtype"] != "success" {
+                let budget = v["subtype"].as_str().is_some_and(|s| s.contains("budget"));
                 return Some(Step::Failed(
-                    v["result"].as_str().unwrap_or("o Claude falhou").into(),
+                    v["result"]
+                        .as_str()
+                        .unwrap_or(if budget {
+                            "teto de gasto atingido"
+                        } else {
+                            "o Claude falhou"
+                        })
+                        .into(),
                 ));
             }
             let f = v["structured_output"]["findings"]
