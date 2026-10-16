@@ -224,7 +224,7 @@ pub fn affected_tests(root: &Path, files: &[String]) -> Option<String> {
     let pkg = std::fs::read_to_string(root.join("package.json")).unwrap_or_default();
     let list = files
         .iter()
-        .map(|f| format!("'{f}'"))
+        .map(|f| crate::feature::sh_quote(f))
         .collect::<Vec<_>>()
         .join(" ");
     if pkg.contains("\"vitest\"") {
@@ -363,6 +363,20 @@ pub fn highlight(line: &str) -> Vec<(std::ops::Range<usize>, Tok)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn testes_afetados_escapa_aspas() {
+        let root = std::env::temp_dir().join(format!("maestro-affected-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"devDependencies":{"vitest":"1"}}"#,
+        )
+        .unwrap();
+        let cmd = affected_tests(&root, &["a'; touch x; '.ts".into()]).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(cmd, r"npx vitest related --run 'a'\''; touch x; '\''.ts'");
+    }
 
     const DIFF: &str = "diff --git a/src/app.ts b/src/app.ts
 index 1..2 100644
