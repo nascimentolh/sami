@@ -638,15 +638,17 @@ impl Shell {
             return;
         }
         cx.spawn_in(window, async move |this, cx| {
-            let open = cx
-                .background_executor()
-                .spawn(async move {
+            // `-A` espera o clique por horas: numa thread do SO, não no pool do background executor
+            let (tx, rx) = futures::channel::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(
                     std::process::Command::new("notify-send")
                         .args(["-a", "Maestro", "-A", "open=Abrir", "Maestro", &text])
                         .output()
-                        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "open")
-                })
-                .await;
+                        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "open"),
+                );
+            });
+            let open = rx.await.unwrap_or(false);
             if open {
                 let _ = this.update_in(cx, |this, window, cx| {
                     window.activate_window();
