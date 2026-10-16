@@ -258,6 +258,12 @@ pub fn claude_args(rubric: Option<&Path>) -> Vec<String> {
         "--json-schema",
         SCHEMA,
         "--no-session-persistence",
+        // roda no checkout do MR: o `.claude/` dele (hooks) não pode carregar; skills do usuário ficam
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--tools",
+        "Read,Grep,Glob,Bash,Skill",
         "--allowedTools",
         "Bash(git diff:*)",
         "Bash(git log:*)",
@@ -1031,6 +1037,8 @@ mod tests {
         assert!(
             args.contains(&"Bash(git blame:*)".to_string())
                 && !args.iter().any(|a| a == "Edit" || a == "Write")
+                && args.windows(2).any(|w| w == ["--setting-sources", "user"])
+                && args.contains(&"--strict-mcp-config".to_string())
         );
         let pos = position(
             &json!({"base_sha": "b", "start_sha": "s", "head_sha": "h"}),
