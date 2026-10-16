@@ -183,8 +183,23 @@ pub const MRTAB: &[Step] = &[Step {
     wait: false,
 }];
 
+pub const NEWS: &[Step] = &[Step {
+    target: "news",
+    text: &[T(
+        "Notícias do daily.dev filtradas pelos seus repos e pelo vault. Cada item diz por que apareceu e o que pode afetar.",
+    )],
+    wait: false,
+}];
+
+/// `MAESTRO_STATE` para testar sem marcar os tutoriais do `state.toml` real.
 fn state_path() -> PathBuf {
-    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config/maestro/state.toml")
+    std::env::var_os("MAESTRO_STATE").map_or_else(
+        || {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".config/maestro/state.toml")
+        },
+        PathBuf::from,
+    )
 }
 
 pub fn seen(id: &str) -> bool {

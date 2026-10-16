@@ -29,6 +29,8 @@ pub enum Redo {
     Audit(crate::audit::Ignored),
     /// descarte de rascunho no MR alheio
     MrDraft,
+    /// "Não relevante" no News: (tag, fonte) volta a aparecer
+    News((String, String)),
 }
 
 pub enum Event {
