@@ -140,10 +140,10 @@ impl Render for Cleanup {
                                         div()
                                             .truncate()
                                             .font_family(t.mono.clone())
-                                            .text_size(px(12.))
+                                            .text_size(px(13.))
                                             .child(tilde(&name)),
                                     )
-                                    .child(div().text_size(px(12.)).text_color(t.muted).child(why)),
+                                    .child(div().text_size(px(13.)).text_color(t.muted).child(why)),
                             ),
                     );
                 }
@@ -169,8 +169,8 @@ impl Render for Cleanup {
             .shadow_lg()
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
-            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Limpeza"))
+            .text_size(px(14.))
+            .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child("Limpeza"))
             .child(div().text_color(t.muted).child(
                 "O que está no disco e nenhuma feature reconhece. Branch local e worktree com mudanças vêm desmarcadas.",
             ))

@@ -25,6 +25,8 @@ const UI_OVERRIDES: &[(&str, &str)] = &[
     ("sidebar_collapsed_mode", "\"hidden\""),
     ("hide_tab_bar_when_single_tab", "false"),
     ("tab_bar_position", "\"top\""),
+    // com o editor aberto o terminal fica estreito e o herdr trocaria para o layout "mobile"
+    ("mobile_width_threshold", "0"),
 ];
 
 /// A config do usuário com os `UI_OVERRIDES` no lugar dos mesmos nomes em `[ui]`.
@@ -174,6 +176,10 @@ impl Herdr {
         parse_agents(self.call("agent.list", json!({}))?)
     }
 
+    pub fn panes(&self) -> io::Result<Value> {
+        self.call("pane.list", json!({}))
+    }
+
     pub fn workspaces(&self) -> io::Result<Vec<Workspace>> {
         let mut result = self.call("workspace.list", json!({}))?;
         Ok(serde_json::from_value(result["workspaces"].take())?)
@@ -205,6 +211,16 @@ impl Herdr {
         self.call("agent.focus", json!({ "target": pane_id }))
             .map(drop)
     }
+}
+
+/// O cwd do pane em foco no workspace em foco (`foreground_cwd` segue o `cd` do shell).
+pub fn focused_cwd(panes: &Value, workspace: Option<&str>) -> Option<String> {
+    panes["panes"]
+        .as_array()?
+        .iter()
+        .find(|p| p["focused"] == true && workspace.is_none_or(|w| p["workspace_id"] == w))
+        .and_then(|p| p["foreground_cwd"].as_str().or(p["cwd"].as_str()))
+        .map(String::from)
 }
 
 fn parse_agents(mut result: Value) -> io::Result<Vec<Agent>> {

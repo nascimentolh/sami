@@ -26,6 +26,55 @@ pub fn files(root: &Path) -> Vec<String> {
     .unwrap_or_default()
 }
 
+#[derive(Default)]
+struct Dir {
+    dirs: std::collections::BTreeMap<String, Dir>,
+    files: Vec<String>,
+}
+
+/// As linhas visíveis da árvore do repo: (profundidade, nome, caminho, é pasta).
+/// Pastas antes dos arquivos; só desce nas pastas de `open`.
+pub fn tree(
+    files: &[String],
+    open: &std::collections::HashSet<String>,
+) -> Vec<(usize, String, String, bool)> {
+    let mut root = Dir::default();
+    for f in files {
+        let mut d = &mut root;
+        let mut parts = f.split('/').peekable();
+        while let Some(p) = parts.next() {
+            if parts.peek().is_none() {
+                d.files.push(p.to_string());
+            } else {
+                d = d.dirs.entry(p.to_string()).or_default();
+            }
+        }
+    }
+    fn walk(
+        d: &Dir,
+        prefix: &str,
+        depth: usize,
+        open: &std::collections::HashSet<String>,
+        out: &mut Vec<(usize, String, String, bool)>,
+    ) {
+        for (name, sub) in &d.dirs {
+            let path = format!("{prefix}{name}");
+            out.push((depth, name.clone(), path.clone(), true));
+            if open.contains(&path) {
+                walk(sub, &format!("{path}/"), depth + 1, open, out);
+            }
+        }
+        let mut files = d.files.clone();
+        files.sort();
+        for f in files {
+            out.push((depth, f.clone(), format!("{prefix}{f}"), false));
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root, "", 0, open, &mut out);
+    out
+}
+
 fn git(root: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
@@ -98,5 +147,37 @@ mod tests {
             (8, 0, "src/health.ts")
         );
         assert_eq!((c[2].added, c[2].removed), (0, 0));
+    }
+
+    #[test]
+    fn tree_opens_only_expanded_dirs() {
+        let files: Vec<String> = [
+            "src/b.rs",
+            "README.md",
+            "src/a/x.rs",
+            "Cargo.toml",
+            "src/main.rs",
+        ]
+        .map(String::from)
+        .to_vec();
+        let rows = |open: &[&str]| {
+            super::tree(&files, &open.iter().map(|s| s.to_string()).collect())
+                .into_iter()
+                .map(|(d, n, _, dir)| format!("{d}{}{n}", if dir { "/" } else { " " }))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rows(&[]), ["0/src", "0 Cargo.toml", "0 README.md"]);
+        assert_eq!(
+            rows(&["src", "src/a"]),
+            [
+                "0/src",
+                "1/a",
+                "2 x.rs",
+                "1 b.rs",
+                "1 main.rs",
+                "0 Cargo.toml",
+                "0 README.md"
+            ]
+        );
     }
 }

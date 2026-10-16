@@ -247,7 +247,7 @@ pub fn overlay(
             K(s) => words.child(
                 div()
                     .font_family(t.mono.clone())
-                    .text_size(px(11.))
+                    .text_size(px(12.))
                     .px(px(4.))
                     .border_1()
                     .border_color(t.line)
@@ -326,7 +326,7 @@ pub fn overlay(
                     .when(step.wait, |d| {
                         d.child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(13.))
                                 .text_color(t.accent)
                                 .child("↳ clique no destaque para continuar"),
                         )
@@ -339,7 +339,7 @@ pub fn overlay(
                             .child(
                                 div()
                                     .font_family(t.mono.clone())
-                                    .text_size(px(11.))
+                                    .text_size(px(12.))
                                     .text_color(t.muted)
                                     .child(format!("{}/{}", i + 1, steps.len())),
                             )

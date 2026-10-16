@@ -356,8 +356,8 @@ impl Render for FileEditor {
                         .bordered(false)
                         .h_full()
                         .font_family(t.mono.clone())
-                        .text_size(px(13.))
-                        .line_height(px(20.)),
+                        .text_size(px(14.))
+                        .line_height(px(22.)),
                 ),
             )
     }

@@ -271,7 +271,7 @@ impl NewFeature {
 
     fn label(&self, text: &str) -> Div {
         div()
-            .text_size(px(12.))
+            .text_size(px(13.))
             .text_color(self.theme.muted)
             .child(text.to_string())
     }
@@ -465,10 +465,10 @@ impl Render for NewFeature {
             .shadow_lg()
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(
                 div()
-                    .text_size(px(15.))
+                    .text_size(px(16.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!("Nova feature em {}", self.repo_name())),
             )
@@ -480,7 +480,7 @@ impl Render for NewFeature {
                 d.child(
                     div()
                         .mt(px(-6.))
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .text_color(if ok { t.ok } else { t.muted })
                         .child(s),
                 )
@@ -521,7 +521,7 @@ impl Render for NewFeature {
             .child(
                 div()
                     .font_family(t.mono.clone())
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .text_color(t.muted)
                     .bg(t.win)
                     .rounded(px(5.))
@@ -550,7 +550,7 @@ impl Render for NewFeature {
                             .left(px(8.))
                             .px(px(4.))
                             .bg(t.raise)
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .text_color(t.muted)
                             .child("Ao criar"),
                     )
@@ -586,7 +586,7 @@ impl Render for NewFeature {
             .when(!self.err.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .text_color(rgb(0xff5555))
                         .child(self.err.clone()),
                 )
@@ -611,7 +611,7 @@ impl Render for NewFeature {
                         .child(
                             div()
                                 .font_family(t.mono.clone())
-                                .text_size(px(11.))
+                                .text_size(px(12.))
                                 .px(px(4.))
                                 .border_1()
                                 .border_color(rgb(0x282a36))

@@ -178,6 +178,16 @@ impl Review {
         }
     }
 
+    /// Volta para a aba do arquivo aberto, se houver.
+    pub fn file_tab(&mut self, cx: &mut Context<Self>) -> bool {
+        let has = self.editor.is_some();
+        if has {
+            self.tab = Tab::File;
+            cx.notify();
+        }
+        has
+    }
+
     pub fn show_file(&mut self, path: String, cx: &mut Context<Self>) {
         self.tab = Tab::Review;
         self.scroll_to = Some(path);
@@ -526,7 +536,7 @@ impl Review {
                     .border_1()
                     .border_color(t.line)
                     .rounded(px(5.))
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.turn_open = !this.turn_open;
@@ -546,7 +556,7 @@ impl Review {
                     .border_color(t.line)
                     .rounded(px(5.))
                     .shadow_lg()
-                    .text_size(px(12.));
+                    .text_size(px(13.));
                 for (i, (v, l)) in opts.into_iter().enumerate() {
                     list = list.child(
                         div()
@@ -587,7 +597,7 @@ impl Review {
             .max_w(px(720.))
             .rounded(px(6.))
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .when(!d.sent, |x| {
                 x.border_1()
                     .border_dashed()
@@ -604,12 +614,12 @@ impl Review {
                     .py(px(6.))
                     .border_b_1()
                     .border_color(t.line)
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .text_color(t.muted)
                     .when(!d.sent, |x| {
                         x.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(12.))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(yellow)
                                 .child("PARA O CLAUDE"),
@@ -654,7 +664,7 @@ impl Review {
                     .when_some(d.field.clone(), |x, f| {
                         x.child(f).child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(13.))
                                 .text_color(t.muted)
                                 .child("Ctrl+⏎ salva · Esc cancela"),
                         )
@@ -684,7 +694,7 @@ impl Review {
                     x.child(
                         div()
                             .font_family(t.mono.clone())
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .px(px(7.))
                             .rounded(px(10.))
                             .border_1()
@@ -699,7 +709,7 @@ impl Review {
                     x.child(
                         div()
                             .font_family(t.mono.clone())
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .px(px(6.))
                             .rounded(px(3.))
                             .border_1()
@@ -722,7 +732,7 @@ impl Review {
             let small = |id: (&'static str, usize), label: &str| {
                 div()
                     .id(id)
-                    .text_size(px(11.5))
+                    .text_size(px(12.5))
                     .px(px(6.))
                     .border_1()
                     .border_color(t.line)
@@ -844,7 +854,7 @@ impl Review {
                                 .bg(t.accent)
                                 .text_color(rgb(0x282a36))
                                 .font_family(t.sans)
-                                .text_size(px(12.))
+                                .text_size(px(13.))
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -954,7 +964,7 @@ impl Render for Review {
                 .bg(t.win)
                 .text_color(t.fg)
                 .font_family(t.sans)
-                .text_size(px(13.))
+                .text_size(px(14.))
                 .child(tabs)
                 .child(m);
         }
@@ -967,7 +977,7 @@ impl Render for Review {
                 .bg(t.win)
                 .text_color(t.fg)
                 .font_family(t.sans)
-                .text_size(px(13.))
+                .text_size(px(14.))
                 .child(tabs)
                 .child(div().flex_1().min_h_0().child(e));
         }
@@ -998,7 +1008,7 @@ impl Render for Review {
                     .gap(px(10.))
                     .text_center()
                     .text_color(t.muted)
-                    .child(div().text_size(px(15.)).text_color(t.fg).child(format!("Nada para revisar em {}", self.branch)))
+                    .child(div().text_size(px(16.)).text_color(t.fg).child(format!("Nada para revisar em {}", self.branch)))
                     .child(format!(
                         "Quando o Claude mudar arquivos nesta worktree, o diff contra {} aparece aqui, separado por turno.",
                         self.base
@@ -1006,7 +1016,7 @@ impl Render for Review {
             ),
             Some(files) => {
                 let files = files.clone();
-                let mut list = div().flex().flex_col().pb(px(40.)).font_family(t.mono.clone()).text_size(px(12.5)).line_height(px(20.));
+                let mut list = div().flex().flex_col().pb(px(40.)).font_family(t.mono.clone()).text_size(px(13.5)).line_height(px(22.));
                 for (i, f) in files.iter().enumerate() {
                     list = list.child(self.file_block(i, f, cx));
                 }
@@ -1039,7 +1049,7 @@ impl Render for Review {
             .bg(t.win)
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(tabs)
             .child(
                 div()
@@ -1123,7 +1133,7 @@ impl Render for Review {
                             .child(
                                 div()
                                     .font_family(t.mono.clone())
-                                    .text_size(px(11.))
+                                    .text_size(px(12.))
                                     .px(px(4.))
                                     .border_1()
                                     .border_color(rgb(0x282a36))

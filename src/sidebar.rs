@@ -60,6 +60,10 @@ pub struct Sidebar {
     asks: HashMap<String, String>,
     /// o card "Auditoria": (rodando, k, m, aberta, pronta e não vista)
     pub audit: (bool, String, String, bool, bool),
+    /// o pane em foco, com ou sem Claude: dá o repo da lateral num terminal comum
+    focused_cwd: Option<String>,
+    /// aba Arquivos: as pastas abertas da árvore
+    expanded: HashSet<String>,
     /// (arquivo do editor, sujo, aba do editor à frente)
     open: Option<(String, bool, bool)>,
     sessions: Arc<Mutex<Sessions>>,
@@ -120,11 +124,29 @@ impl Sidebar {
                 let h = h.clone();
                 let state = cx
                     .background_executor()
-                    .spawn(async move { Ok((h.agents()?, h.workspaces()?, h.tabs()?)) })
+                    .spawn(async move {
+                        let ws = h.workspaces()?;
+                        let cwd = h.panes().ok().and_then(|p| {
+                            let w = ws
+                                .iter()
+                                .find(|w| w.focused)
+                                .map(|w| w.workspace_id.as_str());
+                            herdr::focused_cwd(&p, w)
+                        });
+                        Ok(((h.agents()?, ws, h.tabs()?), cwd))
+                    })
                     .await;
+                let (state, cwd) = match state {
+                    Ok((s, c)) => (Ok(s), c),
+                    Err(e) => (Err(e), None),
+                };
                 // "há N min" envelhece sozinho: redesenha a cada 30 s mesmo sem mudança
                 let alive = this.update(cx, |this, cx| {
-                    let (changed, notes) = this.apply(state);
+                    let (mut changed, notes) = this.apply(state);
+                    if this.focused_cwd != cwd {
+                        this.focused_cwd = cwd;
+                        changed = true;
+                    }
                     for n in notes {
                         cx.emit(SidebarEvent::Notify(n));
                     }
@@ -294,6 +316,8 @@ impl Sidebar {
             sent: HashMap::new(),
             asks: HashMap::new(),
             audit: (false, String::new(), "nunca rodou".into(), false, false),
+            focused_cwd: None,
+            expanded: HashSet::new(),
             open: None,
             sessions: Arc::default(),
             anchors,
@@ -390,12 +414,27 @@ impl Sidebar {
 
     /// Worktree do agente em foco (ou do primeiro em git): a de "Mudanças".
     pub fn top_worktree(&self) -> Option<PathBuf> {
-        let focused = self.agents.iter().find(|a| a.focused);
+        let focused = self
+            .agents
+            .iter()
+            .find(|a| a.focused)
+            .map(|a| a.cwd.as_str());
         focused
             .into_iter()
-            .chain(&self.agents)
-            .find_map(|a| herdr::repo_root(Path::new(&a.cwd)))
+            .chain(self.focused_cwd.as_deref())
+            .chain(self.agents.iter().map(|a| a.cwd.as_str()))
+            .find_map(|c| herdr::repo_root(Path::new(c)))
             .map(Path::to_path_buf)
+    }
+
+    /// Ctrl+Shift+F: a aba Arquivos, relida do repo em foco.
+    pub fn show_files(&mut self, cx: &mut Context<Self>) {
+        self.files = Some(
+            self.top_worktree()
+                .map(|r| changes::files(&r))
+                .unwrap_or_default(),
+        );
+        cx.notify();
     }
 
     pub fn set_open(&mut self, open: Option<(String, bool, bool)>, cx: &mut Context<Self>) {
@@ -714,7 +753,7 @@ impl Sidebar {
                             .flex_none()
                             .text_center()
                             .font_family(t.mono.clone())
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .text_color(r.glyph_color)
                             .child(r.glyph),
                     )
@@ -724,13 +763,13 @@ impl Sidebar {
                             .min_w_0()
                             .truncate()
                             .font_family(t.mono.clone())
-                            .text_size(px(12.5))
+                            .text_size(px(13.5))
                             .child(r.b),
                     )
                     .child(
                         div()
                             .flex_none()
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .text_color(t.muted)
                             .child(r.k),
                     ),
@@ -739,7 +778,7 @@ impl Sidebar {
                 div()
                     .pl(px(24.))
                     .truncate()
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .text_color(r.m_color)
                     .child(r.m),
             )
@@ -749,7 +788,7 @@ impl Sidebar {
                         .pl(px(24.))
                         .flex()
                         .font_family(t.mono.clone())
-                        .text_size(px(11.))
+                        .text_size(px(12.))
                         .text_color(t.comment)
                         .child(format!("{cost} · "))
                         .child(div().when(warn, |d| d.text_color(t.orange)).child(ctx))
@@ -769,7 +808,7 @@ impl Sidebar {
                 .px(px(8.))
                 .py(px(4.))
                 .rounded_t(px(5.))
-                .text_size(px(12.))
+                .text_size(px(13.))
                 .text_color(if on { t.fg } else { t.muted })
                 .when(on, |d| d.border_b_2().border_color(t.accent))
                 .child(label)
@@ -798,7 +837,7 @@ impl Sidebar {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .font_family(t.mono.clone())
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .child(div().text_color(t.muted).child(dir))
                         .child(name.to_string()),
                 )
@@ -811,20 +850,61 @@ impl Sidebar {
         };
         match (&self.files, &self.changes) {
             (Some(files), _) => {
-                // ponytail: os 300 primeiros; árvore ou busca (Ctrl+Shift+O) para repo grande
-                for p in files.iter().take(300) {
-                    let (dir, name) = split(p);
-                    let open = self.open.as_ref().filter(|o| o.0 == *p);
+                // ponytail: 500 linhas visíveis; lista virtual se uma pasta aberta passar disso
+                for (depth, name, p, dir) in
+                    changes::tree(files, &self.expanded).into_iter().take(500)
+                {
+                    let open = self.open.as_ref().filter(|o| o.0 == p);
+                    let glyph = match (dir, self.expanded.contains(&p)) {
+                        (true, true) => "▾",
+                        (true, false) => "▸",
+                        _ => " ",
+                    };
                     let path = p.clone();
                     list = list.child(
-                        row(format!("fl:{p}"), &dir, &name)
+                        div()
+                            .id(SharedString::from(format!("fl:{p}")))
+                            .cursor_pointer()
+                            .hover(|d| d.bg(t.raise))
+                            .flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .pl(px(12. + depth as f32 * 14.))
+                            .pr(px(12.))
+                            .py(px(2.))
+                            .font_family(t.mono.clone())
+                            .text_size(px(13.))
                             .when(open.is_some_and(|o| o.2), |d| d.bg(t.accent_soft))
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.emit(SidebarEvent::OpenFile(path.clone()))
-                            }))
+                            .child(
+                                div()
+                                    .w(px(12.))
+                                    .flex_none()
+                                    .font_family(t.sans)
+                                    .text_size(px(14.))
+                                    .text_color(t.muted)
+                                    .child(glyph),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .when(dir, |d| d.text_color(t.muted))
+                                    .child(name),
+                            )
                             .when(open.is_some_and(|o| o.1), |d| {
-                                d.child(div().text_size(px(11.)).text_color(t.muted).child("●"))
-                            }),
+                                d.child(div().text_size(px(13.)).text_color(t.muted).child("●"))
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if dir {
+                                    if !this.expanded.remove(&path) {
+                                        this.expanded.insert(path.clone());
+                                    }
+                                    cx.notify();
+                                } else {
+                                    cx.emit(SidebarEvent::OpenFile(path.clone()))
+                                }
+                            })),
                     );
                 }
             }
@@ -845,7 +925,7 @@ impl Sidebar {
                                 div()
                                     .flex_none()
                                     .font_family(t.mono.clone())
-                                    .text_size(px(11.))
+                                    .text_size(px(12.))
                                     .text_color(t.muted)
                                     .child(format!(
                                         "{}+{} −{}",
@@ -871,7 +951,7 @@ impl Sidebar {
                         .flex()
                         .px(px(12.))
                         .py(px(6.))
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .text_color(t.muted)
                         .child(format!("{pending}base "))
                         .child(div().font_family(t.mono.clone()).child(c.base.clone())),
@@ -948,7 +1028,7 @@ fn none(t: &Theme, text: String) -> Div {
     div()
         .px(px(12.))
         .py(px(6.))
-        .text_size(px(12.))
+        .text_size(px(13.))
         .text_color(t.muted)
         .child(text)
 }
@@ -1005,7 +1085,7 @@ fn section(t: &Theme, label: &str) -> Div {
         .gap_2()
         .min_h(px(30.))
         .px(px(10.))
-        .text_size(px(11.))
+        .text_size(px(12.))
         .text_color(t.muted)
         .border_b_1()
         .border_color(t.line)
@@ -1043,7 +1123,7 @@ impl Render for Sidebar {
                     div()
                         .truncate()
                         .font_family(t.mono.clone())
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .font_weight(FontWeight::NORMAL)
                         .text_color(t.muted)
                         .child(tilde(path)),
@@ -1052,8 +1132,13 @@ impl Render for Sidebar {
 
         let mut col = div().flex().flex_col();
         // ordem do protótipo: repo · Auditoria · FEATURES · cards · Nova feature · TERMINAIS · Mudanças
-        if let Some(top) = repos.iter().find(|r| Some(&r.path) == top.as_ref()) {
-            col = col.child(repo_head(top.name.clone(), &top.path));
+        // o repo em foco, com ou sem Claude rodando nele
+        if let Some(top) = top.as_ref() {
+            let name = Path::new(top)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            col = col.child(repo_head(name, top));
             let (run, k, m, on, _) = self.audit.clone();
             col = col.child(feats().child(self.row(
                 Row {
@@ -1132,7 +1217,7 @@ impl Render for Sidebar {
                 .child(
                     div()
                         .font_family(t.mono.clone())
-                        .text_size(px(11.))
+                        .text_size(px(12.))
                         .px(px(4.))
                         .border_1()
                         .border_color(t.line)
@@ -1146,7 +1231,7 @@ impl Render for Sidebar {
                 .pt(px(8.))
                 .pb(px(2.))
                 .px(px(14.))
-                .text_size(px(11.))
+                .text_size(px(12.))
                 .text_color(t.muted)
                 .child("TERMINAIS"),
         );
@@ -1187,7 +1272,7 @@ impl Render for Sidebar {
 
         div()
             .id("sidebar")
-            .w(px(250.))
+            .w(px(270.))
             .flex_none()
             .h_full()
             .overflow_y_scroll()
@@ -1196,7 +1281,7 @@ impl Render for Sidebar {
             .border_color(t.line)
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(col)
     }
 }

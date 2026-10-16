@@ -47,6 +47,8 @@ pub enum Cmd {
     Audit(bool),
     Help,
     Home,
+    /// a árvore do projeto na lateral e o editor, se houver arquivo aberto
+    Files,
 }
 
 #[derive(Clone)]
@@ -87,7 +89,7 @@ pub fn commands() -> Vec<Item> {
         c("Vault: Nota do repo", "", Some(Vault(VaultGo::RepoNote))),
         c("Vault: Daily de hoje", "", Some(Vault(VaultGo::Today))),
         c("Vault: Atividade", "", Some(Vault(VaultGo::Log))),
-        c("Ir para: Vault", "", Some(Vault(VaultGo::Open))),
+        c("Ir para: Vault", "Alt+3", Some(Vault(VaultGo::Open))),
         c("Ajuda: Rever tutorial desta tela", "", Some(Tutorial)),
         c("Feature: Remover a atual…", "", Some(RemoveFeature)),
         // não está no protótipo; o desenho (5.4) pede o comando
@@ -130,14 +132,15 @@ pub fn commands() -> Vec<Item> {
             "Ctrl+Shift+B",
             Some(ToggleLeft),
         ),
-        c("Auditoria: Abrir relatório", "", Some(Audit(false))),
+        c("Auditoria: Abrir relatório", "Alt+4", Some(Audit(false))),
         c(
             "Auditoria: Nova auditoria incremental",
             "",
             Some(Audit(true)),
         ),
-        c("Ir para: Features", "", Some(Features)),
-        c("Ir para: MRs", "", Some(Mrs)),
+        c("Ir para: Features", "Alt+1", Some(Features)),
+        c("Ir para: MRs", "Alt+2", Some(Mrs)),
+        c("Arquivos: Árvore do projeto", "Ctrl+Shift+F", Some(Files)),
         c("MR: Revisar com Claude", "⇧R", Some(MrReview)),
         c("Ajuda: Atalhos e decisões de UX", "?", Some(Help)),
     ]
@@ -329,7 +332,7 @@ impl Render for CommandPalette {
             .py(px(10.))
             .border_b_1()
             .border_color(t.line)
-            .text_size(px(14.))
+            .text_size(px(15.))
             .flex()
             .items_center()
             .child(
@@ -385,7 +388,7 @@ impl Render for CommandPalette {
                             div()
                                 .flex_none()
                                 .font_family(t.mono.clone())
-                                .text_size(px(10.))
+                                .text_size(px(11.))
                                 .px(px(5.))
                                 .rounded(px(3.))
                                 .border_1()
@@ -400,7 +403,7 @@ impl Render for CommandPalette {
                         d.child(
                             div()
                                 .font_family(t.mono.clone())
-                                .text_size(px(11.))
+                                .text_size(px(12.))
                                 .px(px(4.))
                                 .border_1()
                                 .border_color(t.line)
@@ -426,7 +429,7 @@ impl Render for CommandPalette {
             .overflow_hidden()
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(input)
             .child(list)
     }

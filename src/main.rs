@@ -100,6 +100,17 @@ fn main() {
                 ..Default::default()
             }),
             app_id: Some("maestro".into()),
+            icon: image::load_from_memory_with_format(
+                include_bytes!("../assets/icons/maestro-512.png"),
+                image::ImageFormat::Png,
+            )
+            .ok()
+            .map(|i| {
+                std::sync::Arc::new(
+                    i.resize(128, 128, image::imageops::FilterType::Lanczos3)
+                        .to_rgba8(),
+                )
+            }),
             window_decorations: Some(WindowDecorations::Client),
             window_background: if config.background_opacity < 1. {
                 WindowBackgroundAppearance::Transparent

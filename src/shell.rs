@@ -69,6 +69,7 @@ pub struct Shell {
     mascot_seq: usize,
     mascot_frame: u64,
     window_active: bool,
+    maximized: bool,
     _blink: Option<Task<()>>,
     toast_seq: usize,
     want_dialog: bool,
@@ -105,6 +106,25 @@ const VAULT_HINTS: &[(&str, &str, bool)] = &[
     ("Hoje", "daily", true),
     ("?", "atalhos", true),
 ];
+
+enum Glyph {
+    Min,
+    /// já maximizada: o ícone de restaurar
+    Max(bool),
+    Close,
+}
+
+/// O símbolo do logo em branco (`maestro-symbol-small`, para menos de 48 px).
+fn logo() -> std::sync::Arc<Image> {
+    static LOGO: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
+    LOGO.get_or_init(|| {
+        std::sync::Arc::new(Image::from_bytes(
+            ImageFormat::Png,
+            include_bytes!("../assets/icons/maestro-symbol-white-64.png").to_vec(),
+        ))
+    })
+    .clone()
+}
 
 /// Os passos do "Experimente" da ajuda, com o app de verdade.
 const HELP_STEPS: &[&str] = &[
@@ -308,6 +328,7 @@ impl Shell {
             mascot_seq: 0,
             mascot_frame: 0,
             window_active: true,
+            maximized: false,
             _blink: None,
             toast_seq: 0,
             want_dialog: false,
@@ -318,8 +339,17 @@ impl Shell {
     fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         let m = &k.modifiers;
-        if m.alt && !m.control && !m.shift && k.key == "n" {
-            return self.open_new_feature(window, cx);
+        if m.alt && !m.control && !m.shift {
+            let cmd = match k.key.as_str() {
+                "n" => return self.open_new_feature(window, cx),
+                "1" => Cmd::Features,
+                "2" => Cmd::Mrs,
+                "3" => Cmd::Vault(crate::palette_cmd::VaultGo::Open),
+                "4" => Cmd::Audit(false),
+                _ => return,
+            };
+            cx.stop_propagation();
+            return self.run(cmd, window, cx);
         }
         if m.control && m.shift && !m.alt {
             match k.key.as_str() {
@@ -328,6 +358,7 @@ impl Shell {
                 "l" => return self.run(Cmd::SendSelection, window, cx),
                 "o" => return self.run(Cmd::OpenFileMenu, window, cx),
                 "b" => return self.run(Cmd::ToggleLeft, window, cx),
+                "f" => return self.run(Cmd::Files, window, cx),
                 _ => {}
             }
         }
@@ -1246,6 +1277,23 @@ impl Shell {
             ),
             Cmd::Feature(p) => focus(Some(p), cx),
             Cmd::Help => self.help = true,
+            Cmd::Files => {
+                self.left = true;
+                self.in_vault = false;
+                self.in_mrs = false;
+                self.in_audit = false;
+                if let Some(s) = &self.sidebar {
+                    s.update(cx, |s, cx| s.show_files(cx));
+                }
+                if let Some(r) = &self.review
+                    && r.update(cx, |r, cx| r.file_tab(cx))
+                {
+                    let f = r.read(cx).focus_handle(cx);
+                    window.focus(&f, cx);
+                } else {
+                    window.focus(&self.terminal.read(cx).focus_handle(), cx);
+                }
+            }
             Cmd::Home => {
                 let Some(s) = &self.sidebar else { return };
                 let s = s.read(cx);
@@ -1502,7 +1550,7 @@ impl Shell {
         let t = &self.theme;
         div()
             .font_family(t.mono.clone())
-            .text_size(px(11.))
+            .text_size(px(12.))
             .px(px(4.))
             .border_1()
             .border_color(t.line)
@@ -1513,16 +1561,55 @@ impl Shell {
             .child(k.to_string())
     }
 
-    fn dot(&self, id: &'static str, action: fn(&mut Window)) -> impl IntoElement {
+    /// Minimizar, maximizar e fechar à direita, como nas janelas do Linux (a decoração é nossa).
+    fn win_btn(&self, id: &'static str, g: Glyph, action: fn(&mut Window)) -> impl IntoElement {
         let t = &self.theme;
+        let close = matches!(g, Glyph::Close);
+        let icon = match g {
+            Glyph::Min => div().w(px(10.)).h(px(1.5)).bg(t.fg),
+            Glyph::Max(false) => div().size(px(10.)).border_1().border_color(t.fg),
+            Glyph::Max(true) => div()
+                .size(px(10.))
+                .relative()
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .size(px(8.))
+                        .border_1()
+                        .border_color(t.muted),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .size(px(8.))
+                        .border_1()
+                        .border_color(t.fg)
+                        .bg(t.panel),
+                ),
+            Glyph::Close => div().text_size(px(17.)).line_height(px(17.)).child("×"),
+        };
         div()
             .id(id)
-            .size(px(10.))
-            .rounded_full()
-            .bg(t.line)
-            .hover(|d| d.bg(t.muted))
+            .w(px(40.))
+            .h(px(40.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(t.fg)
+            .hover(move |d| {
+                if close {
+                    d.bg(rgb(0xc42b1c))
+                } else {
+                    d.bg(t.raise)
+                }
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, _| action(window))
+            .child(icon)
     }
 
     fn title(&self, cx: &mut Context<Self>) -> Div {
@@ -1551,14 +1638,14 @@ impl Shell {
                     d.child(
                         div()
                             .font_family(t.mono.clone())
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .text_color(t.orange)
                             .child(c),
                     )
                 })
         };
         div()
-            .h(px(36.))
+            .h(px(40.))
             .flex_none()
             .flex()
             .items_center()
@@ -1578,12 +1665,11 @@ impl Shell {
             .child(
                 div()
                     .flex()
-                    .gap(px(6.))
-                    .child(self.dot("close", |w| w.remove_window()))
-                    .child(self.dot("min", |w| w.minimize_window()))
-                    .child(self.dot("max", |w| w.zoom_window())),
+                    .gap(px(7.))
+                    .items_center()
+                    .child(img(logo()).size(px(18.)).flex_none())
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child("maestro")),
             )
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("maestro"))
             .child(
                 div()
                     .flex()
@@ -1646,7 +1732,7 @@ impl Shell {
                     .child(
                         div()
                             .font_family(t.mono.clone())
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(t.orange)
                             .child(attention.to_string()),
@@ -1693,6 +1779,14 @@ impl Shell {
                             .child(self.kbd("?")),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .ml(px(4.))
+                    .child(self.win_btn("w-min", Glyph::Min, |w| w.minimize_window()))
+                    .child(self.win_btn("w-max", Glyph::Max(self.maximized), |w| w.zoom_window()))
+                    .child(self.win_btn("w-close", Glyph::Close, |w| w.remove_window())),
+            )
     }
 
     /// Abas do workspace em foco, como no `.hbar` do protótipo (a barra do próprio herdr fica escondida).
@@ -1706,7 +1800,7 @@ impl Shell {
             .border_b_1()
             .border_color(rgb(0x191a21))
             .font_family(t.mono.clone())
-            .text_size(px(12.))
+            .text_size(px(13.))
             .whitespace_nowrap()
             .overflow_hidden();
         let Some(sidebar) = &self.sidebar else {
@@ -1818,7 +1912,7 @@ impl Shell {
         let t = self.theme.clone();
         let h4 = |s: &str| {
             div()
-                .text_size(px(11.))
+                .text_size(px(12.))
                 .text_color(t.muted)
                 .font_weight(FontWeight::MEDIUM)
                 .child(s.to_uppercase())
@@ -1833,21 +1927,23 @@ impl Shell {
                 .child(a.w(px(w)).flex_none().whitespace_nowrap())
                 .child(b.flex_1().min_w_0())
         };
-        let mut steps = div().flex().flex_col().text_size(px(12.5));
+        let mut steps = div().flex().flex_col().text_size(px(13.5));
         for (i, s) in HELP_STEPS.iter().enumerate() {
             steps = steps.child(row(10., div().child((i + 1).to_string()), div().child(*s)));
         }
-        let mut keys = div().flex().flex_col().text_size(px(12.5));
+        let mut keys = div().flex().flex_col().text_size(px(13.5));
         for (k, v, _) in self.screen_hints(cx).iter().chain(
             [
                 ("Ctrl+Shift+O", "abrir arquivo", true),
+                ("Ctrl+Shift+F", "árvore de arquivos", true),
+                ("Alt+1…4", "Features, MRs, Vault, Auditoria", true),
                 ("Ctrl+Shift+P", "comandos", true),
             ]
             .iter(),
         ) {
             keys = keys.child(row(130., div().flex().child(self.kbd(k)), div().child(*v)));
         }
-        let mut nielsen = div().flex().flex_col().text_size(px(12.5));
+        let mut nielsen = div().flex().flex_col().text_size(px(13.5));
         for (i, (a, b)) in NIELSEN.iter().enumerate() {
             nielsen = nielsen.child(row(
                 170.,
@@ -1858,7 +1954,7 @@ impl Shell {
         let p = |s: &str| {
             div()
                 .text_color(t.muted)
-                .text_size(px(12.5))
+                .text_size(px(13.5))
                 .child(s.to_string())
         };
         div()
@@ -1876,7 +1972,7 @@ impl Shell {
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Ajuda"))
+            .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child("Ajuda"))
             .child(
                 div()
                     .flex()
@@ -1923,13 +2019,13 @@ impl Shell {
     fn hints(&self, cx: &App) -> Div {
         let t = &self.theme;
         let mut bar = div()
-            .h(px(22.))
+            .h(px(25.))
             .flex_none()
             .flex()
             .gap(px(14.))
             .items_center()
             .px(px(12.))
-            .text_size(px(11.5))
+            .text_size(px(12.5))
             .text_color(t.muted)
             .bg(t.panel)
             .border_t_1()
@@ -1963,11 +2059,11 @@ impl Shell {
                 .border_color(t.line)
         };
         let mut bar = div()
-            .h(px(24.))
+            .h(px(27.))
             .flex_none()
             .flex()
             .items_center()
-            .text_size(px(12.))
+            .text_size(px(13.))
             .bg(t.panel)
             .border_t_1()
             .border_color(t.line)
@@ -2098,6 +2194,7 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme.clone();
         self.window_active = window.is_window_active();
+        self.maximized = window.is_maximized();
         if std::mem::take(&mut self.want_dialog) {
             self.open_new_feature(window, cx);
         }
@@ -2259,7 +2356,7 @@ impl Render for Shell {
             .bg(t.panel)
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(self.title(cx))
             .child(
                 div()

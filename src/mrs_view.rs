@@ -705,7 +705,7 @@ impl MrsView {
                 .child(
                     div()
                         .font_family(t.mono.clone())
-                        .text_size(px(11.))
+                        .text_size(px(12.))
                         .child(n),
                 )
         };
@@ -800,7 +800,7 @@ impl MrsView {
                                     .flex()
                                     .gap(px(4.))
                                     .font_family(t.mono.clone())
-                                    .text_size(px(12.))
+                                    .text_size(px(13.))
                                     .truncate()
                                     .child(r.proj().to_string())
                                     .child(div().text_color(t.muted).child(format!("!{}", r.iid))),
@@ -811,7 +811,7 @@ impl MrsView {
                                     .w(px(120.))
                                     .flex_none()
                                     .truncate()
-                                    .text_size(px(12.))
+                                    .text_size(px(13.))
                                     .text_color(t.muted)
                                     .child(r.who.clone()),
                             )
@@ -820,7 +820,7 @@ impl MrsView {
                                 div().w(px(110.)).flex_none().child(
                                     div()
                                         .font_family(t.mono.clone())
-                                        .text_size(px(11.))
+                                        .text_size(px(12.))
                                         .px(px(7.))
                                         .rounded(px(10.))
                                         .border_1()
@@ -854,7 +854,7 @@ impl MrsView {
             .gap(px(10.))
             .text_center()
             .text_color(t.muted)
-            .child(div().text_size(px(15.)).text_color(t.fg).child(title))
+            .child(div().text_size(px(16.)).text_color(t.fg).child(title))
             .child(text)
     }
 
@@ -902,7 +902,7 @@ impl MrsView {
             .rounded(px(6.))
             .bg(t.raise)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .when(resolved, |d| d.opacity(0.7))
             .child(
                 div()
@@ -913,7 +913,7 @@ impl MrsView {
                     .py(px(6.))
                     .border_b_1()
                     .border_color(t.line)
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .text_color(t.muted)
                     .child(
                         div()
@@ -983,7 +983,7 @@ impl MrsView {
             .max_w(px(720.))
             .rounded(px(6.))
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .border_1()
             .when(d.error.is_none(), |x| {
                 x.border_dashed().bg(Hsla {
@@ -1002,11 +1002,11 @@ impl MrsView {
                     .py(px(6.))
                     .border_b_1()
                     .border_color(t.line)
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .text_color(t.muted)
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(yellow())
                             .child("RASCUNHO"),
@@ -1016,7 +1016,7 @@ impl MrsView {
                         x.child(
                             div()
                                 .font_family(t.mono.clone())
-                                .text_size(px(11.))
+                                .text_size(px(12.))
                                 .px(px(6.))
                                 .rounded(px(3.))
                                 .border_1()
@@ -1050,7 +1050,7 @@ impl MrsView {
                     .when_some(editing, |x, f| {
                         x.child(f).child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(13.))
                                 .text_color(t.muted)
                                 .child("Ctrl+⏎ salva · Esc cancela"),
                         )
@@ -1065,7 +1065,7 @@ impl MrsView {
                         x.child(format!("{label}{}", d.body))
                     })
                     .when_some(d.error.clone(), |x, e| {
-                        x.child(div().text_size(px(12.)).text_color(red()).child(e))
+                        x.child(div().text_size(px(13.)).text_color(red()).child(e))
                             .child(
                                 div()
                                     .flex()
@@ -1129,7 +1129,7 @@ impl MrsView {
                     x.child(
                         div()
                             .font_family(t.mono.clone())
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .px(px(7.))
                             .rounded(px(10.))
                             .border_1()
@@ -1218,7 +1218,7 @@ impl MrsView {
                                     .bg(t.accent)
                                     .text_color(rgb(0x282a36))
                                     .font_family(t.sans)
-                                    .text_size(px(12.))
+                                    .text_size(px(13.))
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -1272,7 +1272,7 @@ impl MrsView {
         let drafts = self.drafts.get(&row.key()).cloned().unwrap_or_default();
         let mut col = div()
             .id("mr-files")
-            .w(px(250.))
+            .w(px(270.))
             .flex_none()
             .h_full()
             .overflow_y_scroll()
@@ -1285,7 +1285,7 @@ impl MrsView {
                     .flex()
                     .items_center()
                     .px(px(10.))
-                    .text_size(px(11.))
+                    .text_size(px(12.))
                     .text_color(t.muted)
                     .border_b_1()
                     .border_color(t.line)
@@ -1321,14 +1321,14 @@ impl MrsView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .font_family(t.mono.clone())
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .child(div().text_color(t.muted).child(dir))
                             .child(name),
                     )
                     .child(
                         div()
                             .font_family(t.mono.clone())
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .text_color(if n > 0 { yellow() } else { t.muted })
                             .child(if n > 0 {
                                 format!("{n} rasc.")
@@ -1363,7 +1363,7 @@ impl MrsView {
                     .items_baseline()
                     .child(
                         div()
-                            .text_size(px(15.))
+                            .text_size(px(16.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(row.title.clone()),
                     )
@@ -1401,8 +1401,8 @@ impl MrsView {
                     .flex_col()
                     .pb(px(40.))
                     .font_family(t.mono.clone())
-                    .text_size(px(12.5))
-                    .line_height(px(20.));
+                    .text_size(px(13.5))
+                    .line_height(px(22.));
                 for (i, f) in o.files.iter().enumerate() {
                     list = list.child(self.file_block(i, f, o, cx));
                 }
@@ -1490,7 +1490,7 @@ impl MrsView {
                 .gap(px(6.))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .text_color(t.muted)
                         .child(legend.to_string()),
                 )
@@ -1564,7 +1564,7 @@ impl MrsView {
                                 .flex_col()
                                 .gap(px(4.))
                                 .font_family(t.mono.clone())
-                                .text_size(px(12.5))
+                                .text_size(px(13.5))
                                 .child(
                                     "· descrição do MR e todos os comentários existentes (dedup)",
                                 )
@@ -1596,7 +1596,7 @@ impl MrsView {
                     .flex_col()
                     .gap(px(4.))
                     .font_family(t.mono.clone())
-                    .text_size(px(12.5));
+                    .text_size(px(13.5));
                 for (k, s) in steps {
                     let (g, c, pl) = match *k {
                         "ok" => ("✓", t.ok, 0.),
@@ -1665,7 +1665,7 @@ impl MrsView {
                                             .gap(px(8.))
                                             .items_center()
                                             .font_family(t.mono.clone())
-                                            .text_size(px(12.))
+                                            .text_size(px(13.))
                                             .child(
                                                 div()
                                                     .px(px(6.))
@@ -1673,7 +1673,7 @@ impl MrsView {
                                                     .border_1()
                                                     .border_color(sc)
                                                     .text_color(sc)
-                                                    .text_size(px(11.))
+                                                    .text_size(px(12.))
                                                     .child(x.severity.clone()),
                                             )
                                             .child(format!(
@@ -1702,7 +1702,7 @@ impl MrsView {
                     .items_center()
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .text_color(t.muted)
                             .child(format!("US$ {}", crate::sidebar::brl(*cost))),
                     )
@@ -1816,7 +1816,7 @@ impl Render for MrsView {
             .bg(t.win)
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .children(self.files_panel(cx))
             .child(
                 div()

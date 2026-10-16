@@ -586,7 +586,7 @@ impl Render for Graph {
             .gap(px(6.))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .text_color(t.muted)
                     .font_weight(FontWeight::MEDIUM)
                     .child("GRAFO DO VAULT"),
@@ -597,7 +597,7 @@ impl Render for Graph {
                     .flex_wrap()
                     .gap(px(12.))
                     .items_center()
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .child(div().w(px(160.)).child(self.query.clone()))
                     .child(
                         opt(
@@ -719,7 +719,7 @@ impl Render for Graph {
                     .flex_wrap()
                     .gap(px(12.))
                     .items_center()
-                    .text_size(px(11.5))
+                    .text_size(px(12.5))
                     .text_color(t.muted)
                     .children(legend.iter().map(|(d, l)| {
                         div()

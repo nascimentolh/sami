@@ -70,10 +70,10 @@ impl Render for Confirm {
             .shadow_lg()
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(
                 div()
-                    .text_size(px(15.))
+                    .text_size(px(16.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(self.title.clone()),
             )
@@ -104,7 +104,7 @@ fn inline(t: &Theme, s: &str) -> Div {
             d = d.child(
                 div()
                     .font_family(t.mono.clone())
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .px(px(3.))
                     .rounded(px(3.))
                     .bg(t.panel)
@@ -188,10 +188,10 @@ impl Render for Choice {
             .shadow_lg()
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(
                 inline(t, &self.title)
-                    .text_size(px(15.))
+                    .text_size(px(16.))
                     .font_weight(FontWeight::SEMIBOLD),
             )
             .child(inline(t, &self.text).text_color(t.muted))
@@ -208,6 +208,6 @@ pub fn toast(t: &Theme, msg: &str) -> Div {
         .py(px(8.))
         .rounded(px(6.))
         .shadow_lg()
-        .text_size(px(12.5))
+        .text_size(px(13.5))
         .child(msg.to_string())
 }

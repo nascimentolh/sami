@@ -61,7 +61,7 @@ impl Render for Compare {
                 div()
                     .flex()
                     .gap(px(10.))
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .child(div().w(px(56.)).text_color(t.muted).child(k.to_string()))
                     .child(v)
             };
@@ -85,7 +85,7 @@ impl Render for Compare {
                         .child(
                             div()
                                 .font_family(t.mono.clone())
-                                .text_size(px(12.5))
+                                .text_size(px(13.5))
                                 .font_weight(FontWeight::BOLD)
                                 .child(a.inv.branch.clone()),
                         )
@@ -145,8 +145,8 @@ impl Render for Compare {
             .shadow_lg()
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
-            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(format!("Comparar tentativas · {}", self.group)))
+            .text_size(px(14.))
+            .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child(format!("Comparar tentativas · {}", self.group)))
             .child(div().text_color(t.muted).child(format!(
                 "Mesmo prompt, worktrees separadas{}. Escolha uma; as outras worktrees são removidas.",
                 if mixed { ", modelos diferentes" } else { "" }

@@ -445,8 +445,8 @@ impl VaultView {
             .flex()
             .flex_col()
             .gap(px(4.))
-            .text_size(px(13.))
-            .line_height(px(20.));
+            .text_size(px(14.))
+            .line_height(px(22.));
         let mut body = src;
         if let Some(rest) = src.strip_prefix("---\n")
             && let Some(end) = rest.find("\n---\n")
@@ -454,7 +454,7 @@ impl VaultView {
             out = out.child(
                 div()
                     .font_family(t.mono.clone())
-                    .text_size(px(11.5))
+                    .text_size(px(12.5))
                     .text_color(t.comment)
                     .child(rest[..end].replace('\n', " · ")),
             );
@@ -465,7 +465,7 @@ impl VaultView {
             if let Some(h) = l.strip_prefix("# ") {
                 out = out.child(
                     div()
-                        .text_size(px(15.))
+                        .text_size(px(16.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .mb(px(4.))
                         .child(self.text(h, id, cx)),
@@ -474,7 +474,7 @@ impl VaultView {
                 out = out.child(
                     div()
                         .mt(px(10.))
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .text_color(t.muted)
                         .font_weight(FontWeight::MEDIUM)
                         .child(h.to_uppercase()),
@@ -515,7 +515,7 @@ impl VaultView {
             .flex()
             .gap(px(8.))
             .items_center()
-            .text_size(px(12.))
+            .text_size(px(13.))
             .text_color(t.muted)
             .font_weight(FontWeight::MEDIUM)
             .child(title.to_uppercase())
@@ -564,10 +564,10 @@ impl VaultView {
                     div()
                         .flex_1()
                         .font_family(t.mono.clone())
-                        .text_size(px(12.5))
+                        .text_size(px(13.5))
                         .child(b.to_string()),
                 )
-                .child(div().text_size(px(11.)).text_color(t.muted).child(k))
+                .child(div().text_size(px(12.)).text_color(t.muted).child(k))
         };
         let log_n = vault::activity().len();
         let mut col = div()
@@ -585,7 +585,7 @@ impl VaultView {
                     .child(
                         div()
                             .font_family(t.mono.clone())
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .text_color(t.muted)
                             .truncate()
                             .child(crate::sidebar::tilde(&vault::dir().to_string_lossy())),
@@ -671,7 +671,7 @@ impl VaultView {
                     .px(px(12.))
                     .pt(px(12.))
                     .pb(px(4.))
-                    .text_size(px(11.))
+                    .text_size(px(12.))
                     .text_color(t.muted)
                     .child(label.to_uppercase())
                     .child(
@@ -701,14 +701,14 @@ impl VaultView {
                                 .min_w_0()
                                 .truncate()
                                 .font_family(t.mono.clone())
-                                .text_size(px(12.))
+                                .text_size(px(13.))
                                 .child(n.name.clone()),
                         )
                         .when(bl > 0, |d| {
                             d.child(
                                 div()
                                     .font_family(t.mono.clone())
-                                    .text_size(px(11.))
+                                    .text_size(px(12.))
                                     .text_color(t.muted)
                                     .child(format!("←{bl}")),
                             )
@@ -721,14 +721,14 @@ impl VaultView {
                 div()
                     .px(px(12.))
                     .py(px(6.))
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .text_color(t.muted)
                     .child("Nenhuma nota com esse nome."),
             );
         }
         div()
             .id("vault-left")
-            .w(px(250.))
+            .w(px(270.))
             .flex_none()
             .h_full()
             .overflow_y_scroll()
@@ -837,11 +837,11 @@ impl VaultView {
                             .py(px(6.))
                             .border_b_1()
                             .border_color(t.line)
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .text_color(t.muted)
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(px(12.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(yellow)
                                     .child("PRÉVIA"),
@@ -858,7 +858,7 @@ impl VaultView {
                             .child(
                                 div()
                                     .font_family(t.mono.clone())
-                                    .text_size(px(12.5))
+                                    .text_size(px(13.5))
                                     .child(sum.clone()),
                             )
                             .child(
@@ -940,11 +940,11 @@ impl VaultView {
                             .flex()
                             .gap(px(8.))
                             .items_center()
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .child(
                                 div()
                                     .font_family(t.mono.clone())
-                                    .text_size(px(11.))
+                                    .text_size(px(12.))
                                     .text_color(t.comment)
                                     .child(when),
                             )
@@ -985,7 +985,7 @@ impl VaultView {
                                         .bordered(false)
                                         .h_full()
                                         .font_family(t.mono.clone())
-                                        .text_size(px(12.5)),
+                                        .text_size(px(13.5)),
                                 ),
                         )
                         .child(
@@ -1095,14 +1095,14 @@ impl VaultView {
                             .items_baseline()
                             .child(
                                 div()
-                                    .text_size(px(15.))
+                                    .text_size(px(16.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(name.clone()),
                             )
                             .child(
                                 div()
                                     .font_family(t.mono.clone())
-                                    .text_size(px(12.))
+                                    .text_size(px(13.))
                                     .text_color(t.muted)
                                     .child(format!("~/vault/{key}")),
                             ),
@@ -1152,7 +1152,7 @@ impl Render for VaultView {
             .bg(t.win)
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(self.left(cx))
             .child(
                 div()

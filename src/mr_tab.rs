@@ -181,7 +181,7 @@ impl MrTab {
             .flex()
             .gap(px(8.))
             .items_center()
-            .text_size(px(12.))
+            .text_size(px(13.))
             .text_color(t.muted)
             .font_weight(FontWeight::MEDIUM)
             .child(title.into().to_uppercase())
@@ -198,7 +198,7 @@ impl MrTab {
             .gap(px(10.))
             .text_center()
             .text_color(t.muted)
-            .child(div().text_size(px(15.)).text_color(t.fg).child(title))
+            .child(div().text_size(px(16.)).text_color(t.fg).child(title))
             .child(text)
     }
 
@@ -231,7 +231,7 @@ impl MrTab {
                             .when(!c.detail.is_empty(), |d| {
                                 d.child(
                                     div()
-                                        .text_size(px(12.))
+                                        .text_size(px(13.))
                                         .text_color(t.muted)
                                         .font_family(t.mono.clone())
                                         .truncate()
@@ -246,7 +246,7 @@ impl MrTab {
             card.when(skipped, |d| {
                 d.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .text_color(t.muted)
                         .child("– não deu para checar: não barra o /mr."),
                 )
@@ -277,7 +277,7 @@ impl MrTab {
                         )
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(13.))
                                 .text_color(t.muted)
                                 .child("o override vai registrado na descrição do MR"),
                         ),
@@ -350,7 +350,7 @@ impl MrTab {
                             .py(px(6.))
                             .border_b_1()
                             .border_color(t.line)
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .text_color(t.muted)
                             .child(
                                 div()
@@ -502,7 +502,7 @@ impl Render for MrTab {
             .flex()
             .flex_col()
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(body)
     }
 }

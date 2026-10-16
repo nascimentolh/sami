@@ -183,7 +183,7 @@ impl Render for TextField {
             .border_1()
             .border_color(if focused { t.accent } else { t.line })
             .rounded(px(5.))
-            .text_size(px(13.))
+            .text_size(px(14.))
             .font_family(if self.mono {
                 t.mono.clone()
             } else {
@@ -217,7 +217,7 @@ pub fn checkbox(t: &Theme, on: bool) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .text_size(px(11.))
+        .text_size(px(12.))
         .text_color(rgb(0x282a36))
         .when(on, |d| d.child("✓"))
 }

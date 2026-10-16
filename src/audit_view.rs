@@ -619,7 +619,7 @@ impl AuditView {
                     .items_baseline()
                     .child(
                         div()
-                            .text_size(px(15.))
+                            .text_size(px(16.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("Auditoria · {}", self.name())),
                     )
@@ -643,7 +643,7 @@ impl AuditView {
                             .rounded(px(10.))
                             .border_1()
                             .font_family(t.mono.clone())
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .when(cached && self.report.is_some(), |d| {
                                 d.border_color(t.orange).text_color(t.orange)
                             })
@@ -678,7 +678,7 @@ impl AuditView {
             .gap(px(6.))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(px(13.))
                     .text_color(t.muted)
                     .child(legend.to_string()),
             )
@@ -890,7 +890,7 @@ impl AuditView {
             .flex_col()
             .gap(px(4.))
             .font_family(t.mono.clone())
-            .text_size(px(12.5));
+            .text_size(px(13.5));
         for (k, s) in &self.steps {
             let (g, c, pl) = match *k {
                 "ok" => ("✓", t.ok, 0.),
@@ -968,7 +968,7 @@ impl AuditView {
             })
             .text_color(c)
             .font_family(t.mono.clone())
-            .text_size(px(11.))
+            .text_size(px(12.))
             .whitespace_nowrap()
             .child(text)
     }
@@ -1011,7 +1011,7 @@ impl AuditView {
                     .child(
                         div()
                             .flex()
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .text_color(t.muted)
                             .child(div().font_family(t.mono.clone()).child(f.location.clone()))
                             .child(format!(
@@ -1039,7 +1039,7 @@ impl AuditView {
                         .child(
                             div()
                                 .min_h(px(220.))
-                                .text_size(px(12.5))
+                                .text_size(px(13.5))
                                 .child(field.clone()),
                         )
                         .child(
@@ -1093,8 +1093,8 @@ impl AuditView {
                                 .px(px(10.))
                                 .py(px(8.))
                                 .font_family(t.mono.clone())
-                                .text_size(px(12.5))
-                                .line_height(px(19.))
+                                .text_size(px(13.5))
+                                .line_height(px(21.))
                                 .whitespace_normal()
                                 .child(md(&t, &f.body())),
                         ),
@@ -1320,7 +1320,7 @@ impl Render for AuditView {
             .bg(t.win)
             .text_color(t.fg)
             .font_family(t.sans)
-            .text_size(px(13.))
+            .text_size(px(14.))
             .child(self.header(cx))
             .child(main)
     }

@@ -115,7 +115,7 @@ pub fn view(
                 .text_color(rgb(0xffffff))
                 .font_family(t.mono.clone())
                 .font_weight(FontWeight::BOLD)
-                .text_size(px(16.))
+                .text_size(px(17.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -151,17 +151,17 @@ pub fn view(
                 .child(
                     div()
                         .font_family(t.mono.clone())
-                        .text_size(px(12.5))
+                        .text_size(px(13.5))
                         .font_weight(FontWeight::BOLD)
                         .child(n.branch.clone()),
                 )
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(13.))
                         .text_color(t.muted)
                         .child(n.text.clone()),
                 )
-                .child(div().text_size(px(11.5)).text_color(t.accent).child(go)),
+                .child(div().text_size(px(12.5)).text_color(t.accent).child(go)),
         )
         .child(
             div().child(body).child(
