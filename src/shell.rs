@@ -16,6 +16,7 @@ use crate::{
     mascot::{self, Note},
     mrs_view::{self, MrsView},
     new_feature::{self, NewFeature},
+    news_view::{self, NewsView},
     palette_cmd::{self, Cmd, CommandPalette},
     review::{self, Redo, Review},
     sidebar::{Go, Sidebar, SidebarEvent},
@@ -68,6 +69,11 @@ pub struct Shell {
     /// o modo MRs (inbox, MR e revisor)
     mrs: Option<Entity<MrsView>>,
     in_mrs: bool,
+    /// o modo News (daily.dev); nasce com o app para a contagem e o Resumo do dia
+    news: Entity<NewsView>,
+    in_news: bool,
+    /// o Resumo do dia na tela (não bloqueia nada)
+    brief: bool,
     /// o modo Auditoria (dentro de Features, como no protótipo)
     audit: Option<Entity<AuditView>>,
     in_audit: bool,
@@ -112,6 +118,13 @@ const MR_HINTS: &[(&str, &str, bool)] = &[
 const AUDIT_HINTS: &[(&str, &str, bool)] = &[
     ("Nova auditoria…", "incremental ou completa", true),
     ("espaço", "marcar achado", true),
+    ("?", "atalhos", true),
+];
+
+const NEWS_HINTS: &[(&str, &str, bool)] = &[
+    ("Alt+5", "News", true),
+    ("título", "abrir", true),
+    ("Não relevante", "oculta só aqui", true),
     ("?", "atalhos", true),
 ];
 
@@ -227,6 +240,35 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Self {
         let sidebar_present = sidebar.is_some();
+        let news = cx.new(|cx| NewsView::new(theme.clone(), anchors.clone(), cx));
+        cx.subscribe(
+            &news,
+            |this: &mut Self, _, e: &news_view::Event, cx| match e {
+                news_view::Event::Toast(t) => this.toast(t.clone(), cx),
+                news_view::Event::Vault(w) => this.toast_undo(
+                    format!("vault: {}", w.desc),
+                    Some(Redo::Vault(w.clone())),
+                    cx,
+                ),
+                news_view::Event::Hidden(m, rule) => {
+                    this.toast_undo(m.clone(), Some(Redo::News(rule.clone())), cx)
+                }
+                news_view::Event::Ready => {
+                    // a primeira abertura do dia: o Resumo, se houver o que mostrar
+                    let today = crate::vault::today();
+                    if crate::news::has_token()
+                        && !this.news.read(cx).brief().is_empty()
+                        && crate::news::brief_due(&today)
+                    {
+                        crate::news::brief_shown(&today);
+                        this.brief = true;
+                        cx.notify();
+                    }
+                }
+            },
+        )
+        .detach();
+        cx.observe(&news, |_, _, cx| cx.notify()).detach();
         if let Some(s) = &sidebar {
             cx.observe(s, |this: &mut Self, s, cx| {
                 // ir para a feature (por qualquer caminho) dispensa o mascote dela, como o `selectFeat`
@@ -348,6 +390,9 @@ impl Shell {
             choice: None,
             vault: None,
             in_vault: false,
+            news,
+            in_news: false,
+            brief: false,
             mrs: None,
             in_mrs: false,
             audit: None,
@@ -381,6 +426,7 @@ impl Shell {
                 "2" => Cmd::Mrs,
                 "3" => Cmd::Vault(crate::palette_cmd::VaultGo::Open),
                 "4" => Cmd::Audit(false),
+                "5" => Cmd::News,
                 _ => return,
             };
             cx.stop_propagation();
@@ -466,6 +512,7 @@ impl Shell {
 
     /// Volta para o terminal de Features (feature escolhida pela lateral ou por Ctrl+Shift+1…9).
     fn leave_modes(&mut self) {
+        self.in_news = false;
         self.in_vault = false;
         self.in_mrs = false;
         self.in_audit = false;
@@ -1224,6 +1271,7 @@ impl Shell {
                 vault_view::Event::Toast(m, redo) => this.toast_undo(m.clone(), redo.clone(), cx),
                 vault_view::Event::Focus(p) => {
                     this.in_vault = false;
+                    this.in_news = false;
                     if let Some(s) = &this.sidebar {
                         s.read(cx).focus(p.clone());
                     }
@@ -1728,6 +1776,7 @@ impl Shell {
             Cmd::Files => {
                 self.left = true;
                 self.in_vault = false;
+                self.in_news = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 if let Some(s) = &self.sidebar {
@@ -1758,6 +1807,7 @@ impl Shell {
                     });
                 }
                 self.in_vault = false;
+                self.in_news = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 window.focus(&self.terminal.read(cx).focus_handle(), cx);
@@ -1784,6 +1834,7 @@ impl Shell {
             Cmd::ToggleLeft => self.left = !self.left,
             Cmd::Features => {
                 self.in_vault = false;
+                self.in_news = false;
                 self.in_mrs = false;
                 self.in_audit = false;
             }
@@ -1795,6 +1846,7 @@ impl Shell {
                 }
                 self.in_audit = true;
                 self.in_vault = false;
+                self.in_news = false;
                 self.in_mrs = false;
                 let f = a.read(cx).focus_handle();
                 window.focus(&f, cx);
@@ -1807,6 +1859,7 @@ impl Shell {
                 let m = self.mrs_view(window, cx);
                 self.in_mrs = true;
                 self.in_vault = false;
+                self.in_news = false;
                 self.in_audit = false;
                 if cmd == Cmd::MrReview {
                     m.update(cx, |m, cx| m.start_review(cx));
@@ -1827,6 +1880,7 @@ impl Shell {
                 let v = self.vault_view(window, cx);
                 v.update(cx, |v, cx| v.go(&to, repo, cx));
                 self.in_vault = true;
+                self.in_news = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 let f = v.read(cx).focus_handle();
@@ -1835,6 +1889,26 @@ impl Shell {
                     self.tour = Some((tour::VAULT, "vault", 0));
                 }
                 return cx.notify();
+            }
+            Cmd::News => {
+                self.brief = false;
+                self.in_news = true;
+                self.in_vault = false;
+                self.in_mrs = false;
+                self.in_audit = false;
+                let f = self.news.read(cx).focus_handle();
+                window.focus(&f, cx);
+                if self.tour.is_none() && !tour::seen("news") {
+                    self.tour = Some((tour::NEWS, "news", 0));
+                }
+                return cx.notify();
+            }
+            Cmd::NewsBrief => {
+                if crate::news::has_token() {
+                    self.brief = true;
+                } else {
+                    self.toast("Resumo do dia precisa do token do daily.dev".into(), cx);
+                }
             }
             Cmd::NewFeature => return self.open_new_feature(window, cx),
             Cmd::RemoveFeature => return self.remove_feature(window, cx),
@@ -2126,7 +2200,7 @@ impl Shell {
                     .child(
                         mode(
                             "Features",
-                            !self.in_vault && !self.in_mrs,
+                            !self.in_vault && !self.in_mrs && !self.in_news,
                             (blocked > 0).then(|| format!("{blocked} !")),
                         )
                         .id("m-feat")
@@ -2157,7 +2231,35 @@ impl Shell {
                             .on_click(cx.listener(|this, _, w, cx| {
                                 this.run(Cmd::Vault(crate::palette_cmd::VaultGo::Open), w, cx)
                             })),
-                    ),
+                    )
+                    .child({
+                        // sem token o modo existe, apagado, com o passo a passo dentro
+                        let n = self.news.read(cx).count();
+                        div()
+                            .id("m-news")
+                            .flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .px(px(10.))
+                            .py(px(3.))
+                            .rounded(px(5.))
+                            .text_color(if self.in_news { t.fg } else { t.muted })
+                            .when(self.in_news, |d| d.bg(t.raise))
+                            .when(!crate::news::has_token(), |d| d.opacity(0.45))
+                            .child("News")
+                            .when(n > 0, |d| {
+                                d.child(
+                                    div()
+                                        .font_family(t.mono.clone())
+                                        .text_size(px(12.))
+                                        .text_color(t.cyan)
+                                        .child(n.to_string()),
+                                )
+                            })
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::News, w, cx)))
+                    }),
             )
             .child(
                 div()
@@ -2356,10 +2458,134 @@ impl Shell {
         }
     }
 
+    /// O Resumo do dia (`paintBrief` do protótipo): no canto, sem bloquear o terminal.
+    fn brief_panel(&self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme.clone();
+        const MESES: [&str; 12] = [
+            "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez",
+        ];
+        let today = crate::vault::today();
+        let date = match (
+            today.get(8..10),
+            today.get(5..7).and_then(|m| m.parse::<usize>().ok()),
+        ) {
+            (Some(d), Some(m)) if (1..=12).contains(&m) => {
+                format!("{} {}", d.trim_start_matches('0'), MESES[m - 1])
+            }
+            _ => today.clone(),
+        };
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .px(px(12.))
+            .py(px(8.))
+            .text_size(px(12.5));
+        for (i, (title, why)) in self.news.read(cx).brief().into_iter().enumerate() {
+            list = list.child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .w(px(12.))
+                            .flex_none()
+                            .text_color(t.muted)
+                            .child(format!("{}.", i + 1)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(title)
+                            .child(div().text_size(px(11.5)).text_color(t.muted).child(why)),
+                    ),
+            );
+        }
+        div()
+            .absolute()
+            .top(px(46.))
+            .right(px(14.))
+            .w(px(400.))
+            .bg(t.raise)
+            .border_1()
+            .border_color(t.line)
+            .rounded(px(8.))
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(12.))
+                    .py(px(10.))
+                    .border_b_1()
+                    .border_color(t.line)
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Resumo do dia"),
+                    )
+                    .child(
+                        div()
+                            .text_color(t.muted)
+                            .child(format!("{date} · daily.dev")),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id("br-x")
+                            .cursor_pointer()
+                            .text_color(t.muted)
+                            .hover(|d| d.text_color(t.fg))
+                            .child("×")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.brief = false;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(list)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(12.))
+                    .py(px(8.))
+                    .border_t_1()
+                    .border_color(t.line)
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(t.muted)
+                            .child("aparece na primeira abertura do dia"),
+                    )
+                    .child(div().flex_1())
+                    .child(button(&t, "br-c", "Fechar", false).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.brief = false;
+                            cx.notify();
+                        },
+                    )))
+                    .child(
+                        button(&t, "br-o", "Abrir News", true)
+                            .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::News, w, cx))),
+                    ),
+            )
+    }
+
     /// As dicas da tela atual (o `HINTS[S.mode]` do protótipo).
     fn screen_hints(&self, cx: &App) -> &'static [(&'static str, &'static str, bool)] {
         let mr_open = self.mrs.as_ref().is_some_and(|m| m.read(cx).in_mr());
-        if self.in_audit {
+        if self.in_news {
+            NEWS_HINTS
+        } else if self.in_audit {
             AUDIT_HINTS
         } else if self.in_vault {
             VAULT_HINTS
@@ -2401,7 +2627,7 @@ impl Shell {
             [
                 ("Ctrl+Shift+O", "abrir arquivo", true),
                 ("Ctrl+Shift+F", "árvore de arquivos", true),
-                ("Alt+1…4", "Features, MRs, Vault, Auditoria", true),
+                ("Alt+1…5", "Features, MRs, Vault, Auditoria, News", true),
                 ("Ctrl+Shift+P", "comandos", true),
                 ("Ctrl+Shift+K", "comando por descrição", true),
             ]
@@ -2899,7 +3125,9 @@ impl Render for Shell {
                     .children(
                         self.sidebar
                             .clone()
-                            .filter(|_| self.left && !self.in_vault && !self.in_mrs)
+                            .filter(|_| {
+                                self.left && !self.in_vault && !self.in_mrs && !self.in_news
+                            })
                             .map(|s| {
                                 div()
                                     .flex()
@@ -2912,28 +3140,34 @@ impl Render for Shell {
                     .when_some(self.audit.clone().filter(|_| self.in_audit), |d, a| {
                         d.child(a)
                     })
-                    .when(!self.in_vault && !self.in_mrs && !self.in_audit, |d| {
-                        d.child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .h_full()
-                                .flex()
-                                .flex_col()
-                                .bg(t.win)
-                                .relative()
-                                .child(tour::anchor(&self.anchors, "term"))
-                                .child(self.hbar(
-                                    cx.listener(|this, _, w, cx| this.run(Cmd::TaskMenu, w, cx)),
-                                    cx,
-                                ))
-                                .child(div().flex_1().min_h_0().child(self.terminal.clone())),
-                        )
-                    })
+                    .when_some(self.in_news.then(|| self.news.clone()), |d, n| d.child(n))
+                    .when(
+                        !self.in_vault && !self.in_mrs && !self.in_audit && !self.in_news,
+                        |d| {
+                            d.child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .flex()
+                                    .flex_col()
+                                    .bg(t.win)
+                                    .relative()
+                                    .child(tour::anchor(&self.anchors, "term"))
+                                    .child(self.hbar(
+                                        cx.listener(|this, _, w, cx| this.run(Cmd::TaskMenu, w, cx)),
+                                        cx,
+                                    ))
+                                    .child(div().flex_1().min_h_0().child(self.terminal.clone())),
+                            )
+                        },
+                    )
                     .children(
                         self.review
                             .clone()
-                            .filter(|_| !self.in_vault && !self.in_mrs && !self.in_audit)
+                            .filter(|_| {
+                                !self.in_vault && !self.in_mrs && !self.in_audit && !self.in_news
+                            })
                             .map(|r| {
                                 div()
                                     .map(|d| match self.right_w {
@@ -3099,6 +3333,9 @@ impl Render for Shell {
                         )),
                 )
             })
+            .when(self.brief && self.tour.is_none() && !self.help, |d| {
+                d.child(self.brief_panel(cx))
+            })
             .when(!self.toasts.is_empty(), |d| {
                 let mut col = div()
                     .absolute()
@@ -3147,6 +3384,10 @@ impl Render for Shell {
                                             if let Some(m) = &this.mrs {
                                                 m.update(cx, |m, cx| m.undo(cx));
                                             }
+                                            Ok(())
+                                        }
+                                        Redo::News(rule) => {
+                                            this.news.update(cx, |n, cx| n.unhide(rule, cx));
                                             Ok(())
                                         }
                                         Redo::Audit(ig) => {

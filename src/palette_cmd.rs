@@ -55,6 +55,8 @@ pub enum Cmd {
     Task(String, String),
     Problems,
     Kcmd,
+    News,
+    NewsBrief,
 }
 
 #[derive(Clone)]
@@ -148,6 +150,8 @@ pub fn commands() -> Vec<Item> {
         c("Ir para: MRs", "Alt+2", Some(Mrs)),
         c("Arquivos: Árvore do projeto", "Ctrl+Shift+F", Some(Files)),
         c("MR: Revisar com Claude", "⇧R", Some(MrReview)),
+        c("Ir para: News", "Alt+5", Some(News)),
+        c("News: Resumo do dia", "", Some(NewsBrief)),
         c("Ajuda: Atalhos e decisões de UX", "?", Some(Help)),
         c("Terminal: Rodar tarefa…", "", Some(TaskMenu)),
         c("Editor: Problemas", "", Some(Problems)),
