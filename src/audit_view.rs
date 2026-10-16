@@ -691,9 +691,7 @@ impl AuditView {
                 .when(on, |d| d.bg(t.accent))
         };
         let files = self.since.map_or(0, |x| x.1);
-        let input = |f: &Entity<TextField>, w: f32| {
-            div().w(px(w)).child(f.clone())
-        };
+        let input = |f: &Entity<TextField>, w: f32| div().w(px(w)).child(f.clone());
         let inc_base = match &self.report {
             Some(r) => div().font_family(t.mono.clone()).child(r.sha.clone()),
             // sem relatório salvo, a incremental pergunta o sha

@@ -170,6 +170,8 @@ Conferido numa cópia do vault (`MAESTRO_VAULT`): a feature nova de um repo `bot
 
 **Pronto quando:** a incremental no email-service desde um sha antigo não devolve nenhum dos #15 a #50 como "novo".
 
+Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2` (49 commits, 79 arquivos), US$ 1,66 de 4. Voltaram 2 achados, nenhum dos #15–#50 (P1 `jobId` fixo do dispatch deixa o reprocess de FAILED sem efeito; P2 cardinalidade da label `application` das métricas). GitLab só lido; escrita bloqueada por um `glab` falso.
+
 ---
 
 ## Backlog (não entra sem decisão)

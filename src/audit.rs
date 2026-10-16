@@ -526,7 +526,8 @@ why: uma frase curta em português. Não altere arquivos.
     )
 }
 
-/// Ferramentas só de leitura, sem hooks nem MCP do projeto (`--setting-sources user`).
+/// Só leitura de verdade: `--restricted` ignora os settings (hooks e `allow` do usuário) e prende os arquivos ao repo;
+/// o Bash só existe para os `git` de leitura.
 pub fn claude_args(schema: &str, budget: f64) -> Vec<String> {
     [
         "-p",
@@ -538,8 +539,10 @@ pub fn claude_args(schema: &str, budget: f64) -> Vec<String> {
         "--max-budget-usd",
         &format!("{budget:.2}"),
         "--no-session-persistence",
-        "--setting-sources",
-        "user",
+        "--restricted",
+        "--strict-mcp-config",
+        "--tools",
+        "Read,Grep,Glob,Bash",
         "--allowedTools",
         "Bash(git diff:*)",
         "Bash(git log:*)",
