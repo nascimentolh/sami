@@ -158,6 +158,29 @@ fn glab(root: &Path, endpoint: &str) -> Result<Value, Fetch> {
     serde_json::from_slice(&out.stdout).map_err(|e| Fetch::Err(e.to_string()))
 }
 
+/// "Mover p/ main" da pilha: o alvo do MR muda no GitLab (só depois da confirmação, pelo `mrs::write`).
+pub fn retarget(m: &Mr, branch: &str) -> Result<(), String> {
+    crate::mrs::write(
+        "PUT",
+        &retarget_endpoint(m).ok_or("o MR não tem link do GitLab")?,
+        &serde_json::json!({ "target_branch": branch }),
+    )
+    .map(drop)
+}
+
+/// `https://gitlab.com/g/p/-/merge_requests/7` → `projects/g%2Fp/merge_requests/7`.
+fn retarget_endpoint(m: &Mr) -> Option<String> {
+    let path = m
+        .web_url
+        .split_once("://")?
+        .1
+        .split_once('/')?
+        .1
+        .split_once("/-/merge_requests/")?
+        .0;
+    Some(format!("projects/{}/merge_requests/{}", enc(path), m.iid))
+}
+
 /// O MR mais recente da branch. Só lê: o que escreve no GitLab são as skills (`/mr`, `/comentario`).
 pub fn fetch(root: &Path, branch: &str) -> Fetch {
     let remote = Command::new("git")
@@ -199,6 +222,27 @@ pub fn fetch(root: &Path, branch: &str) -> Fetch {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn alvo_do_mr_pelo_link() {
+        let m = super::Mr {
+            iid: 7,
+            merged: false,
+            closed: false,
+            web_url: "https://gitlab.com/ctbz/experts/bots-api/-/merge_requests/7".into(),
+            title: String::new(),
+            target: "feat/mae".into(),
+            pipe: super::Status::None,
+            job: None,
+            sonar: super::Status::None,
+            comments: Vec::new(),
+        };
+        assert_eq!(
+            super::retarget_endpoint(&m).as_deref(),
+            Some("projects/ctbz%2Fexperts%2Fbots-api/merge_requests/7")
+        );
+    }
+
     use super::{Status, enc, parse};
     use serde_json::json;
 

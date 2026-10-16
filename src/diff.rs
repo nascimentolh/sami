@@ -179,7 +179,9 @@ pub fn parse(text: &str) -> Vec<FileDiff> {
 }
 
 fn git(root: &Path, args: &[&str]) -> Option<String> {
+    // leitura de fundo não pega o index.lock: um rebase ou commit no terminal ao mesmo tempo não quebra
     let out = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(root)
         .args(args)
@@ -192,10 +194,13 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
 
 /// Tudo que a worktree mudou desde a base (commitado ou não), mais os arquivos novos ainda não rastreados.
 pub fn worktree(root: &Path) -> Option<(String, Vec<FileDiff>)> {
-    let base = ["main", "master"]
-        .into_iter()
-        .find(|b| git(root, &["rev-parse", "--verify", "--quiet", b]).is_some())?;
-    let fork = git(root, &["merge-base", "HEAD", base])?;
+    let base = crate::feature::stack_base(root).or_else(|| {
+        ["main", "master"]
+            .into_iter()
+            .find(|b| git(root, &["rev-parse", "--verify", "--quiet", b]).is_some())
+            .map(String::from)
+    })?;
+    let fork = git(root, &["merge-base", "HEAD", &base])?;
     let mut files = parse(&git(
         root,
         &["diff", "--no-color", "--no-ext-diff", fork.trim()],
@@ -211,7 +216,7 @@ pub fn worktree(root: &Path) -> Option<(String, Vec<FileDiff>)> {
             .ok()?;
         files.extend(parse(&String::from_utf8_lossy(&out.stdout)));
     }
-    Some((base.into(), files))
+    Some((base, files))
 }
 
 /// "Testes afetados": o runner do repo com os arquivos mudados (o protótipo usa ripwire + `--findRelatedTests`).
