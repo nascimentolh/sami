@@ -377,6 +377,7 @@ legend{color:var(--muted);font-size:12px;padding:0 4px}
 .tour-pop .wait{color:var(--accent);font-size:12px}
 
 /* rodada 3: diff lado a lado, colapsar, gerados, respostas, merge */
+.fh .vw{font-size:12px;color:var(--muted);display:flex;gap:5px;align-items:center;cursor:pointer;margin-left:6px}
 .fh .tw{width:16px;color:var(--muted);font:12px var(--mono);text-align:center}
 .fh.col{cursor:pointer}
 .fh .ask{font:12px var(--mono);padding:0 6px;border:1px solid var(--line);border-radius:4px;color:var(--muted)}
@@ -781,7 +782,7 @@ function sh(f,t,cmd){
 FEATS.forEach(f=>{ mkTabs(f); if(f.kind==='ws') sh(f,0,'ls'); else sh(f,1,'git status'); });
 
 const MRS = [
-  {g:'rev', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:124, title:'feat: retry no webhook', who:'@bruno.costa', ci:'success', st:'new', unread:true, src:'feat/retry-webhook', tgt:'main', sha:'9e41c07', approvals:1, squash:true, rmSrc:true},
+  {g:'rev', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:124, title:'feat: retry no webhook', desc:'## O que muda\n- \`Handler.run\` tenta de novo quando o webhook responde erro, em vez de lançar na hora.\n- Novo \`src/retry.ts\` com o número de tentativas configurável.\n\n## Como testar\n- \`npm test -- handler\`\n- Derrube o endpoint do bot e veja 3 tentativas no log.', who:'@bruno.costa', ci:'success', st:'new', unread:true, src:'feat/retry-webhook', tgt:'main', sha:'9e41c07', approvals:1, squash:true, rmSrc:true},
   {g:'rev', proj:'zendesk-agents', path:'ctbz/experts/atendimento/zendesk-agents', iid:88, title:'fix: timeout na sincronização de tickets', who:'@carla.dias', ci:'running', st:'inc', inc:2, sha:'a2f9c1e', approvals:0, squash:false, rmSrc:true},
   {g:'rev', proj:'atendimento-canais', path:'ctbz/experts/atendimento/atendimento-canais', iid:301, title:'chore: atualiza dependências', who:'@diego.alves', ci:'failed', st:'done', sha:'51bb0d2', approvals:0, approved:true},
   {g:'mine', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:119, title:'refactor: extrai SlackClient', who:'você', ci:'success', st:'threads', threads:2, reply:'@ana.lima'},
@@ -819,7 +820,7 @@ const FINDINGS = [
 const S = { mode:'feat', fid:'health', left:true, right:false, ltab:'changes', rtab:'review', file:null, ln:1, col:1,
   ibox:'rev', q:'', isel:0, mr:null, sel:null, drafts:[], editing:null, undo:[], reviewed:{}, mq:[], mascot:null,
   layout:'split', hideGen:true, collapsed:new Set(), genOpen:false, replying:null, taskProbs:[], lspOff:{}, hist:null,
-  newsToken:true, newsOnlyAff:false, nsel:0 };
+  newsToken:true, newsOnlyAff:false, nsel:0, viewed:new Set(), vchanged:new Set(['src/handler.ts']), descOpen:true, curFile:null };
 const feat = id => FEATS.find(f=>f.id===(id||S.fid));
 let did=0;
 
@@ -1315,7 +1316,7 @@ function lineExtras(f,l,ctx,side){
 }
 function diffFile(f,ctx){
   const {a,r}=counts(f), mr=ctx==='mr', ro=mr||ctx==='hist', col=mr&&S.collapsed.has(f.path), split=mr&&S.layout==='split';
-  let h=`<div id="F-${f.path}"><div class="fh ${mr?'col':''}" ${mr?`data-col="${f.path}" title="Clique para ${col?'expandir':'colapsar'}"`:''}>${mr?`<span class="tw" aria-hidden="true">${col?'▸':'▾'}</span>`:''}<span class="p">${f.path}</span>${f.isNew?'<span class="pill new">novo</span>':''}${f.gen?'<span class="pill gen" title="lockfile ou arquivo gerado">gerado</span>':''}<span class="plus">+${a}</span><span class="minus">−${r}</span>${f.userEdited?'<span class="badge">editado por você</span>':''}${!ro&&f.turn?`<span class="muted" style="font-size:11px">turno ${f.turn}</span>`:''}<span class="sp"></span>${col?`<span class="muted" style="font-size:12px">${THREADS.filter(t=>t.file===f.path).length?THREADS.filter(t=>t.file===f.path).length+' thread(s) · ':''}colapsado</span>`:''}${!ro&&F[f.path]?`<button class="btn" data-open="${f.path}">Abrir no editor</button>`:''}</div>`;
+  let h=`<div id="F-${f.path}"><div class="fh ${mr?'col':''}" ${mr?`data-col="${f.path}" title="Clique para ${col?'expandir':'colapsar'}"`:''}>${mr?`<span class="tw" aria-hidden="true">${col?'▸':'▾'}</span>`:''}<span class="p">${f.path}</span>${f.isNew?'<span class="pill new">novo</span>':''}${f.gen?'<span class="pill gen" title="lockfile ou arquivo gerado">gerado</span>':''}<span class="plus">+${a}</span><span class="minus">−${r}</span>${f.userEdited?'<span class="badge">editado por você</span>':''}${!ro&&f.turn?`<span class="muted" style="font-size:11px">turno ${f.turn}</span>`:''}<span class="sp"></span>${col?`<span class="muted" style="font-size:12px">${THREADS.filter(t=>t.file===f.path).length?THREADS.filter(t=>t.file===f.path).length+' thread(s) · ':''}${S.viewed.has(f.path)?'visto':'colapsado'}</span>`:''}${mr&&S.vchanged.has(f.path)?'<span class="pill inc" title="mudou num commit depois que você marcou como visto">mudou desde que você viu</span>':''}${mr?`<label class="vw" data-vw="${f.path}" title="Marcar como visto (V)"><input type="checkbox" ${S.viewed.has(f.path)?'checked':''}> Visto</label>`:''}${!ro&&F[f.path]?`<button class="btn" data-open="${f.path}">Abrir no editor</button>`:''}</div>`;
   if(col) return h+'</div>';
   f.hunks.forEach((hk,hi)=>{
     const ask=ctx!=='hist'?`<button class="ask" data-ask="${f.path}|${hi}" title="Perguntar ao Claude sobre este bloco (?)">?</button>`:'';
@@ -1399,20 +1400,22 @@ function stPill(m){ if(m.merged) return '<span class="pill ok">mergeado</span>';
 function dotOf(m){ if(m.reply) return `<span class="unread rep" title="nova resposta de ${m.reply}"></span>`; return m.unread&&!isReviewed(m)?'<span class="unread" title="MR novo"></span>':''; }
 function renderInbox(el){
   const rows=inboxRows(); S.isel=Math.min(S.isel,Math.max(rows.length-1,0));
-  el.innerHTML=`<div class="ibar"><div class="seg">${Object.entries(GROUPS).map(([k,v])=>`<button aria-pressed="${S.ibox===k}" data-g="${k}">${v}<span class="count">${MRS.filter(m=>inGroup(m,k)).length}</span></button>`).join('')}</div><span class="sp"></span><input id="iq" placeholder="filtrar  ( / )" value="${esc(S.q)}" aria-label="Filtrar MRs"></div>`+
+  el.innerHTML=`<div class="ibar"><div class="seg">${Object.entries(GROUPS).map(([k,v])=>`<button aria-pressed="${S.ibox===k}" data-g="${k}">${v}<span class="count">${MRS.filter(m=>inGroup(m,k)).length}</span></button>`).join('')}</div><span class="sp"></span><button class="btn" id="iRf" title="A inbox relê sozinha a cada 60 s (R)">↻</button><input id="iq" placeholder="filtrar  ( / )" value="${esc(S.q)}" aria-label="Filtrar MRs"></div>`+
     (rows.length?'<div class="list">'+rows.map((m,i)=>`<div class="row ${i===S.isel?'on':''}" data-i="${i}"><span class="uw">${dotOf(m)}</span><span class="proj">${m.proj} <span class="muted">!${m.iid}</span></span><span class="t">${esc(m.title)}</span><span class="who">${m.who}</span><span class="ci ${m.ci}">${ciTxt(m.ci)}</span>${stPill(m)}</div>`).join('')+'</div>'
      :S.q?`<div class="empty"><h3>Nenhum MR bate com “${esc(S.q)}”</h3><p><kbd>Esc</kbd> limpa o filtro.</p></div>`:`<div class="empty"><h3>Nada aqui</h3><p>${S.ibox==='done'?'MRs que você já revisou ou aprovou aparecem aqui.':'Nenhum MR nesta aba.'}</p></div>`);
   el.querySelectorAll('[data-g]').forEach(b=>b.onclick=()=>{ S.ibox=b.dataset.g; S.isel=0; renderInbox(el); });
   el.querySelectorAll('.row').forEach(r=>{ r.onclick=()=>{ S.isel=+r.dataset.i; renderInbox(el); }; r.ondblclick=()=>openMR(rows[+r.dataset.i]); });
+  $('#iRf').onclick=()=>toast('Inbox atualizada');
   $('#iq').oninput=e=>{ S.q=e.target.value; S.isel=0; const p=e.target.selectionStart; renderInbox(el); const i=$('#iq'); i.focus(); i.setSelectionRange(p,p); };
 }
 function openMR(m){ if(!m) return; if(m.iid===124) m.reply=null; S.mr=m; S.mode='mr'; S.sel=null; render(); }
 function renderMRFiles(el){
   if(!S.mr||S.mr.iid!==124){ el.innerHTML=''; return; }
   const row=f=>{ const {a,r}=counts(f); const n=S.drafts.filter(d=>d.ctx==='mr'&&d.file===f.path&&d.state!=='posted').length; const [dir,nm]=split(f.path);
-    return `<button data-j="${f.path}"><span class="nm"><span class="tw" data-tw="${f.path}" role="button" title="${S.collapsed.has(f.path)?'Expandir':'Colapsar'}">${S.collapsed.has(f.path)?'▸':'▾'}</span><span class="dir">${dir}</span>${nm}</span><span class="st ${n?'d':''}">${n?n+' rasc.':`+${a} −${r}`}</span></button>`; };
+    const v=S.viewed.has(f.path);
+    return `<button data-j="${f.path}" style="${v?'opacity:.55':''}"><span class="nm"><span class="tw" data-tw="${f.path}" role="button" title="${S.collapsed.has(f.path)?'Expandir':'Colapsar'}">${v?'✓':S.collapsed.has(f.path)?'▸':'▾'}</span><span class="dir">${dir}</span>${nm}</span><span class="st ${n?'d':S.vchanged.has(f.path)?'d':''}">${n?n+' rasc.':S.vchanged.has(f.path)?'mudou':`+${a} −${r}`}</span></button>`; };
   const vis=D_MR.filter(f=>!f.gen), gen=D_MR.filter(f=>f.gen);
-  el.innerHTML=`<div class="phead">Arquivos do MR<span class="sp"></span><span class="mono" style="text-transform:none;letter-spacing:0">${D_MR.length}</span></div><div class="flist">`+vis.map(row).join('')
+  el.innerHTML=`<div class="phead">Arquivos do MR<span class="sp"></span><span class="mono" style="text-transform:none;letter-spacing:0">${S.viewed.size}/${D_MR.length} vistos</span></div><div class="flist">`+vis.map(row).join('')
     +(gen.length?`<button class="gsec" data-gsec aria-expanded="${S.genOpen}"><span>${S.genOpen?'▾':'▸'} Gerados (${gen.length})</span><span>${S.hideGen?'ocultos no diff':''}</span></button>${S.genOpen?gen.map(row).join(''):''}`:'')+'</div>';
   el.querySelectorAll('[data-j]').forEach(b=>b.onclick=e=>{ const p=b.dataset.j;
     if(e.target.dataset.tw){ S.collapsed.has(p)?S.collapsed.delete(p):S.collapsed.add(p); rerender(); return; }
@@ -1420,6 +1423,14 @@ function renderMRFiles(el){
     const t=document.getElementById('F-'+p); if(t) t.scrollIntoView({block:'start'}); });
   const g=el.querySelector('[data-gsec]'); if(g) g.onclick=()=>{ S.genOpen=!S.genOpen; renderMRFiles(el); };
 }
+function refreshMR(m){ toast(`Atualizando ${m.proj} !${m.iid}…`); setTimeout(()=>{ if(S.mode==='mr') rerender(); toast(`${m.proj} !${m.iid} atualizado: nada novo desde a última leitura`); },700); }
+function openGitlab(m){ toast(`Abriria no navegador: gitlab.com/${m.path}/-/merge_requests/${m.iid}`); }
+function toggleViewed(p,next){ const on=!S.viewed.has(p); S.vchanged.delete(p);
+  if(on){ S.viewed.add(p); S.collapsed.add(p); } else { S.viewed.delete(p); S.collapsed.delete(p); }
+  if(on&&next){ const vis=D_MR.filter(f=>!(S.hideGen&&f.gen)), nx=vis.find(f=>!S.viewed.has(f.path)); rerender(); if(nx) jumpFile(nx.path); else toast(`Todos os ${vis.length} arquivos vistos. Publique a review ou aprove.`); return; }
+  rerender(); }
+function jumpFile(p){ S.collapsed.delete(p); if(!S.viewed.has(p)) rerender(); const t=document.getElementById('F-'+p); if(t) t.scrollIntoView({block:'start'}); S.curFile=p; }
+function stepFile(d){ const vis=D_MR.filter(f=>!(S.hideGen&&f.gen)).map(f=>f.path); const i=vis.indexOf(S.curFile); const j=Math.max(0,Math.min(vis.length-1,(i<0?(d>0?-1:vis.length):i)+d)); jumpFile(vis[j]); }
 function mergeState(m){
   if(m.merged) return {ok:false,why:'já mergeado'};
   if(m.ci==='failed') return {ok:false,why:'pipeline falhou: o GitLab bloqueia o merge'};
@@ -1431,13 +1442,13 @@ function renderMR(el){
   const pend=S.drafts.filter(d=>d.ctx==='mr'&&(d.state==='draft'||d.state==='error'));
   const files=D_MR.filter(f=>!(S.hideGen&&f.gen)), gen=D_MR.filter(f=>f.gen).length, gThreads=THREADS.filter(t=>!t.file);
   el.innerHTML=`<div class="mrh"><div class="l1"><h2>${esc(m.title)}</h2><span class="mono muted">${m.proj} !${m.iid}</span><span class="muted">${m.who}</span><span class="ci ${m.ci}">${ciTxt(m.ci)}</span>${m.merged?'<span class="pill ok">mergeado</span>':m.autoMerge?'<span class="pill inc">merge quando o pipeline passar</span>':''}${m.approved?'<span class="pill ok">aprovado por você</span>':''}</div>
-    <div class="l2"><button class="btn" id="back">← Inbox</button><span class="sp"></span>${!ms.ok&&ms.why&&!m.merged?`<span class="why" title="${esc(ms.why)}">⚠ ${esc(ms.why)}</span>`:''}
+    <div class="l2"><button class="btn" id="back">← Inbox</button><button class="btn" id="glB" title="Abrir no GitLab (O)">Abrir no GitLab ↗</button><button class="btn" id="cpB">Copiar link</button><button class="btn" id="rfB" title="Relê diff, discussões, CI e aprovações (R)">↻ Atualizar</button><span class="sp"></span>${!ms.ok&&ms.why&&!m.merged?`<span class="why" title="${esc(ms.why)}">⚠ ${esc(ms.why)}</span>`:''}
       ${m.merged?'':`<button class="btn" id="apB">${m.approved?'Remover aprovação':'✓ Aprovar'}</button><button class="btn" id="mgB" ${ms.ok?'':'disabled'} title="${esc(ms.why||'Merge em '+(m.tgt||'main'))}">${m.autoMerge?'Cancelar merge agendado':'Merge…'}</button>`}
       <button class="btn pri" id="revB">Revisar com Claude <kbd style="background:transparent;color:inherit;border-color:currentColor">⇧R</kbd></button></div></div>`+
     (has?`<div class="rtool"><div class="seg" role="group" aria-label="Layout do diff"><button aria-pressed="${S.layout==='split'}" data-lay="split">Lado a lado</button><button aria-pressed="${S.layout==='unified'}" data-lay="unified">Unificado</button></div>
       <label title="lockfiles, snapshots, dist/, *.generated.* e o que o GitLab marca como gerado"><input type="checkbox" id="genT" ${S.hideGen?'checked':''}> Ocultar gerados (${gen})</label><span class="sp"></span>
-      <button class="btn" id="expA">Expandir todos</button><button class="btn" id="colA">Colapsar todos</button></div>
-      <div class="diff" id="diff">${gThreads.length?`<div class="disc"><div class="fh"><span>Discussões</span><span class="muted">${gThreads.length} geral${gThreads.length>1?'is':''}, fora do código</span></div>${gThreads.map(t=>threadHtml(t)).join('')}</div>`:''}${files.map(f=>diffFile(f,'mr')).join('')}${S.hideGen&&gen?`<div class="none" style="padding:10px 12px;color:var(--muted);font-family:var(--sans)">${gen} arquivo gerado oculto (package-lock.json). <button class="btn" id="genShow">Mostrar</button></div>`:''}</div>`
+      <span class="mono muted" style="font-size:12px" title="V marca o arquivo e vai para o próximo">${S.viewed.size}/${D_MR.length} vistos</span><button class="btn" id="expA">Expandir todos</button><button class="btn" id="colA">Colapsar todos</button></div>
+      <div class="diff" id="diff">${m.desc?`<div class="disc"><div class="fh col" id="descT" title="Clique para ${S.descOpen?'recolher':'abrir'}"><span class="tw">${S.descOpen?'▾':'▸'}</span><span>Descrição</span><span class="muted">${m.who}</span></div>${S.descOpen?`<div class="vmd" style="padding:8px 14px 10px">${vmd(m.desc)}</div>`:''}</div>`:''}${gThreads.length?`<div class="disc"><div class="fh"><span>Discussões</span><span class="muted">${gThreads.length} geral${gThreads.length>1?'is':''}, fora do código</span></div>${gThreads.map(t=>threadHtml(t)).join('')}</div>`:''}${files.map(f=>diffFile(f,'mr')).join('')}${S.hideGen&&gen?`<div class="none" style="padding:10px 12px;color:var(--muted);font-family:var(--sans)">${gen} arquivo gerado oculto (package-lock.json). <button class="btn" id="genShow">Mostrar</button></div>`:''}</div>`
       :`<div class="empty"><h3>Sem diff de exemplo para este MR</h3><p>No protótipo só <span class="mono">bots-api !124</span> tem diff.</p><div><button class="btn pri" id="go124">Abrir bots-api !124</button></div></div>`)+
     `<div class="pubbar">${pend.length?`<span class="cnt">${pend.length} rascunho${pend.length>1?'s':''} não publicado${pend.length>1?'s':''}</span><span class="muted">só você vê</span>`:'<span class="muted"><kbd>C</kbd> numa linha comenta; <kbd>⇧R</kbd> pede revisão ao Claude.</span>'}<span class="sp"></span>
     <button class="btn danger" id="dAll" ${pend.length?'':'disabled'}>Descartar todos</button><button class="btn pri" id="pub" ${pend.filter(d=>d.state==='draft').length?'':'disabled'}>Publicar review <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div>`;
@@ -1449,6 +1460,10 @@ function renderMR(el){
   el.querySelectorAll('[data-lay]').forEach(x=>x.onclick=()=>{ S.layout=x.dataset.lay; rerender(); });
   const gt=el.querySelector('#genT'); if(gt) gt.onchange=()=>{ S.hideGen=gt.checked; rerender(); };
   b('genShow',()=>{ S.hideGen=false; rerender(); });
+  b('glB',()=>openGitlab(m)); b('cpB',()=>toast(`Copiado: https://gitlab.com/${m.path}/-/merge_requests/${m.iid}`));
+  b('descT',()=>{ S.descOpen=!S.descOpen; rerender(); });
+  b('rfB',()=>refreshMR(m));
+  el.querySelectorAll('[data-vw]').forEach(x=>x.onclick=e=>{ e.preventDefault(); e.stopPropagation(); toggleViewed(x.dataset.vw,false); });
   b('expA',()=>{ S.collapsed.clear(); rerender(); }); b('colA',()=>{ D_MR.forEach(f=>S.collapsed.add(f.path)); rerender(); });
   bindDiff(el); $('#dAll').onclick=()=>discardAll('mr'); $('#pub').onclick=askPublish;
 }
@@ -2138,10 +2153,10 @@ function paintBrief(){ let s=$('#briefSlot'); if(!s){ s=document.createElement('
 /* ---------- dicas e status ---------- */
 const HINTS={
   feat:[['Alt+T','nova aba'],['Alt+[ ]','trocar aba'],['Ctrl+Shift+Espaço','próximo da fila'],['Ctrl+Shift+1…9','feature'],['Ctrl+Shift+E','revisar mudanças'],['Ctrl+Shift+\\','dividir'],['Ctrl+Shift+Enter','empilhar'],['Ctrl+Shift+←→','pane ↔ editor'],['Ctrl+Shift+K','comando por descrição'],['Ctrl+A','herdr'],['Ctrl+Shift+L','seleção → Claude'],['Alt+N','nova feature'],['?','atalhos']],
-  mrs:[['j k','navegar'],['Enter','abrir'],['⇧R','revisar com Claude'],['/','filtrar']],
+  mrs:[['j k','navegar'],['Enter','abrir'],['O','abrir no GitLab'],['⇧R','revisar com Claude'],['/','filtrar']],
   vault:[['clique','abrir nota'],['[[link]]','navegar'],['◎ Grafo','visão geral'],['Hoje','daily'],['?','atalhos']],
   audit:[['Nova auditoria…','incremental ou completa'],['espaço','marcar achado'],['?','atalhos']],
-  mr:[['C','comentar linha'],['?','perguntar sobre o bloco'],['S','lado a lado/unificado'],['⇧R','revisar com Claude'],['Ctrl+⏎','publicar'],['Ctrl+Z','desfazer descarte'],['Esc','voltar']],
+  mr:[['n p','próximo/anterior arquivo'],['V','visto e próximo'],['O','abrir no GitLab'],['R','atualizar'],['C','comentar linha'],['?','perguntar sobre o bloco'],['S','lado a lado/unificado'],['⇧R','revisar com Claude'],['Ctrl+⏎','publicar'],['Ctrl+Z','desfazer descarte'],['Esc','voltar']],
   db:[['Alt+3','Bancos'],['j k','navegar'],['Enter','liga/desliga'],['/','filtrar'],['Ctrl+Shift+D','ligar de qualquer tela']],
   news:[['Alt+5','News'],['título','abrir'],['Não relevante','oculta só aqui'],['?','atalhos']],
 };
@@ -2362,9 +2377,14 @@ document.addEventListener('keydown',e=>{
     if(k==='j'||k==='ArrowDown'){ e.preventDefault(); S.isel=Math.min(S.isel+1,rows.length-1); renderCenter(); }
     else if(k==='k'||k==='ArrowUp'){ e.preventDefault(); S.isel=Math.max(S.isel-1,0); renderCenter(); }
     else if(k==='Enter') openMR(rows[S.isel]);
+    else if(k==='o'&&rows[S.isel]) openGitlab(rows[S.isel]);
     else if(k==='/'){ e.preventDefault(); $('#iq').focus(); }
     return; }
   if((k==='c'||k==='C')&&(S.mode==='mr'||(S.mode==='feat'&&S.right&&S.rtab==='review'))){ e.preventDefault(); newDraft(); return; }
+  if(S.mode==='mr'&&S.mr&&S.mr.iid===124){ if(k==='n'){ e.preventDefault(); stepFile(1); return; } if(k==='p'){ e.preventDefault(); stepFile(-1); return; }
+    if(k==='v'){ e.preventDefault(); toggleViewed(S.curFile||D_MR.find(f=>!S.viewed.has(f.path))?.path||D_MR[0].path,true); return; } }
+  if(S.mode==='mr'&&k==='o'){ e.preventDefault(); openGitlab(S.mr); return; }
+  if(S.mode==='mr'&&k==='r'){ e.preventDefault(); refreshMR(S.mr); return; }
   if(S.mode==='feat'&&k.length===1&&!(e.target.closest&&e.target.closest('#right'))){ focusTerm(); }
 });
 $('#mVault').onclick=()=>openVault(); $('#mFeat').onclick=()=>setMode('feat'); $('#mMrs').onclick=()=>setMode('mrs'); $('#mNews').onclick=openNews; $('#mDb').onclick=()=>setMode('db');

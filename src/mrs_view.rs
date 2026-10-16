@@ -92,6 +92,12 @@ pub struct MrsView {
     /// lado a lado (o padrão) ou unificado; `S` alterna
     split: bool,
     collapsed: HashSet<String>,
+    /// "Visto" do MR aberto: arquivo → hash do diff quando você marcou
+    viewed: HashMap<String, u64>,
+    /// o arquivo onde o `n`/`p`/`v` está
+    cur_file: Option<String>,
+    /// MRs com a descrição recolhida (nesta sessão)
+    desc_closed: HashSet<String>,
     hide_gen: bool,
     gen_open: bool,
     /// a thread com a caixa de resposta aberta
@@ -211,6 +217,9 @@ impl MrsView {
             drawer_w: 440.,
             split: !unified_pref(),
             collapsed: HashSet::new(),
+            viewed: HashMap::new(),
+            cur_file: None,
+            desc_closed: HashSet::new(),
             hide_gen: true,
             gen_open: false,
             replying: None,
@@ -634,6 +643,9 @@ impl MrsView {
         // reabrir o mesmo MR (depois de aprovar, resolver…) mantém a tela até o novo chegar
         let same = self.open.as_ref().is_some_and(|(o, _)| o.key() == r.key());
         if !same {
+            let state = std::fs::read_to_string(mrs::viewed_file()).unwrap_or_default();
+            self.viewed = mrs::viewed(&state, &r.key());
+            self.cur_file = None;
             self.open = Some((r, None));
             self.selected = None;
             self.collapsed.clear();
@@ -648,6 +660,13 @@ impl MrsView {
                 if let Some((row, slot)) = this.open.as_mut()
                     && row.iid == iid
                 {
+                    if let Ok(o) = &o {
+                        for (path, _, diff) in &o.raw {
+                            if this.viewed.get(path) == Some(&mrs::diff_hash(diff)) {
+                                this.collapsed.insert(path.clone());
+                            }
+                        }
+                    }
                     *slot = Some(o);
                 }
                 cx.notify();
@@ -655,6 +674,110 @@ impl MrsView {
         })
         .detach();
         cx.notify();
+    }
+
+    fn file_hash(o: &Opened, path: &str) -> u64 {
+        o.raw
+            .iter()
+            .find(|(p, _, _)| p == path)
+            .map_or(0, |(_, _, d)| mrs::diff_hash(d))
+    }
+
+    fn is_viewed(&self, o: &Opened, path: &str) -> bool {
+        self.viewed.get(path) == Some(&Self::file_hash(o, path))
+    }
+
+    /// Marcado e depois mudou num commit novo: volta a "não visto", com aviso.
+    fn changed_since(&self, o: &Opened, path: &str) -> bool {
+        self.viewed
+            .get(path)
+            .is_some_and(|h| *h != Self::file_hash(o, path))
+    }
+
+    fn visible_files(&self, o: &Opened) -> Vec<String> {
+        o.files
+            .iter()
+            .filter(|f| !(self.hide_gen && Self::is_gen(o, &f.path)))
+            .map(|f| f.path.clone())
+            .collect()
+    }
+
+    /// `v` e o checkbox: marca (recolhe) ou desmarca; `next` pula para o próximo não visto.
+    fn toggle_viewed(&mut self, path: &str, next: bool, cx: &mut Context<Self>) {
+        let Some((row, Some(Ok(o)))) = &self.open else {
+            return;
+        };
+        let (key, hash) = (row.key(), Self::file_hash(o, path));
+        let on = !self.is_viewed(o, path);
+        let file = mrs::viewed_file();
+        let state = std::fs::read_to_string(&file).unwrap_or_default();
+        let _ = std::fs::create_dir_all(file.parent().unwrap_or(std::path::Path::new(".")));
+        let _ = std::fs::write(
+            &file,
+            mrs::set_viewed(&state, &key, path, on.then_some(hash)),
+        );
+        if on {
+            self.viewed.insert(path.to_string(), hash);
+            self.collapsed.insert(path.to_string());
+        } else {
+            self.viewed.remove(path);
+            self.collapsed.remove(path);
+        }
+        if on && next {
+            let files = self.visible_files(o);
+            match files.iter().find(|f| !self.is_viewed(o, f)) {
+                Some(f) => {
+                    let f = f.clone();
+                    return self.jump(&f, cx);
+                }
+                None => cx.emit(Event::Toast(format!(
+                    "Todos os {} arquivos vistos. Publique a review ou aprove.",
+                    files.len()
+                ))),
+            }
+        }
+        cx.notify();
+    }
+
+    fn jump(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.collapsed.remove(path);
+        self.cur_file = Some(path.to_string());
+        self.scroll_to_file(path, cx);
+    }
+
+    fn step_file(&mut self, d: isize, cx: &mut Context<Self>) {
+        let Some((_, Some(Ok(o)))) = &self.open else {
+            return;
+        };
+        let files = self.visible_files(o);
+        if files.is_empty() {
+            return;
+        }
+        let i = self
+            .cur_file
+            .as_ref()
+            .and_then(|c| files.iter().position(|f| f == c))
+            .map_or(if d > 0 { -1 } else { files.len() as isize }, |i| {
+                i as isize
+            });
+        let j = (i + d).clamp(0, files.len() as isize - 1) as usize;
+        let f = files[j].clone();
+        self.jump(&f, cx);
+    }
+
+    fn open_gitlab(&self, r: &Row) {
+        crate::spawn_reaped(std::process::Command::new("xdg-open").arg(&r.web_url));
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        if let Some((r, _)) = self.open.clone() {
+            cx.emit(Event::Toast(format!(
+                "Atualizando {} !{}…",
+                r.proj(),
+                r.iid
+            )));
+            self.open_row(r, cx);
+        }
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
@@ -1077,6 +1200,23 @@ impl MrsView {
             ("z", Some(_)) if k.modifiers.control && !k.modifiers.shift => self.undo(cx),
             ("c", Some(_)) if !k.modifiers.modified() => self.new_draft(window, cx),
             ("s", Some(_)) if !k.modifiers.modified() => self.toggle_split(cx),
+            ("n", Some(_)) if !k.modifiers.modified() => self.step_file(1, cx),
+            ("p", Some(_)) if !k.modifiers.modified() => self.step_file(-1, cx),
+            ("v", Some(_)) if !k.modifiers.modified() => {
+                let target = match &self.open {
+                    Some((_, Some(Ok(o)))) => self.cur_file.clone().or_else(|| {
+                        self.visible_files(o)
+                            .into_iter()
+                            .find(|f| !self.is_viewed(o, f))
+                    }),
+                    _ => None,
+                };
+                if let Some(f) = target {
+                    self.toggle_viewed(&f, true, cx)
+                }
+            }
+            ("o", Some((r, _))) if !k.modifiers.modified() => self.open_gitlab(r),
+            ("r", Some(_)) if !k.modifiers.modified() => self.reload(cx),
             (_, Some(_)) if k.key_char.as_deref() == Some("?") && self.selected.is_some() => {
                 let (path, new, old) = self.selected.clone().unwrap_or_default();
                 match self.ask_ctx(&path, None, new.or(old).unwrap_or_default()) {
@@ -1114,6 +1254,11 @@ impl MrsView {
                 window.focus(&f, cx);
             }
             ("r", None) if !k.modifiers.modified() => self.refresh(cx),
+            ("o", None) if !k.modifiers.modified() => {
+                if let Some(r) = self.rows(cx).get(self.sel) {
+                    self.open_gitlab(r);
+                }
+            }
             _ => return,
         }
         cx.stop_propagation();
@@ -1728,6 +1873,38 @@ impl MrsView {
             )
     }
 
+    /// Markdown leve: título em negrito, `**` some, `-` vira •, bloco de código em mono.
+    fn desc_lines(desc: &str, t: &Theme) -> Vec<Div> {
+        let mut code = false;
+        let mut out = Vec::new();
+        for l in desc.lines() {
+            if l.trim_start().starts_with("```") {
+                code = !code;
+                continue;
+            }
+            let d = div().min_h(px(10.));
+            out.push(if code {
+                d.font_family(t.mono.clone())
+                    .text_size(px(12.5))
+                    .text_color(t.muted)
+                    .child(l.to_string())
+            } else if let Some(h) = l.trim_start().strip_prefix('#') {
+                d.pt(px(6.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(h.trim_start_matches('#').trim().replace("**", ""))
+            } else if let Some(b) = l.trim_start().strip_prefix("- ") {
+                d.child(format!("• {}", b.replace("**", "")))
+            } else {
+                d.child(l.replace("**", ""))
+            });
+        }
+        out
+    }
+
+    fn description(o: &Opened) -> &str {
+        o.detail["description"].as_str().unwrap_or_default().trim()
+    }
+
     fn is_gen(o: &Opened, path: &str) -> bool {
         diff::boilerplate(path, o.generated.iter().any(|g| g == path))
     }
@@ -1760,8 +1937,10 @@ impl MrsView {
             .iter()
             .filter(|f| !(self.hide_gen && Self::is_gen(o, &f.path)))
             .position(|f| f.path == path);
+        let desc = !Self::description(o).is_empty();
         if let Some(i) = i {
-            self.scroll.scroll_to_top_of_item(i + disc as usize);
+            self.scroll
+                .scroll_to_top_of_item(i + disc as usize + desc as usize);
         }
         cx.notify();
     }
@@ -1982,6 +2161,8 @@ impl MrsView {
             .unwrap_or_default();
         let threads = Self::threads(o);
         let collapsed = self.collapsed.contains(&f.path);
+        let (seen, changed) = (self.is_viewed(o, &f.path), self.changed_since(o, &f.path));
+        let vpath = f.path.clone();
         let n_threads = threads
             .iter()
             .filter(|(_, d)| d["notes"][0]["position"]["new_path"] == f.path.as_str())
@@ -2022,14 +2203,33 @@ impl MrsView {
                     .child(div().text_color(red()).child(format!("−{r}")))
                     .child(div().flex_1())
                     .when(collapsed, |x| {
+                        let what = if seen { "visto" } else { "colapsado" };
                         x.child(div().text_size(px(12.)).text_color(t.muted).child(
                             if n_threads > 0 {
-                                format!("{n_threads} thread(s) · colapsado")
+                                format!("{n_threads} thread(s) · {what}")
                             } else {
-                                "colapsado".into()
+                                what.into()
                             },
                         ))
-                    }),
+                    })
+                    .when(changed, |x| {
+                        x.child(pill(&t, "mudou desde que você viu", t.orange, false))
+                    })
+                    .child(
+                        div()
+                            .id(("mr-vw", fi))
+                            .flex()
+                            .gap(px(5.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .text_color(t.muted)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.toggle_viewed(&vpath, false, cx)
+                            }))
+                            .child(checkbox(&t, seen))
+                            .child("Visto"),
+                    ),
             );
         if collapsed {
             return block;
@@ -2183,11 +2383,11 @@ impl MrsView {
                     .border_color(t.line)
                     .child("ARQUIVOS DO MR")
                     .child(div().flex_1())
-                    .child(
-                        div()
-                            .font_family(t.mono.clone())
-                            .child(o.files.len().to_string()),
-                    ),
+                    .child(div().font_family(t.mono.clone()).child(format!(
+                        "{}/{} vistos",
+                        o.files.iter().filter(|f| self.is_viewed(o, &f.path)).count(),
+                        o.files.len()
+                    ))),
             );
         let row_of = |i: usize, f: &FileDiff, cx: &mut Context<Self>| {
             let (a, r) = f.counts();
@@ -2202,9 +2402,11 @@ impl MrsView {
                     (format!("{d}/"), n.into())
                 });
             let collapsed = self.collapsed.contains(&f.path);
+            let (seen, changed) = (self.is_viewed(o, &f.path), self.changed_since(o, &f.path));
             let (p1, p2) = (f.path.clone(), f.path.clone());
             div()
                 .id(("mf", i))
+                .when(seen, |d| d.opacity(0.55))
                 .flex()
                 .gap(px(6.))
                 .px(px(12.))
@@ -2224,7 +2426,13 @@ impl MrsView {
                             cx.stop_propagation();
                             this.toggle_collapsed(&p2, cx)
                         }))
-                        .child(if collapsed { "▸" } else { "▾" }),
+                        .child(if seen {
+                            "✓"
+                        } else if collapsed {
+                            "▸"
+                        } else {
+                            "▾"
+                        }),
                 )
                 .child(
                     div()
@@ -2242,9 +2450,11 @@ impl MrsView {
                     div()
                         .font_family(t.mono.clone())
                         .text_size(px(12.))
-                        .text_color(if n > 0 { yellow() } else { t.muted })
+                        .text_color(if n > 0 || changed { yellow() } else { t.muted })
                         .child(if n > 0 {
                             format!("{n} rasc.")
+                        } else if changed {
+                            "mudou".into()
                         } else {
                             format!("+{a} −{r}")
                         }),
@@ -2353,6 +2563,24 @@ impl MrsView {
                     .child(
                         button(&t, "mr-back", "← Inbox", false)
                             .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
+                    )
+                    .child({
+                        let r = row.clone();
+                        button(&t, "mr-web", "Abrir no GitLab ↗", false)
+                            .on_click(cx.listener(move |this, _, _, _| this.open_gitlab(&r)))
+                    })
+                    .child({
+                        let url = row.web_url.clone();
+                        button(&t, "mr-copy", "Copiar link", false).on_click(cx.listener(
+                            move |_, _, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                                cx.emit(Event::Toast(format!("Copiado: {url}")));
+                            },
+                        ))
+                    })
+                    .child(
+                        button(&t, "mr-reload", "↻ Atualizar", false)
+                            .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
                     )
                     .child(div().flex_1())
                     .when_some(blocker.filter(|_| !merged && !scheduled), |d, why| {
@@ -2471,6 +2699,20 @@ impl MrsView {
                                 .child(format!("Ocultar gerados ({})", gens.len())),
                         )
                         .child(div().flex_1())
+                        .child(
+                            div()
+                                .font_family(t.mono.clone())
+                                .text_size(px(12.))
+                                .text_color(t.muted)
+                                .child(format!(
+                                    "{}/{} vistos",
+                                    o.files
+                                        .iter()
+                                        .filter(|f| self.is_viewed(o, &f.path))
+                                        .count(),
+                                    o.files.len()
+                                )),
+                        )
                         .child(button(&t, "exp-all", "Expandir todos", false).on_click(
                             cx.listener(|this, _, _, cx| {
                                 this.collapsed.clear();
@@ -2496,6 +2738,59 @@ impl MrsView {
                     .font_family(t.mono.clone())
                     .text_size(px(13.5))
                     .line_height(px(22.));
+                let desc = Self::description(o);
+                if !desc.is_empty() {
+                    let open = !self.desc_closed.contains(&row.key());
+                    let key = row.key();
+                    scroll = scroll.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .border_b_1()
+                            .border_color(t.line)
+                            .font_family(t.sans)
+                            .child(
+                                div()
+                                    .id("mr-desc")
+                                    .flex()
+                                    .gap(px(10.))
+                                    .items_center()
+                                    .px(px(12.))
+                                    .py(px(6.))
+                                    .bg(t.panel)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if !this.desc_closed.remove(&key) {
+                                            this.desc_closed.insert(key.clone());
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        div()
+                                            .w(px(16.))
+                                            .text_center()
+                                            .text_size(px(12.))
+                                            .text_color(t.muted)
+                                            .child(if open { "▾" } else { "▸" }),
+                                    )
+                                    .child("Descrição")
+                                    .child(div().text_color(t.muted).child(row.who.clone())),
+                            )
+                            .when(open, |d| {
+                                d.child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(2.))
+                                        .px(px(14.))
+                                        .py(px(8.))
+                                        .line_height(px(20.))
+                                        .text_size(px(13.5))
+                                        .children(Self::desc_lines(desc, &t)),
+                                )
+                            }),
+                    );
+                }
                 let general: Vec<(usize, Value)> = Self::threads(o)
                     .into_iter()
                     .filter(|(_, d)| d["notes"][0]["position"].is_null())
