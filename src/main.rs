@@ -54,6 +54,15 @@ use sidebar::Sidebar;
 use terminal::TerminalView;
 use theme::Theme;
 
+/// `spawn` sem `wait` deixa zumbi até o app fechar: a espera fica numa thread.
+pub fn spawn_reaped(c: &mut std::process::Command) {
+    if let Ok(mut child) = c.spawn() {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+}
+
 fn main() {
     // `maestro checkpoint <id>`: o hook UserPromptSubmit da worktree, sem abrir janela
     let args: Vec<String> = std::env::args().collect();

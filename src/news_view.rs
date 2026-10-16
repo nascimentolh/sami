@@ -192,7 +192,7 @@ impl NewsView {
         let Some(s) = self.shown().get(i).map(|s| s.post.clone()) else {
             return;
         };
-        let _ = std::process::Command::new("xdg-open").arg(&s.url).spawn();
+        crate::spawn_reaped(std::process::Command::new("xdg-open").arg(&s.url));
         self.cache.read.insert(s.id);
         self.cache.save();
         cx.notify();

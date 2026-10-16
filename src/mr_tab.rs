@@ -378,7 +378,7 @@ impl MrTab {
                         self.h4(format!("!{} · {} → {}", m.iid, self.branch, m.target))
                             .child(div().flex_1())
                             .child(button(&t, "mr-web", "Abrir no GitLab", false).on_click(move |_, _, _| {
-                                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                                crate::spawn_reaped(std::process::Command::new("xdg-open").arg(&url));
                             })),
                     )
                     .when(m.merged, |d| {

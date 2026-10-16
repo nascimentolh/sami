@@ -231,9 +231,10 @@ pub fn play(kind: Kind) {
             )
         });
     let volume = cfg["volume"].as_f64().unwrap_or(1.0).to_string();
-    let _ = std::process::Command::new("pw-play")
-        .args(["--volume", &volume, &path])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    crate::spawn_reaped(
+        std::process::Command::new("pw-play")
+            .args(["--volume", &volume, &path])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    );
 }
