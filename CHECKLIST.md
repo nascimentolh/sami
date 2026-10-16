@@ -231,7 +231,7 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] conferido num clone TS (erro proposital, hover, completar, definição) e num `.py`
 
 **F. Extras**
-- [x] F1 feature multi-repo (worktrees, lateral, revisão por repo, aviso de env fora do configmap, remoção). "Relacionados" no MR depende do `/mr` seguir o contexto; falta botão "+ repo" depois de criada
+- [x] F1 feature multi-repo (worktrees, lateral, revisão por repo, aviso de env fora do configmap, remoção). Por decisão sua, os outros repos não aparecem mais na criação: entram depois, pela paleta "Feature: Adicionar repo…". "Relacionados" no MR depende do `/mr` seguir o contexto
 - [x] F2 blame na linha (com MR de origem) e aba Histórico ("Abrir MR !n" sem teste contra remote real)
 - [x] F3 tarefas por repo num split + painel Problemas (matcher com teste)
 - [x] F4 Perguntar ao Claude sobre um trecho (só leitura, com continuação)

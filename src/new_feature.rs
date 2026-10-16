@@ -32,8 +32,6 @@ pub struct NewFeature {
     /// "Em cima de": as features deste repo (0 = nenhuma)
     parents: Vec<Inventory>,
     parent: usize,
-    /// "Outros repos": (repo, marcado)
-    others: Vec<(PathBuf, bool)>,
     attempts: usize,
     model: usize,
     open: Option<&'static str>,
@@ -89,10 +87,6 @@ impl NewFeature {
         Self {
             parents,
             parent: 0,
-            others: feature::other_repos(&repo)
-                .into_iter()
-                .map(|r| (r, false))
-                .collect(),
             bases: feature::bases(&repo),
             env_files: feature::env_files(&repo),
             setup_cmd: feature::setup_command(&repo),
@@ -145,27 +139,14 @@ impl NewFeature {
             .or_else(|| self.bases.get(self.base).cloned())
     }
 
-    fn checked_others(&self) -> Vec<PathBuf> {
-        self.others
-            .iter()
-            .filter(|o| o.1)
-            .map(|o| o.0.clone())
-            .collect()
-    }
-
     fn preview(&self, cx: &App) -> String {
         let b = self.branch.read(cx).value.clone();
-        let names: Vec<String> = self
-            .checked_others()
-            .iter()
-            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .collect();
         let n = self.attempts + 1;
         let ports = self.ports(n);
         let path = feature::worktree_path(&self.repo, if b.is_empty() { "…" } else { &b });
         let base = self.base_name().unwrap_or_else(|| "…".into());
         format!(
-            "worktree {}{} --base {}{}{} · PORT={}{} · docker compose -p {}",
+            "worktree {}{} --base {}{} · PORT={}{} · docker compose -p {}",
             tilde(&path.to_string_lossy()),
             if n > 1 {
                 format!(" (×{n}: -a, -b{})", if n > 2 { ", -c" } else { "" })
@@ -173,11 +154,6 @@ impl NewFeature {
                 String::new()
             },
             base,
-            if names.is_empty() || n > 1 {
-                String::new()
-            } else {
-                format!(" + {}", names.join(", "))
-            },
             if self.mother().is_some() && n == 1 {
                 format!(" · MR → {base}")
             } else {
@@ -272,12 +248,8 @@ impl NewFeature {
                 claude: self.claude,
                 model: models[i],
                 group: (n > 1).then(|| br.clone()),
-                // empilhar e multi-repo valem para uma tentativa, como no protótipo
-                others: if n == 1 {
-                    self.checked_others()
-                } else {
-                    Vec::new()
-                },
+                // ponytail: outros repos entram depois, pela paleta ("Feature: adicionar repo…")
+                others: Vec::new(),
                 parent: self.mother().filter(|_| n == 1).cloned(),
             })
             .collect();
@@ -505,33 +477,6 @@ impl Render for NewFeature {
         let parents: Vec<String> = std::iter::once("nenhuma: direto na base acima".to_string())
             .chain(self.parents.iter().map(|i| i.branch.clone()))
             .collect();
-        let mut chips = div().flex().flex_wrap().gap_x(px(14.)).gap_y(px(6.));
-        for (i, (repo, on)) in self.others.iter().enumerate() {
-            let name = repo
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            chips = chips.child(
-                div()
-                    .id(("other", i))
-                    .flex()
-                    .gap(px(6.))
-                    .items_center()
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.others[i].1 = !this.others[i].1;
-                        cx.notify();
-                    }))
-                    .child(checkbox(&t, *on))
-                    .child(mono(name)),
-            );
-        }
-        if self.others.is_empty() {
-            chips =
-                chips.child(div().text_size(px(13.)).text_color(t.muted).child(
-                    "nenhum de k8s-configmap, vault-roleset ou pipeline ao lado deste repo",
-                ));
-        }
         div()
             .track_focus(&self.focus)
             .key_context("NewFeature")
@@ -599,12 +544,6 @@ impl Render for NewFeature {
                     .when(self.parents.is_empty(), |d| d.opacity(0.45))
                     .child(self.select("parent", parents, self.parent, cx))
                     .into_any_element(),
-            ))
-            .child(fld(
-                self.label(
-                    "Outros repos (mesma branch numa worktree de cada, o Claude enxerga todas)",
-                ),
-                chips.into_any_element(),
             ))
             .child(fld(
                 self.label("O que o Claude deve fazer (opcional)"),

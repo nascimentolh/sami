@@ -905,7 +905,6 @@ function newFeatureDlg(){
     <div class="row2"><label class="fld" style="display:grid"><span>Branch</span><input type="text" id="nfB" value="feat/" autocomplete="off"></label>
       <label class="fld" style="display:grid"><span>A partir de</span><select id="nfBase"><option>main</option><option>develop</option></select></label></div>
     <label class="fld" style="display:grid"><span>Em cima de (MRs empilhados: a base e o alvo do MR viram a branch da mãe)</span><select id="nfPar"><option value="">nenhuma: direto na base acima</option>${FEATS.filter(x=>x.kind!=='ws'&&x.id!=='main'&&!(x.mr&&x.mr.merged)).map(x=>`<option value="${x.id}">${esc(x.branch)}</option>`).join('')}</select></label>
-    <div class="fld"><span>Outros repos (mesma branch numa worktree de cada, o Claude enxerga todas)</span><div class="chips">${['k8s-configmap','vault-roleset','pipeline'].map(r=>`<label><input type="checkbox" data-rp="${r}"> <span class="mono">${r}</span></label>`).join('')}</div></div>
     <label class="fld" style="display:grid"><span>O que o Claude deve fazer (opcional)</span><textarea id="nfP" placeholder="ex.: adiciona paginação no GET /bots"></textarea></label>
     <div class="row2"><label class="fld" style="display:grid"><span>Tentativas em paralelo</span><select id="nfN"><option value="1">1</option><option value="2">2 (comparar no fim)</option><option value="3">3 (comparar no fim)</option></select></label>
       <label class="fld" style="display:grid"><span>Modelos</span><select id="nfM"><option value="same">mesmo modelo</option><option value="mix">variar entre Opus e Sonnet</option></select></label></div>
@@ -2039,6 +2038,7 @@ const CMDS=[
   ['Fila: Ir para o próximo item','Ctrl+Shift+Espaço',nextAttention],
   ['Fila: Ver tudo que espera por você','',()=>openPal('att')],
   ['Feature: Nova…','Alt+N',newFeatureDlg],
+  ['Feature: Adicionar repo…','',()=>{ const f=feat(); if(f.kind==='ws'){ toast('Abra uma feature criada pelo Maestro para adicionar um repo'); return; } const have=(f.repos||[]).map(r=>r.name); const opts=['k8s-configmap','vault-roleset','pipeline','email-service'].filter(r=>!have.includes(r)).map((r,i)=>({label:r,pri:i===0,run:()=>{ f.repos=f.repos||[]; f.repos.push({name:r,files:0}); renderLeft(); toast(`${r} entrou na feature; /add-dir enviado ao Claude`); }})); choiceDlg(`Adicionar repo a ${f.branch}`,'A mesma branch vira uma worktree nesse repo e o Claude da feature passa a enxergar a pasta. Use quando descobrir que precisa mexer nele.',opts.concat([{label:'Cancelar'}])); }],
   ['Feature: Rodar testes afetados','',()=>{ S.mode='feat'; render(); runAffected(feat()); }],
   ['Feature: Comparar tentativas','',()=>{ const f=FEATS.find(x=>x.group); f?compareDlg(f):toast('Nenhuma feature com várias tentativas. Crie uma com Tentativas: 2.'); }],
   ['Feature: Ver MR da feature','',()=>{ S.mode='feat'; S.right=true; S.rtab='mr'; render(); }],

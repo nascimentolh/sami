@@ -791,20 +791,6 @@ pub fn add_worktree(inv: &mut Inventory, repo: &Path) -> Result<PathBuf, String>
     Ok(path)
 }
 
-/// Os repos do "Outros repos" do formulário: os de GitOps do seu CLAUDE.md que existem ao lado deste.
-pub fn other_repos(repo: &Path) -> Vec<PathBuf> {
-    const GITOPS: [&str; 3] = ["k8s-configmap", "vault-roleset", "pipeline"];
-    let sib = sibling_repos(repo);
-    GITOPS
-        .iter()
-        .filter_map(|n| {
-            sib.iter()
-                .find(|p| p.file_name().is_some_and(|f| f == *n))
-                .cloned()
-        })
-        .collect()
-}
-
 /// Numa filha empilhada, "Mudanças" e "Revisar" comparam com a mãe: os commits dela não são desta feature.
 pub fn stack_base(root: &Path) -> Option<String> {
     let p = find_by_path(root)?.parent?;
