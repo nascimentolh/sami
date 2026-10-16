@@ -1108,7 +1108,7 @@ impl AuditView {
         };
         let vis = self.visible();
         let mut list = div().flex().flex_col().pt(px(8.)).pb(px(30.));
-        if self.phase == Phase::Cached {
+        if self.phase == Phase::Cached && self.since.is_some_and(|x| x.0 > 0) {
             list = list.child(
                 div()
                     .mx(px(12.))

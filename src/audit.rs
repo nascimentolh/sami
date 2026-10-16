@@ -210,17 +210,17 @@ pub fn tracked(repo: &Path) -> usize {
     git(repo, &["ls-files"]).map_or(0, |s| s.lines().count())
 }
 
-/// (texto, teto padrão). ponytail: custo por arquivo medido a olho; calibrar com os relatórios salvos
+/// ponytail: US$ 0,02 por arquivo vem de uma corrida real (79 arquivos, US$ 1,66); calibrar com os relatórios salvos
 pub fn estimate(inc: bool, files: usize, total: usize) -> String {
     if inc {
-        let usd = 0.3 + 0.04 * files as f64;
+        let usd = 0.1 + 0.02 * files as f64;
         format!(
             "{files} arquivos + vizinhos de 1 salto · ~US$ {} · ~{} min",
             brl(usd),
             (files / 6).max(3)
         )
     } else {
-        let usd = 0.05 * total as f64;
+        let usd = 0.03 * total as f64;
         format!(
             "{total} arquivos, {} pilares + verificação · ~US$ {} a {} · ~{} min",
             PILLARS.len(),
