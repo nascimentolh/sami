@@ -20,6 +20,8 @@ pub enum Event {
     AskPublish(String, String),
     /// descarte com "Desfazer" no toast
     Discarded(String),
+    /// "?" num bloco: a gaveta "Perguntar ao Claude"
+    AskClaude(crate::ask::Ctx),
 }
 
 #[derive(Clone, Copy)]
@@ -693,6 +695,13 @@ impl MrsView {
             ("enter", Some(_)) if k.modifiers.control => self.ask_publish(cx),
             ("z", Some(_)) if k.modifiers.control && !k.modifiers.shift => self.undo(cx),
             ("c", Some(_)) if !k.modifiers.modified() => self.new_draft(window, cx),
+            (_, Some(_)) if k.key_char.as_deref() == Some("?") && self.selected.is_some() => {
+                let (path, line) = self.selected.clone().unwrap_or_default();
+                match self.ask_ctx(&path, None, line) {
+                    Some(c) => cx.emit(Event::AskClaude(c)),
+                    None => return,
+                }
+            }
             ("escape", Some(_)) => self.back(cx),
             ("j" | "down", None) => {
                 self.sel = (self.sel + 1).min(self.rows(cx).len().saturating_sub(1))
@@ -712,6 +721,19 @@ impl MrsView {
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    /// O trecho do MR aberto para o "Perguntar ao Claude": o bloco `hi` ou o que contém `line`.
+    fn ask_ctx(&self, path: &str, hi: Option<usize>, line: u32) -> Option<crate::ask::Ctx> {
+        let (row, Some(Ok(o))) = self.open.as_ref()? else {
+            return None;
+        };
+        let f = o.files.iter().find(|f| f.path == path)?;
+        let hi = hi.unwrap_or_else(|| crate::ask::hunk_at(f, line));
+        let place = format!("worktree do MR {} !{}", row.proj(), row.iid);
+        let mut c = crate::ask::Ctx::of_hunk(f, hi, place)?;
+        c.mr = Some((row.path.clone(), row.iid, row.target.clone()));
+        Some(c)
     }
 
     fn ci_label(s: Option<Status>, t: &Theme) -> (String, Hsla) {
@@ -1185,12 +1207,36 @@ impl MrsView {
                 .child(div().text_color(red()).child(format!("−{r}"))),
         );
         for (hi, h) in f.hunks.iter().enumerate() {
+            let path = f.path.clone();
             block = block.child(
                 div()
+                    .flex()
+                    .items_center()
                     .px(px(12.))
                     .text_color(t.comment)
                     .bg(rgba(0x6272a41f))
-                    .child(h.header.clone()),
+                    .child(h.header.clone())
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id(("mr-ask", fi * 1000 + hi))
+                            .font_family(t.mono.clone())
+                            .text_size(px(11.5))
+                            .px(px(6.))
+                            .border_1()
+                            .border_color(t.line)
+                            .rounded(px(4.))
+                            .bg(t.raise)
+                            .text_color(t.muted)
+                            .cursor_pointer()
+                            .hover(|d| d.text_color(t.fg).border_color(t.muted))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(c) = this.ask_ctx(&path, Some(hi), 0) {
+                                    cx.emit(Event::AskClaude(c));
+                                }
+                            }))
+                            .child("?"),
+                    ),
             );
             for (li, l) in h.lines.iter().enumerate() {
                 let sel = self

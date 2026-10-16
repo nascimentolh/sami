@@ -3,6 +3,7 @@ use gpui_kit::{prelude::FluentBuilder, *};
 use std::time::Duration;
 
 use crate::{
+    ask::{AskEvent, AskView, KEvent, KcmdView},
     audit_view::{self, AuditView},
     changes,
     cleanup::{self, Cleanup},
@@ -39,6 +40,9 @@ pub struct Shell {
     confirm: Option<Entity<Confirm>>,
     cleanup: Option<Entity<Cleanup>>,
     compare: Option<Entity<Compare>>,
+    /// a gaveta "Perguntar ao Claude" e o Ctrl+Shift+K
+    ask: Option<Entity<AskView>>,
+    kcmd: Option<Entity<KcmdView>>,
     /// (id, texto, patch que refaz o que foi desfeito)
     toasts: Vec<(usize, String, Option<Redo>)>,
     review: Option<Entity<Review>>,
@@ -88,6 +92,7 @@ const MRS_HINTS: &[(&str, &str, bool)] = &[
 ];
 const MR_HINTS: &[(&str, &str, bool)] = &[
     ("C", "comentar linha", true),
+    ("?", "perguntar sobre o bloco", true),
     ("⇧R", "revisar com Claude", true),
     ("Ctrl+⏎", "publicar", true),
     ("Ctrl+Z", "desfazer descarte", true),
@@ -197,6 +202,7 @@ const HINTS: &[(&str, &str, bool)] = &[
     ("Ctrl+Shift+\\", "dividir", true),
     ("Ctrl+Shift+Enter", "empilhar", true),
     ("Ctrl+Shift+←→", "trocar pane", true),
+    ("Ctrl+Shift+K", "comando por descrição", true),
     ("Ctrl+A", "herdr", true),
     ("Ctrl+Shift+L", "seleção → Claude", true),
     ("Alt+N", "nova feature", true),
@@ -315,6 +321,8 @@ impl Shell {
             confirm: None,
             cleanup: None,
             compare: None,
+            ask: None,
+            kcmd: None,
             toasts: Vec::new(),
             review: None,
             want_review: None,
@@ -371,6 +379,7 @@ impl Shell {
                 "o" => return self.run(Cmd::OpenFileMenu, window, cx),
                 "b" => return self.run(Cmd::ToggleLeft, window, cx),
                 "f" => return self.run(Cmd::Files, window, cx),
+                "k" => return self.run(Cmd::Kcmd, window, cx),
                 _ => {}
             }
         }
@@ -467,6 +476,7 @@ impl Shell {
                     });
                 }
             }
+            items.extend(self.task_items(cx));
             self.open_palette(
                 items,
                 "Comando ou nome da feature…",
@@ -863,6 +873,7 @@ impl Shell {
                         let root = r.read(cx).root.clone();
                         this.remove_feature_at(Some(root), None, window, cx)
                     }
+                    review::Event::AskClaude(c) => this.open_ask(c.clone(), window, cx),
                     review::Event::MrOpened => {
                         if this.tour.is_none() && !tour::seen("mrtab") {
                             this.tour = Some((tour::MRTAB, "mrtab", 0));
@@ -892,14 +903,21 @@ impl Shell {
             return m.clone();
         }
         let m = cx.new(|cx| MrsView::new(self.theme.clone(), self.anchors.clone(), cx));
-        cx.subscribe_in(&m, window, |this, _, e: &mrs_view::Event, _, cx| match e {
-            mrs_view::Event::Toast(t) => this.toast(t.clone(), cx),
-            mrs_view::Event::Discarded(t) => this.toast_undo(t.clone(), Some(Redo::MrDraft), cx),
-            mrs_view::Event::AskPublish(a, b) => {
-                this.want_publish = Some((a.clone(), b.clone()));
-                cx.notify();
-            }
-        })
+        cx.subscribe_in(
+            &m,
+            window,
+            |this, _, e: &mrs_view::Event, window, cx| match e {
+                mrs_view::Event::Toast(t) => this.toast(t.clone(), cx),
+                mrs_view::Event::Discarded(t) => {
+                    this.toast_undo(t.clone(), Some(Redo::MrDraft), cx)
+                }
+                mrs_view::Event::AskClaude(c) => this.open_ask(c.clone(), window, cx),
+                mrs_view::Event::AskPublish(a, b) => {
+                    this.want_publish = Some((a.clone(), b.clone()));
+                    cx.notify();
+                }
+            },
+        )
         .detach();
         cx.observe(&m, |_, _, cx| cx.notify()).detach();
         self.mrs = Some(m.clone());
@@ -1225,6 +1243,138 @@ impl Shell {
         cx.notify();
     }
 
+    /// "Tarefa: <nome>" para cada script/alvo da worktree em foco.
+    fn task_items(&self, cx: &App) -> Vec<palette_cmd::Item> {
+        let root = self
+            .sidebar
+            .as_ref()
+            .and_then(|s| s.read(cx).top_worktree());
+        root.map(|r| crate::tasks::detect(&r))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| palette_cmd::Item {
+                title: format!("Tarefa: {}", t.name),
+                key: t.cmd.clone(),
+                cmd: Some(Cmd::Task(t.name, t.cmd)),
+                tag: None,
+            })
+            .collect()
+    }
+
+    /// Roda a tarefa num split do herdr e, quando ela termina, joga os erros na aba Problemas.
+    fn run_task(&mut self, name: String, cmd: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sidebar) = self.sidebar.clone() else {
+            return;
+        };
+        let s = sidebar.read(cx);
+        let Some(root) = s.top_worktree() else {
+            return self.toast("Este terminal não está num repo: sem tarefas".into(), cx);
+        };
+        let target = s
+            .agents
+            .iter()
+            .find(|a| std::path::Path::new(&a.cwd).starts_with(&root))
+            .map(|a| a.pane_id.clone());
+        let herdr = s.herdr();
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let r = root.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::tasks::run_in_split(&herdr, &r, target, &cmd));
+        });
+        self.toast(format!("{name}: rodando num split"), cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(res) = rx.await else { return };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let (code, probs) = match res {
+                    Ok(x) => x,
+                    Err(e) => return this.toast(format!("{name}: {e}"), cx),
+                };
+                let n = probs.len();
+                if n > 0 || this.review.is_some() {
+                    if this.review.as_ref().is_none_or(|r| r.read(cx).root != root) {
+                        this.open_review_at(root.clone(), None, window, cx);
+                    }
+                    if let Some(rv) = &this.review {
+                        rv.update(cx, |rv, cx| {
+                            rv.set_task_problems(name.clone(), probs, cx);
+                            if n > 0 {
+                                rv.show_problems(cx);
+                            }
+                        });
+                    }
+                }
+                let msg = match (n, code) {
+                    (0, 0) => format!("{name}: passou, nenhum problema"),
+                    (0, c) => format!("{name}: saiu com {c}, sem erros com arquivo e linha"),
+                    (1, _) => format!("{name}: 1 problema, veja em Problemas"),
+                    (n, _) => format!("{name}: {n} problemas, veja em Problemas"),
+                };
+                this.toast(msg, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn open_ask(&mut self, ctx: crate::ask::Ctx, window: &mut Window, cx: &mut Context<Self>) {
+        let theme = self.theme.clone();
+        let a = cx.new(|cx| AskView::new(ctx, theme, cx));
+        cx.subscribe_in(&a, window, |this, _, e: &AskEvent, window, cx| match e {
+            AskEvent::Close => {
+                this.ask = None;
+                // o foco volta para quem abriu a gaveta: o MR ou o painel de revisão
+                let back = match (&this.mrs, &this.review) {
+                    (Some(m), _) if this.in_mrs => m.read(cx).focus_handle(),
+                    (_, Some(r)) => r.read(cx).focus_handle(cx),
+                    _ => this.terminal.read(cx).focus_handle(),
+                };
+                window.focus(&back, cx);
+                cx.notify();
+            }
+        })
+        .detach();
+        window.focus(&a.read(cx).focus_handle(cx), cx);
+        self.ask = Some(a);
+        cx.notify();
+    }
+
+    fn open_kcmd(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let on_terminal = self.terminal.read(cx).focus_handle().is_focused(window)
+            && !self.in_mrs
+            && !self.in_vault
+            && !self.in_audit;
+        let herdr = self.sidebar.as_ref().map(|s| s.read(cx).herdr());
+        let (true, Some(herdr)) = (on_terminal, herdr) else {
+            return self.toast("Ctrl+Shift+K funciona com o terminal em foco".into(), cx);
+        };
+        let theme = self.theme.clone();
+        let k = cx.new(|cx| KcmdView::new(herdr, theme, cx));
+        cx.subscribe_in(&k, window, |this, _, e: &KEvent, window, cx| {
+            this.kcmd = None;
+            if matches!(e, KEvent::Typed) {
+                this.toast(
+                    "Comando digitado no zsh. Enter roda; nada foi executado.".into(),
+                    cx,
+                );
+            }
+            // o Enter que confirmou ainda vira texto depois deste evento: com o terminal já em foco, ele rodaria o comando
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                });
+            })
+            .detach();
+            cx.notify();
+        })
+        .detach();
+        window.focus(&k.read(cx).focus_handle(cx), cx);
+        self.kcmd = Some(k);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     /// "Arquivo: Abrir…": os arquivos da worktree em foco, na mesma paleta.
     fn open_file_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(root) = self
@@ -1339,6 +1489,38 @@ impl Shell {
                 focus(Some(p), cx)
             }
             Cmd::Help => self.help = true,
+            Cmd::TaskMenu => {
+                let items = self.task_items(cx);
+                if items.is_empty() {
+                    return self.toast(
+                        "Nenhuma tarefa: sem package.json, Makefile, Cargo.toml ou go.mod aqui"
+                            .into(),
+                        cx,
+                    );
+                }
+                return self.open_palette(items, "Tarefa…", "Nenhuma tarefa", window, cx);
+            }
+            Cmd::Task(name, cmd) => return self.run_task(name, cmd, window, cx),
+            Cmd::Kcmd => return self.open_kcmd(window, cx),
+            Cmd::Problems => {
+                let Some(root) = self
+                    .sidebar
+                    .as_ref()
+                    .and_then(|s| s.read(cx).top_worktree())
+                else {
+                    return self.toast(
+                        "Abra um terminal num repositório para ver os problemas".into(),
+                        cx,
+                    );
+                };
+                self.leave_modes();
+                if self.review.as_ref().is_none_or(|r| r.read(cx).root != root) {
+                    self.open_review_at(root, None, window, cx);
+                }
+                if let Some(r) = &self.review {
+                    r.update(cx, |r, cx| r.show_problems(cx));
+                }
+            }
             Cmd::Files => {
                 self.left = true;
                 self.in_vault = false;
@@ -1852,7 +2034,11 @@ impl Shell {
     }
 
     /// Abas do workspace em foco, como no `.hbar` do protótipo (a barra do próprio herdr fica escondida).
-    fn hbar(&self, cx: &App) -> Div {
+    fn hbar(
+        &self,
+        run_task: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        cx: &App,
+    ) -> Div {
         let t = &self.theme;
         let mut bar = div()
             .flex()
@@ -1927,6 +2113,19 @@ impl Shell {
             );
         }
         bar = bar.child(div().flex_1());
+        if s.top_worktree().is_some() {
+            bar = bar.child(
+                div()
+                    .id("run-task")
+                    .px(px(10.))
+                    .py(px(3.))
+                    .cursor_pointer()
+                    .text_color(t.comment)
+                    .hover(|d| d.text_color(t.fg))
+                    .on_click(run_task)
+                    .child("▶ Rodar tarefa…"),
+            );
+        }
         let hint = div().px(px(10.)).py(px(3.));
         if self.prefix {
             bar.child(
@@ -2000,6 +2199,7 @@ impl Shell {
                 ("Ctrl+Shift+F", "árvore de arquivos", true),
                 ("Alt+1…4", "Features, MRs, Vault, Auditoria", true),
                 ("Ctrl+Shift+P", "comandos", true),
+                ("Ctrl+Shift+K", "comando por descrição", true),
             ]
             .iter(),
         ) {
@@ -2430,6 +2630,7 @@ impl Render for Shell {
             .child(
                 div()
                     .id("columns")
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
@@ -2485,7 +2686,10 @@ impl Render for Shell {
                                 .bg(t.win)
                                 .relative()
                                 .child(tour::anchor(&self.anchors, "term"))
-                                .child(self.hbar(cx))
+                                .child(self.hbar(
+                                    cx.listener(|this, _, w, cx| this.run(Cmd::TaskMenu, w, cx)),
+                                    cx,
+                                ))
                                 .child(div().flex_1().min_h_0().child(self.terminal.clone())),
                         )
                     })
@@ -2513,11 +2717,24 @@ impl Render for Shell {
                                             .child(r),
                                     )
                             }),
-                    ),
+                    )
+                    .children(self.ask.clone()),
             )
             .child(self.hints(cx))
             .child(self.status(cx))
             .children(overlay)
+            .children(self.kcmd.clone().map(|k| {
+                // o `.kpop` do protótipo: acima do terminal, sem escurecer a tela
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom(px(76.))
+                    .px(px(14.))
+                    .flex()
+                    .justify_center()
+                    .child(k)
+            }))
             .when(self.help, |d| {
                 d.child(
                     div()

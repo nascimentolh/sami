@@ -379,6 +379,26 @@ pub fn installed(root: &Path, server: &Server) -> bool {
         .any(|(b, _)| usable(root, b) && find(b).is_some())
 }
 
+/// Os diagnósticos de todos os servidores desta worktree, para o painel Problemas.
+pub fn diagnostics_under(root: &Path) -> Vec<(PathBuf, lsp_types::Diagnostic)> {
+    let clients: Vec<Arc<Client>> = registry()
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|((r, _), _)| r == root)
+        .map(|(_, c)| c.clone())
+        .collect();
+    let mut out = Vec::new();
+    for c in clients {
+        for (uri, list) in c.diagnostics.lock().unwrap().iter() {
+            if let Some(p) = uri_path(uri) {
+                out.extend(list.iter().map(|d| (p.clone(), d.clone())));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

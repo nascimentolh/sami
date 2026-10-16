@@ -1,0 +1,9 @@
+
+/work/es/src/b.js
+  1:7   error    'a' is assigned a value but never used  no-unused-vars
+  2:10  error    'f' is defined but never used           no-unused-vars
+  2:12  error    'x' is defined but never used           no-unused-vars
+  3:10  warning  'y' is not defined                      no-undef
+
+✖ 4 problems (3 errors, 1 warning)
+
