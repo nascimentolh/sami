@@ -225,6 +225,8 @@ pub enum Event {
     Close,
 }
 
+const SHOWN: usize = 200;
+
 pub struct CommandPalette {
     query: String,
     selected: usize,
@@ -234,6 +236,7 @@ pub struct CommandPalette {
     empty: &'static str,
     focus: FocusHandle,
     theme: Theme,
+    scroll: ScrollHandle,
 }
 
 impl EventEmitter<Event> for CommandPalette {}
@@ -255,6 +258,7 @@ impl CommandPalette {
             empty,
             focus: cx.focus_handle(),
             theme,
+            scroll: ScrollHandle::new(),
         };
         p.refilter();
         p
@@ -267,6 +271,7 @@ impl CommandPalette {
     fn refilter(&mut self) {
         self.items = filter(self.all.clone(), &self.query);
         self.selected = 0;
+        self.scroll.scroll_to_item(0);
     }
 
     fn run(&mut self, i: usize, cx: &mut Context<Self>) {
@@ -279,8 +284,15 @@ impl CommandPalette {
         match e.keystroke.key.as_str() {
             "escape" => cx.emit(Event::Close),
             "enter" => self.run(self.selected, cx),
-            "down" => self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1)),
-            "up" => self.selected = self.selected.saturating_sub(1),
+            "down" => {
+                self.selected =
+                    (self.selected + 1).min(self.items.len().min(SHOWN).saturating_sub(1));
+                self.scroll.scroll_to_item(self.selected);
+            }
+            "up" => {
+                self.selected = self.selected.saturating_sub(1);
+                self.scroll.scroll_to_item(self.selected);
+            }
             "backspace" => {
                 self.query.pop();
                 self.refilter();
@@ -391,7 +403,8 @@ impl Render for CommandPalette {
             .flex_col()
             .py(px(4.))
             .max_h(px(340.))
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll);
         if self.items.is_empty() {
             list = list.child(
                 div()
@@ -402,7 +415,7 @@ impl Render for CommandPalette {
             );
         }
         // ponytail: desenha só os 200 primeiros (a lista de arquivos de um repo grande); lista virtual se fizer falta
-        for (i, it) in self.items.iter().enumerate().take(200) {
+        for (i, it) in self.items.iter().enumerate().take(SHOWN) {
             let ready = it.cmd.is_some();
             list = list.child(
                 div()
