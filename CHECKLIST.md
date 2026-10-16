@@ -270,6 +270,14 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] #11 inventário com escrita atômica e log de JSON inválido
 - [x] #12 actions fixadas por SHA + Dependabot
 
+## Bancos (túneis dos aliases do zsh)
+
+- [x] Protótipo: tela global Bancos (Alt+6), filtros, seletor Ctrl+Shift+D, indicador na barra de status
+- [x] `tunnels.rs`: lê os aliases do zsh que rodam cloud-sql-proxy/port-forward, porta e alvo, liga (grupo de processos próprio, log em ~/.cache/sql-proxy) e desliga (quem escuta na porta)
+- [x] `tunnels_view.rs`: lista com status (de pé, subindo, caiu com a última linha do log), Copiar host, Ver log, Desligar todos
+- [x] Shell: modo no título com contagem, Alt+6, Ctrl+Shift+D, comandos na paleta, dicas, "N bancos" na barra de status
+- [x] Teste no app com aliases falsos: liga, cai, desliga, sobrevive ao fechar o app e é reconhecido ao reabrir
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
