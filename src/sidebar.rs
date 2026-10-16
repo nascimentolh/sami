@@ -685,12 +685,12 @@ impl Sidebar {
             .iter()
             .find(|a| a.focused)
             .map(|a| a.cwd.as_str());
-        focused
-            .into_iter()
-            .chain(self.focused_cwd.as_deref())
-            .chain(self.agents.iter().map(|a| a.cwd.as_str()))
-            .find_map(|c| herdr::repo_root(Path::new(c)))
-            .map(Path::to_path_buf)
+        let here = self
+            .agents
+            .iter()
+            .filter(|a| self.here(&a.workspace_id))
+            .map(|a| a.cwd.as_str());
+        pick_worktree(focused.or(self.focused_cwd.as_deref()), here)
     }
 
     /// Clique numa feature ou terminal: foca e avisa o Shell para sair de MRs, Vault ou Auditoria.
@@ -1741,9 +1741,37 @@ impl Render for Sidebar {
     }
 }
 
+/// O pane em foco manda: com `cd ~` a lateral fica sem repo; os Claudes da aba só valem sem foco conhecido.
+fn pick_worktree<'a>(
+    focused: Option<&str>,
+    mut here: impl Iterator<Item = &'a str>,
+) -> Option<PathBuf> {
+    match focused {
+        Some(c) => herdr::repo_root(Path::new(c)),
+        None => here.find_map(|c| herdr::repo_root(Path::new(c))),
+    }
+    .map(Path::to_path_buf)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Work, ago, load_works, save_works, title};
+    use super::{Work, ago, load_works, pick_worktree, save_works, title};
+
+    #[test]
+    fn lateral_segue_a_pasta_do_pane_em_foco() {
+        let dir = std::env::temp_dir().join(format!("maestro-top-{}", std::process::id()));
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(a.join(".git")).unwrap();
+        std::fs::create_dir_all(b.join(".git")).unwrap();
+        let (sa, sb) = (a.to_str().unwrap(), b.to_str().unwrap());
+        assert_eq!(pick_worktree(Some(sb), [sa].into_iter()), Some(b.clone()));
+        assert_eq!(
+            pick_worktree(Some(dir.to_str().unwrap()), [sa].into_iter()),
+            None
+        );
+        assert_eq!(pick_worktree(None, [sa].into_iter()), Some(a.clone()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
     use crate::herdr::{Agent, Status};
     use std::time::Duration;
 
