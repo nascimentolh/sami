@@ -450,9 +450,19 @@ pub fn read(endpoint: &str, paginate: bool) -> Result<Value, String> {
             .unwrap_or("glab falhou")
             .into());
     }
-    // `--paginate` cola os arrays das páginas: `][` vira `,`
-    let text = String::from_utf8_lossy(&out.stdout).replace("][", ",");
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+    join_pages(&out.stdout)
+}
+
+/// `--paginate` cola os arrays das páginas (`[..][..]`): lidos em sequência e achatados.
+fn join_pages(raw: &[u8]) -> Result<Value, String> {
+    let mut all = Vec::new();
+    for v in serde_json::Deserializer::from_slice(raw).into_iter::<Value>() {
+        match v.map_err(|e| e.to_string())? {
+            Value::Array(a) => all.extend(a),
+            other => return Ok(other),
+        }
+    }
+    Ok(Value::Array(all))
 }
 
 /// Toda escrita no GitLab passa por aqui (e só aqui): POST/PUT/DELETE com o header certo e o `.id` conferido.
@@ -1032,6 +1042,10 @@ mod tests {
         let st = "g/p!3@aaa\ng/p!3@bbb\n";
         assert!(seen(st, "g/p", 3, "bbb") && !seen(st, "g/p", 3, "ccc"));
         assert_eq!(last_seen(st, "g/p", 3).as_deref(), Some("bbb"));
+        assert_eq!(
+            join_pages(br#"[{"d":"a[0][1]"}][{"d":"b"}]"#).unwrap(),
+            json!([{"d": "a[0][1]"}, {"d": "b"}])
+        );
         // 11
         let args = claude_args(None);
         assert!(
