@@ -97,6 +97,7 @@ fn main() {
                 appears_transparent: true,
                 ..Default::default()
             }),
+            app_id: Some("maestro".into()),
             window_decorations: Some(WindowDecorations::Client),
             window_background: if config.background_opacity < 1. {
                 WindowBackgroundAppearance::Transparent
