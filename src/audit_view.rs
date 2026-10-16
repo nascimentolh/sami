@@ -43,6 +43,8 @@ pub struct AuditView {
     budget: Entity<TextField>,
     base: Entity<TextField>,
     why: bool,
+    prod: bool,
+    gcloud: bool,
     dropped_open: bool,
     steps: Vec<(&'static str, String)>,
     tool: Option<String>,
@@ -101,6 +103,9 @@ impl AuditView {
             budget,
             base,
             why: false,
+            prod: false,
+            gcloud: std::env::var_os("PATH")
+                .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("gcloud").is_file())),
             dropped_open: false,
             steps: Vec::new(),
             tool: None,
@@ -245,7 +250,7 @@ impl AuditView {
                 .map(|(p, _)| p.0)
                 .collect(),
             budget: cap,
-            prod: false,
+            prod: self.prod,
         };
         if o.pillars.is_empty() {
             cx.emit(Event::Toast("Marque ao menos um pilar.".into()));
@@ -834,20 +839,27 @@ impl AuditView {
                                     .child(": o processo para ao atingir)"),
                             ),
                     )
-                    // ponytail: MCP de produção fica apagado até o Datadog/Cloud SQL estarem autenticados no claude
                     .child(
                         div()
+                            .id("au-prod")
                             .flex()
+                            .flex_wrap()
                             .gap(px(6.))
                             .items_center()
-                            .opacity(0.45)
-                            .child(checkbox(&t, false))
-                            .child("Incluir dados de produção via MCP (Datadog, Cloud SQL)")
-                            .child(
-                                div()
-                                    .text_color(t.muted)
-                                    .child("para validar achados de custo e infra; +~US$ 0,50"),
-                            ),
+                            .when(!self.gcloud, |d| d.opacity(0.45))
+                            .when(self.gcloud, |d| {
+                                d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
+                                    this.prod = !this.prod;
+                                    cx.notify();
+                                }))
+                            })
+                            .child(checkbox(&t, self.prod))
+                            .child("Incluir dados de produção via gcloud e kubectl (Cloud Logging, Cloud SQL, Pub/Sub, pods)")
+                            .child(div().text_color(t.muted).child(if self.gcloud {
+                                "só leitura, para validar achados de custo e infra; +~US$ 0,50"
+                            } else {
+                                "gcloud não está no PATH"
+                            })),
                     )
                     .child(div().text_color(t.muted).child(ctx)),
             )

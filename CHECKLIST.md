@@ -166,7 +166,7 @@ Conferido numa cópia do vault (`MAESTRO_VAULT`): a feature nova de um repo `bot
 - [x] achados marcáveis, prévia editável, "abrir N work items" com confirmação (só pelo `mrs::write`), "não é problema" persistido em `.maestro/audit-ignore.json` com desfazer
 - [x] "Corrigir em feature" a partir do work item (`fix/<iid>-slug`, sem commitar)
 - [x] tutorial da área, card na lateral, fila de atenção, status bar, paleta e resumo do dia
-- [ ] ponytail: "dados de produção via MCP" aparece apagado até o Datadog/Cloud SQL estarem autenticados no `claude`
+- [x] dados de produção via `gcloud`/`kubectl` só de leitura (`audit::PROD_READ`; escrita negada, conferido); ponytail: sem séries do Cloud Monitoring, o `gcloud` não lê
 
 **Pronto quando:** a incremental no email-service desde um sha antigo não devolve nenhum dos #15 a #50 como "novo".
 
@@ -177,7 +177,7 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
-- Do merge à produção (rollout + logs Datadog)
+- Do merge à produção (rollout + Cloud Logging)
 - Resumo de ausência
 - Notificação no celular quando você está fora
 - LSP no editor

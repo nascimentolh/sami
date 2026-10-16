@@ -1064,7 +1064,7 @@ function renderAudit(el){
       <fieldset><legend>Pilares</legend><div style="display:flex;flex-wrap:wrap;gap:6px 16px">${Object.entries(PIL).map(([k,v])=>`<label><input type="checkbox" data-pil="${k}" ${AU.pil[k]?'checked':''}> ${v}</label>`).join('')}</div></fieldset>
       <fieldset><legend>Limites e contexto</legend>
         <label>Teto de gasto <input type="number" id="auB" min="0.5" step="0.5" value="${AU.budget[AU.kind]}" style="width:80px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:2px 6px;font:13px var(--mono)"> <span class="muted">US$ (<span class="mono">--max-budget-usd</span>: o processo para ao atingir)</span></label>
-        <label><input type="checkbox" id="auProd" ${AU.prod?'checked':''}> Incluir dados de produção via MCP (Datadog, Cloud SQL) <span class="muted">para validar achados de custo e infra; +~US$ 0,50</span></label>
+        <label><input type="checkbox" id="auProd" ${AU.prod?'checked':''}> Incluir dados de produção via gcloud e kubectl (Cloud Logging, Cloud SQL, Pub/Sub, pods) <span class="muted">só leitura, para validar achados de custo e infra; +~US$ 0,50</span></label>
         <span class="muted">Contexto incluído: CLAUDE.md, k8s-configmap, pipeline do repo, os 50 work items deste repo e os de email-service e contato-service (para não repetir e para reconhecer padrões), e as decisões do vault (para não sugerir o que já foi decidido contra).</span></fieldset>
       <details><summary class="muted" style="cursor:pointer">O que mudou em relação ao prompt do snippet 5996330</summary><ul style="margin:8px 0 0;padding-left:18px;color:var(--muted);display:grid;gap:4px">
         <li>Saída em JSON validada por schema (o campo de cada work item vem pronto), em vez de Markdown para parsear.</li>
@@ -1115,7 +1115,7 @@ function runAudit(){
   AU.phase='run'; AU.spent=0; AU.steps=[]; renderCenter(); renderStatus();
   const pil=Object.keys(PIL).filter(k=>AU.pil[k]); const inc=AU.kind==='inc', cap=AU.budget[AU.kind], k=inc?1:7;
   const seq=[[400,'ok',`mapa do repo (ripwire): 142 arquivos, 9 hotspots`,.05],[700,'ok',inc?`escopo: ${AU.last.files} arquivos mudaram desde ${AU.last.sha} + 8 vizinhos de 1 salto`:'escopo: repo inteiro, Dockerfile, k8s e .gitlab-ci.yml incluídos',.02],
-    ...(AU.prod?[[600,'ok','dados de produção: CPU/memória do pod e disco do Cloud SQL (MCP Datadog)',.4]]:[]),
+    ...(AU.prod?[[600,'ok','dados de produção: gcloud e kubectl liberados só para leitura',.4]]:[]),
     ...pil.map((p,i)=>[700+i*150,'sub',`${PIL[p]}: ${[3,4,3,2,2][i]} achados brutos`,.12*k]),
     [900,'ok','verificação: 14 achados brutos → 5 confirmados; 5 descartados, 1 deles por contradizer a decisão do vault node-24-dimensiona-a-heap-pelo-cgroup',.15*k],[600,'ok','dedup contra 50 work items deste repo + email-service e contato-service: 1 já existe, 1 repete padrão já corrigido lá',.03]];
   let t=0; seq.forEach(([ms,kk,txt,cost])=>{ t+=ms; auT.push(setTimeout(()=>{ AU.spent=Math.min(cap,AU.spent+cost); AU.steps.push({k:kk,t:txt}); if(AU.spent>=cap){ stopAudit('teto de gasto atingido'); return; } if(S.mode==='audit') renderCenter(); },t)); });

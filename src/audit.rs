@@ -472,7 +472,7 @@ pub fn prompt(
         .collect::<Vec<_>>()
         .join("\n");
     let prod = if o.prod {
-        "\nPode usar os MCPs de Datadog e Cloud SQL (somente leitura) para validar achados de custo e infra."
+        "\nPara validar achados de custo e infra, pode consultar produção só com leitura: `gcloud logging read`, `gcloud sql|run|pubsub|container … describe/list`, `gcloud monitoring policies list` e `kubectl get|describe|top|logs` (use `--project`/`--context` de prd; descubra-os em k8s/, .gitlab-ci.yml e na nota do vault abaixo). Achado de custo/infra sem esse dado vira confiança baixa."
     } else {
         ""
     };
@@ -527,9 +527,9 @@ why: uma frase curta em português. Não altere arquivos.
 }
 
 /// Só leitura de verdade: `--restricted` ignora os settings (hooks e `allow` do usuário) e prende os arquivos ao repo;
-/// o Bash só existe para os `git` de leitura.
-pub fn claude_args(schema: &str, budget: f64) -> Vec<String> {
-    [
+/// o Bash só existe para os `git` de leitura (e, com `prod`, `gcloud`/`kubectl` de leitura).
+pub fn claude_args(schema: &str, budget: f64, prod: bool) -> Vec<String> {
+    let mut a: Vec<String> = [
         "-p",
         "--output-format",
         "stream-json",
@@ -554,8 +554,32 @@ pub fn claude_args(schema: &str, budget: f64) -> Vec<String> {
         "Glob",
     ]
     .map(String::from)
-    .to_vec()
+    .to_vec();
+    if prod {
+        a.extend(PROD_READ.iter().map(|c| format!("Bash({c}:*)")));
+    }
+    a
 }
+
+/// Produção pela CLI que você já usa (não há MCP de Cloud Monitoring/Logging configurado no claude).
+/// ponytail: sem séries temporais do Cloud Monitoring (o gcloud não lê); `kubectl top` e os logs cobrem CPU/memória e erros
+pub const PROD_READ: &[&str] = &[
+    "gcloud logging read",
+    "gcloud sql instances describe",
+    "gcloud sql instances list",
+    "gcloud run services describe",
+    "gcloud run services list",
+    "gcloud pubsub topics describe",
+    "gcloud pubsub topics list",
+    "gcloud pubsub subscriptions describe",
+    "gcloud pubsub subscriptions list",
+    "gcloud container clusters describe",
+    "gcloud monitoring policies list",
+    "kubectl get",
+    "kubectl describe",
+    "kubectl top",
+    "kubectl logs",
+];
 
 /// A linha `result` do stream-json: (saída estruturada, custo) ou (erro, custo).
 pub fn parse_result(line: &str) -> Option<Result<(Value, f64), (String, f64)>> {
@@ -637,12 +661,13 @@ fn claude(
     repo: &Path,
     schema: &str,
     budget: f64,
+    prod: bool,
     prompt: &str,
     send: &impl Fn(Ev),
 ) -> Result<(Value, f64), (String, f64)> {
     use std::io::{BufRead, Write};
     let mut child = Command::new("claude")
-        .args(claude_args(schema, budget))
+        .args(claude_args(schema, budget, prod))
         .current_dir(repo)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -742,8 +767,17 @@ pub fn run(repo: &Path, o: Opts, send: impl Fn(Ev)) {
         .collect();
     send(Ev::Step("run", format!("análise: {}", pil.join(", "))));
     // ponytail: uma chamada para todos os pilares; uma por pilar se a qualidade cair em repo grande
-    let p = prompt(&name, &o, &map, &known, &ign, &dec);
-    let (raw, c1) = match claude(repo, SCHEMA, o.budget, &p, &send) {
+    let mut p = prompt(&name, &o, &map, &known, &ign, &dec);
+    if o.prod {
+        if let Some(n) = vault::find(&notes, &name) {
+            p.push_str(&format!("\n\nNota do vault sobre {name}:\n{}", n.text));
+        }
+        send(Ev::Step(
+            "ok",
+            "dados de produção: gcloud e kubectl liberados só para leitura".into(),
+        ));
+    }
+    let (raw, c1) = match claude(repo, SCHEMA, o.budget, o.prod, &p, &send) {
         Ok(r) => r,
         Err((e, c)) => {
             send(Ev::Spent(c));
@@ -769,7 +803,14 @@ pub fn run(repo: &Path, o: Opts, send: impl Fn(Ev)) {
             "run",
             format!("verificação: {} achados contra o código", raw.len()),
         ));
-        match claude(repo, VERIFY_SCHEMA, left, &verify_prompt(&raw, &dec), &send) {
+        match claude(
+            repo,
+            VERIFY_SCHEMA,
+            left,
+            o.prod,
+            &verify_prompt(&raw, &dec),
+            &send,
+        ) {
             Ok((v, c)) => {
                 let n = raw.len();
                 let (k, d) = apply_verdicts(raw, &v);
@@ -978,6 +1019,17 @@ mod tests {
             r#"{"type":"result","subtype":"success","total_cost_usd":0.5,"structured_output":{"findings":[{"pillar":"sec","sev":"P1","labels":["security"],"title":"[P1] sec(logs): x","location":"a:1","confidence":"alta","problem":"p","evidence":"e","fix":"f","impact":"i","size":"small","related":null}]}}"#,
         );
         let Some(Ok((v, _))) = ok else { panic!() };
+        let a = claude_args("{}", 1., true);
+        assert!(a.contains(&"Bash(gcloud logging read:*)".to_string()));
+        assert!(!a.iter().any(|x| x.contains("gcloud")
+            && !x.contains(" list")
+            && !x.contains(" describe")
+            && !x.contains(" read")));
+        assert!(
+            !claude_args("{}", 1., false)
+                .iter()
+                .any(|x| x.contains("gcloud"))
+        );
         assert_eq!(parse_findings(&v)[0].title, "sec(logs): x");
     }
 
