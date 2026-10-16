@@ -45,6 +45,57 @@ pub fn files(root: &Path) -> Vec<String> {
     .unwrap_or_default()
 }
 
+/// Um resultado da busca no projeto: (caminho, linha 1-based, texto da linha).
+pub type Hit = (String, u32, String);
+
+/// Busca no projeto pelo texto literal, sem caixa, nos arquivos que a aba Arquivos mostra.
+pub fn grep(root: &Path, q: &str) -> Vec<Hit> {
+    // ponytail: 200 resultados; paginar se alguém precisar de mais
+    git(
+        root,
+        &[
+            "grep",
+            "-n",
+            "-z",
+            "-I",
+            "-F",
+            "-i",
+            "--untracked",
+            "--no-color",
+            "-e",
+            q,
+            "--",
+        ],
+    )
+    .map(|o| parse_grep(&o))
+    .unwrap_or_default()
+}
+
+/// Onde `q` aparece em `text` sem olhar caixa; com acento o minúsculo pode mudar de tamanho, aí não marca.
+pub fn find_ci(text: &str, q: &str) -> Option<std::ops::Range<usize>> {
+    let lower = text.to_lowercase();
+    if lower.len() != text.len() || q.is_empty() {
+        return None;
+    }
+    let i = lower.find(&q.to_lowercase())?;
+    (text.is_char_boundary(i) && text.is_char_boundary(i + q.len())).then(|| i..i + q.len())
+}
+
+/// `caminho\0linha\0texto` por linha (`-z`: caminho com `:` não quebra).
+fn parse_grep(out: &str) -> Vec<Hit> {
+    out.lines()
+        .filter_map(|l| {
+            let mut it = l.splitn(3, '\0');
+            Some((
+                it.next()?.into(),
+                it.next()?.parse().ok()?,
+                it.next()?.trim().chars().take(200).collect(),
+            ))
+        })
+        .take(200)
+        .collect()
+}
+
 /// Caminho digitado na árvore: relativo, sem `..` nem `.`, para não sair da worktree.
 fn inside(rel: &str) -> Result<&str, String> {
     let rel = rel.trim().trim_end_matches('/');
@@ -85,9 +136,75 @@ pub fn create(root: &Path, rel: &str, dir: bool) -> Result<String, String> {
 }
 
 pub fn rename(root: &Path, from: &str, to: &str) -> Result<String, String> {
-    let from = root.join(inside(from)?);
+    let from_rel = inside(from)?;
+    if inside(to)?.starts_with(&format!("{from_rel}/")) {
+        return Err(format!("{from_rel} não cabe dentro dela mesma"));
+    }
+    let from = root.join(from_rel);
     let (rel, abs) = free(root, to)?;
     fs::rename(from, abs).map_err(|e| e.to_string())?;
+    Ok(rel)
+}
+
+/// `app.ts` já existe em `dir`: `app cópia.ts`, depois `app cópia 2.ts`.
+fn free_name(dir: &str, name: &str, taken: impl Fn(&str) -> bool) -> String {
+    let (base, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => name.split_at(i),
+        _ => (name, ""),
+    };
+    let join = |n: String| {
+        if dir.is_empty() {
+            n
+        } else {
+            format!("{dir}/{n}")
+        }
+    };
+    let mut path = join(name.into());
+    let mut k = 1;
+    while taken(&path) {
+        path = join(if k == 1 {
+            format!("{base} cópia{ext}")
+        } else {
+            format!("{base} cópia {k}{ext}")
+        });
+        k += 1;
+    }
+    path
+}
+
+/// Copia o arquivo ou a pasta para dentro de `dir` ("" é a raiz), sem sobrescrever nem seguir links.
+pub fn copy(root: &Path, from: &str, dir: &str) -> Result<String, String> {
+    let from = inside(from)?;
+    let dir = if dir.trim().is_empty() {
+        ""
+    } else {
+        inside(dir)?
+    };
+    if dir == from || dir.starts_with(&format!("{from}/")) {
+        return Err(format!("{from} não cabe dentro dela mesma"));
+    }
+    let src = root.join(from);
+    src.symlink_metadata()
+        .map_err(|_| format!("{from} não existe mais"))?;
+    let name = from.rsplit('/').next().unwrap_or(from);
+    let to = free_name(dir, name, |p| root.join(p).symlink_metadata().is_ok());
+    fn walk(a: &Path, b: &Path) -> std::io::Result<()> {
+        let t = a.symlink_metadata()?.file_type();
+        if t.is_symlink() {
+            std::os::unix::fs::symlink(fs::read_link(a)?, b)
+        } else if t.is_dir() {
+            fs::create_dir(b)?;
+            for e in fs::read_dir(a)? {
+                let e = e?;
+                walk(&e.path(), &b.join(e.file_name()))?;
+            }
+            Ok(())
+        } else {
+            fs::copy(a, b).map(drop)
+        }
+    }
+    let (rel, abs) = free(root, &to)?;
+    walk(&src, &abs).map_err(|e| e.to_string())?;
     Ok(rel)
 }
 
@@ -252,7 +369,41 @@ mod tests {
             super::tree(&["vazia/".into()], &Default::default()).len(),
             1
         );
+        create(&root, "p/q/a.ts", false).unwrap();
+        assert!(rename(&root, "p", "p/q/p").unwrap_err().contains("dentro"));
+        assert!(copy(&root, "p", "p/q").unwrap_err().contains("dentro"));
+        assert_eq!(copy(&root, "p/q/a.ts", "p/q").unwrap(), "p/q/a cópia.ts");
+        assert_eq!(copy(&root, "p/q/a.ts", "p/q").unwrap(), "p/q/a cópia 2.ts");
+        std::os::unix::fs::symlink("/etc", root.join("p/link")).unwrap();
+        assert_eq!(copy(&root, "p", "").unwrap(), "p cópia");
+        assert!(root.join("p cópia/q/a cópia 2.ts").is_file());
+        let link = root.join("p cópia/link").symlink_metadata().unwrap();
+        assert!(link.file_type().is_symlink());
+        assert!(copy(&root, "sumiu.ts", "vazia").is_err());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn marca_o_termo_achado() {
+        assert_eq!(find_ci("const Nome = 1", "nome"), Some(6..10));
+        assert_eq!(find_ci("ação Ação", "ação"), Some(0..6));
+        assert_eq!(find_ci("x", "y"), None);
+    }
+
+    #[test]
+    fn le_o_git_grep() {
+        let h = parse_grep("src/a:b.ts\x0012\x00  let x = 1\nlixo\n");
+        assert_eq!(h, vec![("src/a:b.ts".into(), 12, "let x = 1".into())]);
+    }
+
+    #[test]
+    fn nome_livre_para_colar() {
+        let taken = ["src/app.ts", "src/app cópia.ts", "Makefile", ".env"];
+        let t = |p: &str| taken.contains(&p);
+        assert_eq!(free_name("src", "app.ts", t), "src/app cópia 2.ts");
+        assert_eq!(free_name("", "Makefile", t), "Makefile cópia");
+        assert_eq!(free_name("", ".env", t), ".env cópia");
+        assert_eq!(free_name("lib", "app.ts", t), "lib/app.ts");
     }
 
     #[test]

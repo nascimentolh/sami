@@ -55,6 +55,7 @@ pub struct Shell {
     want_review: Option<Option<String>>,
     want_file: Option<String>,
     want_fs: Option<FsOp>,
+    want_file_at: Option<(String, u32)>,
     want_merged: Option<(std::path::PathBuf, u64, String)>,
     /// "⎇ repo · N" da lateral: a revisão daquela worktree
     want_review_at: Option<std::path::PathBuf>,
@@ -324,6 +325,7 @@ impl Shell {
                     SidebarEvent::NewFeature => this.want_dialog = true,
                     SidebarEvent::OpenReview(p) => this.want_review = Some(Some(p.clone())),
                     SidebarEvent::OpenFile(p) => this.want_file = Some(p.clone()),
+                    SidebarEvent::OpenFileAt(p, l) => this.want_file_at = Some((p.clone(), *l)),
                     SidebarEvent::Merged(wt, iid, branch) => {
                         this.want_merged = Some((wt.clone(), *iid, branch.clone()))
                     }
@@ -342,6 +344,7 @@ impl Shell {
                     SidebarEvent::OpenReviewAt(p) => this.want_review_at = Some(p.clone()),
                     SidebarEvent::Stack(wt, st) => this.want_stack = Some((wt.clone(), *st)),
                     SidebarEvent::Fs(op) => this.want_fs = Some(op.clone()),
+                    SidebarEvent::Toast(m) => this.toast(m.clone(), cx),
                 }
                 cx.notify();
             })
@@ -413,6 +416,7 @@ impl Shell {
             want_review: None,
             want_file: None,
             want_fs: None,
+            want_file_at: None,
             want_merged: None,
             want_review_at: None,
             want_stack: None,
@@ -949,6 +953,7 @@ impl Shell {
     }
 
     /// Botão direito na aba Arquivos: mexe no disco e leva as abas do editor junto.
+    // ponytail: copiar e excluir rodam na thread da UI; uma pasta enorme trava a janela, mandar para o background_executor se pesar
     fn file_op(&mut self, op: FsOp, window: &mut Window, cx: &mut Context<Self>) {
         let Some(sidebar) = self.sidebar.clone() else {
             return;
@@ -970,6 +975,13 @@ impl Shell {
                     if !dir {
                         self.run(Cmd::OpenFile(rel), window, cx);
                     }
+                }
+                Err(e) => self.toast(e, cx),
+            },
+            FsOp::Copy(from, dir) => match changes::copy(&root, &from, &dir) {
+                Ok(rel) => {
+                    sidebar.update(cx, |s, cx| s.reload_files(Some(&rel), cx));
+                    self.toast(format!("Colado: {rel}"), cx);
                 }
                 Err(e) => self.toast(e, cx),
             },
@@ -1935,6 +1947,12 @@ impl Shell {
                     window.focus(&f, cx);
                 } else {
                     window.focus(&self.terminal.read(cx).focus_handle(), cx);
+                }
+            }
+            Cmd::SearchProject => {
+                self.run(Cmd::Files, window, cx);
+                if let Some(s) = &self.sidebar {
+                    s.update(cx, |s, cx| s.focus_search(cx));
                 }
             }
             Cmd::RepoMenu => {
@@ -2970,6 +2988,18 @@ impl Shell {
             [
                 ("Ctrl+Shift+O", "abrir arquivo", true),
                 ("Ctrl+Shift+F", "árvore de arquivos", true),
+                ("Ctrl+F · Ctrl+H", "buscar · substituir no arquivo", true),
+                ("Ctrl+/", "comentar as linhas", true),
+                ("Alt+↑/↓", "mover a linha", true),
+                ("Ctrl+G", "ir para a linha", true),
+                ("Ctrl+] · Ctrl+[", "recuar · desrecuar", true),
+                ("F12 · Ctrl+.", "definição · ações do LSP", true),
+                ("Ctrl+W · Ctrl+Tab", "fechar · trocar a aba do editor", true),
+                (
+                    "Árvore",
+                    "↑/↓, Enter, F2, Delete, Ctrl+C/X/V; arraste para mover",
+                    true,
+                ),
                 ("Alt+1…6", "Features, MRs, Bancos, Vault, News, Fila", true),
                 ("Ctrl+Shift+P", "comandos", true),
                 ("Ctrl+Shift+K", "comando por descrição", true),
@@ -3404,6 +3434,12 @@ impl Render for Shell {
         }
         if let Some(p) = self.want_file.take() {
             self.run(Cmd::OpenFile(p), window, cx);
+        }
+        if let Some((p, line)) = self.want_file_at.take() {
+            self.run(Cmd::OpenFile(p), window, cx);
+            if let Some(r) = &self.review {
+                r.update(cx, |r, cx| r.goto_line(line, window, cx));
+            }
         }
         if let Some(op) = self.want_fs.take() {
             self.file_op(op, window, cx);
