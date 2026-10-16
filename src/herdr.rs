@@ -194,6 +194,10 @@ impl Herdr {
         self.call("tab.focus", json!({ "tab_id": id })).map(drop)
     }
 
+    pub fn close_tab(&self, id: &str) -> io::Result<()> {
+        self.call("tab.close", json!({ "tab_id": id })).map(drop)
+    }
+
     pub fn new_tab(&self, workspace_id: &str) -> io::Result<()> {
         self.call(
             "tab.create",

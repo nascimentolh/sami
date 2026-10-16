@@ -2408,7 +2408,23 @@ impl Shell {
                                     .child(g),
                             )
                         },
-                    ),
+                    )
+                    .when(agent.is_none(), |d| {
+                        let id = tab.tab_id.clone();
+                        let side = sidebar.clone();
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!("tabx:{}", tab.tab_id)))
+                                .ml(px(8.))
+                                .text_color(t.comment)
+                                .hover(|d| d.text_color(t.fg))
+                                .on_click(move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    side.read(cx).close_tab(id.clone());
+                                })
+                                .child("×"),
+                        )
+                    }),
             );
         }
         if let Some(ws) = ws {
