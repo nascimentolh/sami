@@ -56,6 +56,13 @@ impl Theme {
         th.caret = self.fg;
         th.muted_foreground = self.comment;
         th.selection = rgba(0x44475ae6).into();
+        // completar, hover e code actions do LSP: o `.cmpl`/`.hov` do protótipo
+        th.popover = self.raise;
+        th.popover_foreground = self.fg;
+        th.accent = self.accent_soft;
+        th.accent_foreground = self.fg;
+        th.tokens.accent = self.accent_soft.into();
+        th.border = self.line;
         let mut hl = (*th.highlight_theme).clone();
         hl.style.editor_background = Some(self.win);
         hl.style.editor_foreground = Some(self.fg);

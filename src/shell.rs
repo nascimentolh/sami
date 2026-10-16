@@ -869,6 +869,12 @@ impl Shell {
                             cx.notify();
                         }
                     }
+                    review::Event::OpenMr(row) => {
+                        this.run(Cmd::Mrs, window, cx);
+                        if let Some(m) = this.mrs.clone() {
+                            m.update(cx, |m, cx| m.open_row(row.clone(), cx));
+                        }
+                    }
                 },
             )
             .detach();
@@ -2192,7 +2198,30 @@ impl Shell {
             }
         }
         let cursor = self.review.as_ref().and_then(|r| r.read(cx).cursor(cx));
+        let lsp = self.review.as_ref().and_then(|r| r.read(cx).lsp_status(cx));
+        let red: Hsla = rgb(0xff5555).into();
+        let yellow: Hsla = rgb(0xf1fa8c).into();
         bar.child(div().flex_1())
+            .children(lsp.map(|(counts, label)| {
+                let s = |n: usize| if n == 1 { "" } else { "s" };
+                cell()
+                    .gap(px(4.))
+                    .when_some(counts, |d, (e, w)| {
+                        d.child(
+                            div()
+                                .when(e > 0, |d| d.text_color(red))
+                                .child(format!("{e} erro{}", s(e))),
+                        )
+                        .child("·")
+                        .child(
+                            div()
+                                .when(w > 0, |d| d.text_color(yellow))
+                                .child(format!("{w} aviso{}", s(w))),
+                        )
+                        .child(div().w(px(8.)))
+                    })
+                    .child(div().text_color(t.muted).child(label))
+            }))
             .children(cursor.map(|(l, c)| cell().child(format!("Ln {l}, Col {c}"))))
             .child(cell().border_r_0().child(format!("ghostty: {}", self.font)))
     }

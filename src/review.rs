@@ -17,6 +17,15 @@ enum Tab {
     Review,
     Mr,
     File,
+    /// "Histórico" do arquivo da aba da frente
+    Hist,
+}
+
+/// A aba Histórico: os commits do arquivo e o diff do escolhido.
+struct Hist {
+    path: String,
+    commits: Option<Vec<crate::blame::Commit>>,
+    sel: Option<(String, Vec<FileDiff>)>,
 }
 
 /// Como desfazer o que o painel acabou de fazer (o "Desfazer" do toast).
@@ -44,6 +53,8 @@ pub enum Event {
     Conclude,
     /// a aba MR abriu (o tutorial dela)
     MrOpened,
+    /// "Abrir MR" do blame: abre no modo MRs
+    OpenMr(crate::mrs::Row),
 }
 
 struct Draft {
@@ -79,6 +90,7 @@ pub struct Review {
     active: usize,
     /// × num arquivo com edição não salva: o segundo × descarta
     close_armed: Option<String>,
+    hist: Option<Hist>,
     mr: Option<Entity<MrTab>>,
     /// `S.rtab` do protótipo
     tab: Tab,
@@ -167,6 +179,7 @@ impl Review {
             editors: Vec::new(),
             active: 0,
             close_armed: None,
+            hist: None,
             mr: None,
             tab: Tab::Review,
             focus: cx.focus_handle(),
@@ -200,7 +213,7 @@ impl Review {
         if self.active >= i && self.active > 0 {
             self.active -= 1;
         }
-        if self.editors.is_empty() && self.tab == Tab::File {
+        if self.editors.is_empty() && matches!(self.tab, Tab::File | Tab::Hist) {
             self.tab = Tab::Review;
         }
         let f = self.focus_handle(cx);
@@ -282,15 +295,108 @@ impl Review {
         }
         let (root, theme) = (self.root.clone(), self.theme.clone());
         let e = cx.new(|cx| FileEditor::new(root, path, theme, window, cx));
-        cx.subscribe(&e, |this, _, e: &editor::Event, cx| match e {
-            editor::Event::Changed => cx.notify(),
-            editor::Event::Toast(m) => cx.emit(Event::Toast(m.clone(), None)),
-            editor::Event::ShowDiff(p) => this.show_file(p.clone(), cx),
-        })
+        cx.subscribe_in(
+            &e,
+            window,
+            |this, _, e: &editor::Event, window, cx| match e {
+                editor::Event::Changed => cx.notify(),
+                editor::Event::Toast(m) => cx.emit(Event::Toast(m.clone(), None)),
+                editor::Event::ShowDiff(p) => this.show_file(p.clone(), cx),
+                editor::Event::Open(abs, line) => this.open_at(abs, *line, window, cx),
+                editor::Event::OpenMr(row) => cx.emit(Event::OpenMr(row.clone())),
+                editor::Event::History => this.open_history(cx),
+            },
+        )
         .detach();
         self.editors.push(e);
         self.active = self.editors.len() - 1;
         cx.notify();
+    }
+
+    /// Ir para a definição: abre a aba do arquivo (se for desta worktree) já na linha.
+    fn open_at(
+        &mut self,
+        abs: &std::path::Path,
+        line: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(rel) = abs.strip_prefix(&self.root) else {
+            return cx.emit(Event::Toast(
+                format!(
+                    "A definição está fora da worktree: {}:{}",
+                    abs.display(),
+                    line + 1
+                ),
+                None,
+            ));
+        };
+        self.open_file(rel.to_string_lossy().into_owned(), window, cx);
+        if let Some(e) = self.editor().cloned() {
+            e.update(cx, |e, cx| e.goto(line, window, cx));
+        }
+    }
+
+    /// A aba Histórico do arquivo da frente (`git log --follow`).
+    pub fn open_history(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.editor().map(|e| e.read(cx).path.clone()) else {
+            return;
+        };
+        self.tab = Tab::Hist;
+        if self.hist.as_ref().is_some_and(|h| h.path == path) {
+            return cx.notify();
+        }
+        self.hist = Some(Hist {
+            path: path.clone(),
+            commits: None,
+            sel: None,
+        });
+        let root = self.root.clone();
+        cx.spawn(async move |this, cx| {
+            let p = path.clone();
+            let commits = cx
+                .background_executor()
+                .spawn(async move { crate::blame::history(&root, &p) })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(h) = this.hist.as_mut().filter(|h| h.path == path) {
+                    h.commits = Some(commits);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn pick_commit(&mut self, sha: String, cx: &mut Context<Self>) {
+        let Some(path) = self.hist.as_ref().map(|h| h.path.clone()) else {
+            return;
+        };
+        let root = self.root.clone();
+        cx.spawn(async move |this, cx| {
+            let (s, p) = (sha.clone(), path.clone());
+            let files = cx
+                .background_executor()
+                .spawn(async move { crate::blame::commit_diff(&root, &s, &p) })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(h) = this.hist.as_mut().filter(|h| h.path == path) {
+                    h.sel = Some((sha, files));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// ((erros, avisos) com servidor rodando, "TS · servidor") do arquivo da frente, para a barra de status.
+    pub fn lsp_status(&self, cx: &App) -> Option<(Option<(usize, usize)>, String)> {
+        let e = self.editor().filter(|_| self.tab == Tab::File)?.read(cx);
+        let counts = matches!(e.lsp, editor::Lsp::Ready(_)).then_some(e.problems);
+        Some((counts, e.lsp_label()?))
     }
 
     /// O arquivo da aba do editor e se tem edição não salva.
@@ -715,6 +821,138 @@ impl Review {
             )
     }
 
+    /// O `renderHist` do protótipo: commits do arquivo e, no escolhido, o diff dele.
+    fn hist_body(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let t = &self.theme;
+        let mut body = div().id("hist").flex_1().min_h_0().overflow_y_scroll();
+        let Some(h) = &self.hist else { return body };
+        let n = h.commits.as_ref().map_or(0, Vec::len);
+        body = body.child(
+            div()
+                .flex()
+                .gap(px(10.))
+                .items_center()
+                .px(px(12.))
+                .py(px(6.))
+                .border_b_1()
+                .border_color(t.line)
+                .child(div().font_family(t.mono.clone()).child(h.path.clone()))
+                .child(
+                    div()
+                        .text_color(t.muted)
+                        .child(format!("git log --follow · {n} commits")),
+                ),
+        );
+        let Some(commits) = &h.commits else {
+            return body.child(
+                div()
+                    .p(px(12.))
+                    .text_color(t.muted)
+                    .child("Lendo o histórico…"),
+            );
+        };
+        let now = crate::blame::now();
+        let yellow: Hsla = rgb(0xf1fa8c).into();
+        for (i, c) in commits.iter().enumerate() {
+            let on = h.sel.as_ref().is_some_and(|(s, _)| *s == c.sha);
+            let sha = c.sha.clone();
+            body = body.child(
+                div()
+                    .id(("hc", i))
+                    .flex()
+                    .gap(px(10.))
+                    .items_baseline()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .border_b_1()
+                    .border_color(t.line)
+                    .cursor_pointer()
+                    .when(on, |d| d.bg(t.accent_soft))
+                    .when(!on, |d| d.hover(|d| d.bg(t.raise)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.pick_commit(sha.clone(), cx)))
+                    .child(
+                        div()
+                            .w(px(70.))
+                            .flex_none()
+                            .font_family(t.mono.clone())
+                            .text_size(px(12.5))
+                            .text_color(yellow)
+                            .child(c.sha.clone()),
+                    )
+                    .child(div().flex_1().min_w_0().child(c.subject.clone()).child(
+                        div().text_size(px(12.5)).text_color(t.muted).child(format!(
+                            "{} · {}",
+                            c.author,
+                            crate::blame::ago(now.saturating_sub(c.time))
+                        )),
+                    ))
+                    .child(
+                        div()
+                            .font_family(t.mono.clone())
+                            .text_color(t.muted)
+                            .child(c.mr.map_or("—".into(), |m| format!("!{m}"))),
+                    ),
+            );
+        }
+        match &h.sel {
+            None => body.child(
+                div()
+                    .px(px(12.))
+                    .py(px(10.))
+                    .text_color(t.muted)
+                    .child("Clique num commit para ver o diff deste arquivo nele."),
+            ),
+            Some((_, files)) => body.children(files.iter().map(|f| self.plain_diff(f))),
+        }
+    }
+
+    /// Diff só de leitura (sem aceitar/desfazer), para o Histórico.
+    fn plain_diff(&self, f: &FileDiff) -> Div {
+        let t = &self.theme;
+        let red: Hsla = rgb(0xff5555).into();
+        let num = |n: Option<u32>| {
+            div()
+                .w(px(40.))
+                .flex_none()
+                .text_right()
+                .pr(px(8.))
+                .text_color(t.comment)
+                .child(n.map_or(String::new(), |n| n.to_string()))
+        };
+        let mut block = div()
+            .flex()
+            .flex_col()
+            .font_family(t.mono.clone())
+            .text_size(px(13.5));
+        for h in &f.hunks {
+            block = block.child(
+                div()
+                    .px(px(12.))
+                    .py(px(2.))
+                    .bg(t.panel)
+                    .text_color(t.comment)
+                    .child(h.header.clone()),
+            );
+            for l in &h.lines {
+                let (sign, bg) = match l.kind {
+                    Kind::Add => ("+", Some(Hsla { a: 0.10, ..t.ok })),
+                    Kind::Del => ("-", Some(Hsla { a: 0.12, ..red })),
+                    Kind::Context => (" ", None),
+                };
+                block = block.child(
+                    div()
+                        .flex()
+                        .when_some(bg, |d, bg| d.bg(bg))
+                        .child(num(l.old))
+                        .child(num(l.new))
+                        .child(div().w(px(18.)).flex_none().text_color(t.muted).child(sign))
+                        .child(div().flex_1().min_w_0().child(self.code(&l.text))),
+                );
+            }
+        }
+        block
+    }
+
     fn file_block(&self, fi: usize, f: &FileDiff, cx: &mut Context<Self>) -> Div {
         let t = &self.theme;
         let (a, r) = f.counts();
@@ -1016,6 +1254,13 @@ impl Render for Review {
                     .overflow_x_scroll()
                     .children(file_tabs),
             )
+            .when(!self.editors.is_empty(), |d| {
+                d.child(
+                    tab("rt-hist", "Histórico", self.tab == Tab::Hist)
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| this.open_history(cx))),
+                )
+            })
             .child(div().flex_1())
             .child(
                 div()
@@ -1052,6 +1297,19 @@ impl Render for Review {
                 .text_size(px(14.))
                 .child(tabs)
                 .child(div().flex_1().min_h_0().child(e));
+        }
+        if self.tab == Tab::Hist {
+            return div()
+                .track_focus(&self.focus)
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(t.win)
+                .text_color(t.fg)
+                .font_family(t.sans)
+                .text_size(px(14.))
+                .child(tabs)
+                .child(self.hist_body(cx));
         }
         let n = self.files.as_ref().map_or(0, Vec::len);
         let mut body = div()
