@@ -191,6 +191,7 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] blame na linha, aba Histórico, paleta de tarefas, painel Problemas
 - [x] painel Perguntar ao Claude; Ctrl+Shift+K comando por descrição
 - [x] modo News e Resumo do dia
+- [x] abas de arquivo do editor com × (● quando há alteração; o segundo × descarta) e divisas arrastáveis entre colunas e na gaveta, que já existiam no app
 - [x] screenshots conferidos e artifact republicado
 - [ ] aprovado por você
 

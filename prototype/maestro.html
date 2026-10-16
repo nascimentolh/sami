@@ -54,6 +54,15 @@ kbd{font:11px var(--mono);padding:0 4px;border:1px solid var(--line);border-radi
 #right:focus-within{box-shadow:inset 0 2px 0 var(--accent)}
 #right{grid-area:right;border-left:1px solid var(--line);background:var(--win);display:flex;flex-direction:column;min-height:0;min-width:0}
 .main[data-right="off"] #right{display:none}
+.rz{position:absolute;top:0;bottom:0;width:4px;cursor:col-resize;z-index:6}
+.rz:hover,.rz.drag{background:var(--accent-soft)}
+#rzL{left:calc(var(--lw) - 2px)} #rzR{right:calc(var(--rw) - 2px)}
+.main[data-left="off"] #rzL,.main[data-right="off"] #rzR{display:none}
+.drawer>.rz{left:-2px}
+body.resizing{cursor:col-resize;user-select:none}
+.rtabs .t .cx{margin-left:6px;color:var(--muted);border-radius:3px;padding:0 3px}
+.rtabs .t .cx:hover{background:var(--line);color:var(--fg)}
+.rtabs .t .cx.dirty{color:var(--accent)}
 
 .phead{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 10px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);flex:none}
 .phead .sp{flex:1}
@@ -464,7 +473,7 @@ legend{color:var(--muted);font-size:12px;padding:0 4px}
   .row{grid-template-columns:10px minmax(0,1fr) auto;grid-template-areas:"u p ci" "u t st"}
   .row .uw{grid-area:u}.row .proj{grid-area:p}.row .t{grid-area:t}.row .who{display:none}.row .ci{grid-area:ci}.row .pill{grid-area:st;justify-self:end}
   .thr{margin-left:12px}
-  .drawer{width:100%}
+  .drawer{width:100%!important} .rz{display:none}
   .dl .o{display:none}.dl{grid-template-columns:36px 16px minmax(0,1fr)}.dl .cm{left:22px}
   .mascot .card{display:none}
 }
@@ -494,6 +503,8 @@ legend{color:var(--muted);font-size:12px;padding:0 4px}
     <aside id="left" aria-label="Features"></aside>
     <section id="center" aria-label="Terminal"></section>
     <aside id="right" aria-label="Revisão e editor"></aside>
+    <div class="rz" id="rzL" title="Arraste para mudar a largura"></div>
+    <div class="rz" id="rzR" title="Arraste para mudar a largura"></div>
   </div>
   <div class="hints" id="hints"></div>
   <footer class="status" id="status"></footer>
@@ -731,6 +742,8 @@ let did=0;
 /* ---------- frame ---------- */
 function renderFrame(){
   const m=$('#main'); m.dataset.left=S.left&&S.mode!=='mrs'?'on':'off'; m.dataset.right=S.right&&S.mode==='feat'?'on':'off';
+  if(S.lw) m.style.setProperty('--lw',m.dataset.left==='on'?S.lw+'px':'0px');
+  if(S.rw) m.style.setProperty('--rw',m.dataset.right==='on'?S.rw+'px':'0px');
   $('#mFeat').setAttribute('aria-pressed',S.mode==='feat'||S.mode==='audit'); $('#mMrs').setAttribute('aria-pressed',S.mode==='mrs'||S.mode==='mr'); $('#mVault').setAttribute('aria-pressed',S.mode==='vault');
   $('#mNews').setAttribute('aria-pressed',S.mode==='news'); $('#mNews').classList.toggle('dim',!S.newsToken);
   $('#newsCount').textContent=S.newsToken?newsShown().filter(n=>n.aff.length&&!n.read).length||'':'';
@@ -995,7 +1008,27 @@ function dismissMascot(){
 
 /* ---------- painel direito ---------- */
 function openReview(path){ S.right=true; S.rtab='review'; renderFrame(); renderRight(); if(path) setTimeout(()=>{ const t=document.getElementById('F-'+path); if(t) t.scrollIntoView({block:'start'}); }); }
-function openFile(p){ S.right=true; S.rtab='file'; S.file=p; renderFrame(); renderRight(); renderLeft(); setTimeout(()=>$('#code')&&$('#code').focus()); }
+function closeFile(p){
+  if(F[p].text!==F[p].saved&&S.armed!==p){ S.armed=p; toast(`${p} tem alterações não salvas: Ctrl+S salva, × de novo descarta`); return; }
+  S.armed=null; F[p].text=F[p].saved;
+  const i=S.open.indexOf(p); S.open.splice(i,1);
+  if(S.file===p) S.file=S.open[Math.min(i,S.open.length-1)]||null;
+  if(!S.file&&(S.rtab==='file'||S.rtab==='hist')) S.rtab='review';
+  renderRight(); renderLeft(); renderStatus();
+}
+function startResize(e,kind,box){
+  e.preventDefault(); const h=e.currentTarget, m=$('#main'), r=m.getBoundingClientRect();
+  h.classList.add('drag'); document.body.classList.add('resizing');
+  const mv=ev=>{ const x=ev.clientX;
+    if(kind==='L'){ const rw=m.dataset.right==='on'?$('#right').getBoundingClientRect().width:0; S.lw=Math.round(Math.max(180,Math.min(x-r.left,r.width*.45,r.width-rw-300))); }
+    else if(kind==='R'){ const lw=m.dataset.left==='on'?$('#left').getBoundingClientRect().width:0; S.rw=Math.round(Math.max(320,Math.min(r.right-x,r.width-lw-300))); }
+    else { S.dw=Math.round(Math.max(320,Math.min(innerWidth-x,innerWidth-200))); box.style.width=S.dw+'px'; return; }
+    renderFrame(); };
+  const up=()=>{ h.classList.remove('drag'); document.body.classList.remove('resizing'); removeEventListener('mousemove',mv); removeEventListener('mouseup',up); };
+  addEventListener('mousemove',mv); addEventListener('mouseup',up);
+}
+function armDrawer(box){ if(!box||box.querySelector(':scope>.rz')) return; if(S.dw) box.style.width=S.dw+'px'; const h=document.createElement('div'); h.className='rz'; h.title='Arraste para mudar a largura'; h.onmousedown=e=>startResize(e,'D',box); box.prepend(h); }
+function openFile(p){ S.open=S.open||[]; if(!S.open.includes(p)) S.open.push(p); S.armed=null; S.right=true; S.rtab='file'; S.file=p; renderFrame(); renderRight(); renderLeft(); setTimeout(()=>$('#code')&&$('#code').focus()); }
 function toggleRight(){ if(S.mode!=='feat') return; S.right=!S.right; renderFrame(); renderRight(); }
 function renderRight(){
   const el=$('#right'); if(S.mode!=='feat'||!S.right){ el.innerHTML=''; return; }
@@ -1003,7 +1036,7 @@ function renderRight(){
   if(S.rtab==='vault') S.rtab='review';
   const T=(k,l)=>`<button class="t" aria-pressed="${S.rtab===k}" data-rt="${k}">${l}</button>`;
   const np=problems().length;
-  const tabs=`<div class="rtabs">${ws?'':T('review','Revisar')+T('mr',f.mr?`MR !${f.mr.iid}`:'MR')}${S.file?`<button class="t" aria-pressed="${S.rtab==='file'}" data-rt="file">${S.file.split('/').pop()}${F[S.file].text!==F[S.file].saved?' <span style="color:var(--accent)">●</span>':''}</button>`+T('hist','Histórico'):''}${ws?'':T('prob',`Problemas${np?` <span class="mono" style="color:var(--bad)">${np}</span>`:''}`)}<span class="sp"></span><button class="x" id="rClose" title="Ctrl+Shift+E" aria-label="Fechar painel">×</button></div>`;
+  const tabs=`<div class="rtabs">${ws?'':T('review','Revisar')+T('mr',f.mr?`MR !${f.mr.iid}`:'MR')}${(S.open||[]).map(p=>{ const dirty=F[p].text!==F[p].saved; return `<button class="t" aria-pressed="${S.rtab==='file'&&S.file===p}" data-of="${p}" title="${p}">${p.split('/').pop()}<span class="cx${dirty?' dirty':''}" data-cx="${p}" role="button" aria-label="Fechar ${p}" title="${dirty?'Alterações não salvas: × fecha descartando':'Fechar'}">${dirty?'●':'×'}</span></button>`; }).join('')}${S.file?T('hist','Histórico'):''}${ws?'':T('prob',`Problemas${np?` <span class="mono" style="color:var(--bad)">${np}</span>`:''}`)}<span class="sp"></span><button class="x" id="rClose" title="Ctrl+Shift+E" aria-label="Fechar painel">×</button></div>`;
   if(S.rtab==='file' && S.file){
     const py=/\.py$/.test(S.file)&&!S.lspOff[S.file];
     el.innerHTML=tabs+(py?`<div class="lspbar" role="status"><span>Sem servidor de linguagem para Python · instale com <span class="mono">npm i -g pyright</span></span><button class="btn" id="lspCp">Copiar</button><span class="sp"></span><button id="lspX" aria-label="Dispensar">×</button></div>`:'')+`<div class="ed"><div class="gut" id="gut"></div><div class="edwrap" id="edw"><pre id="hl" aria-hidden="true"></pre><textarea id="code" spellcheck="false" aria-label="Editor ${S.file}"></textarea><div id="edOv"></div></div></div>`;
@@ -1040,6 +1073,8 @@ function renderRight(){
     b('accAll',()=>{ f.changes.forEach(c=>c.hunks.forEach(h=>h.ok=true)); rerender(); toast('Tudo aceito. Os blocos continuam no diff até você commitar.'); });
   }
   el.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{ S.rtab=b.dataset.rt; renderRight(); });
+  el.querySelectorAll('[data-of]').forEach(b=>b.onclick=()=>{ S.file=b.dataset.of; S.rtab='file'; renderRight(); renderLeft(); });
+  el.querySelectorAll('[data-cx]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); closeFile(b.dataset.cx); });
   $('#rClose').onclick=toggleRight;
   maybeTour();
 }
@@ -1331,6 +1366,7 @@ function renderDrawer(){
   else { const on=RV.f.filter(x=>x.on).length;
     body=RV.f.map((x,i)=>`<div class="find ${x.on?'':'offd'}"><input type="checkbox" id="fd${i}" data-fi="${i}" ${x.on?'checked':''}><div class="loc"><span class="sev ${x.sev}">${x.sev}</span><label for="fd${i}">${x.file}:${x.line??'–'}</label>${x.outside?'<span class="warnl">⚠ fora do diff, vai como nota geral</span>':''}</div><p>${md(x.body)}</p></div>`).join('');
     foot=`<button class="btn" id="rvX">Descartar tudo</button><button class="btn pri" id="rvMk" ${on?'':'disabled'}>Criar ${on} rascunho${on!==1?'s':''}</button>`; }
+  setTimeout(()=>armDrawer(o.querySelector('.drawer')));
   o.innerHTML=`<div class="drawer" role="dialog" aria-label="Revisão Claude"><div class="dh"><b>Revisão Claude</b><span class="mono muted">${m.proj} !${m.iid}</span><span class="sp"></span><button id="rvC" aria-label="Fechar">×</button></div><div class="db">${body}</div><div class="df">${foot}</div></div>`;
   const b=(id,fn)=>{ const e=document.getElementById(id); if(e) e.onclick=fn; };
   b('rvC',closeDrawer); b('rvX',closeDrawer); b('rvGo',runReview); b('rvStop',closeDrawer); b('rvMk',makeDrafts);
@@ -1852,6 +1888,7 @@ function paintAsk(){
   let s=$('#askSlot'); if(!s){ s=document.createElement('div'); s.id='askSlot'; $('#app').appendChild(s); }
   if(!ASK){ s.innerHTML=''; return; }
   const keep=$('#askIn')?$('#askIn').value:'';
+  setTimeout(()=>armDrawer(s.querySelector('.drawer')));
   s.innerHTML=`<div class="drawer" role="dialog" aria-label="Perguntar ao Claude"><div class="dh"><b>Perguntar ao Claude</b><span class="sp"></span><button id="askX" aria-label="Fechar">×</button></div>
     <div class="db" id="askDb"><span class="ctxc">${esc(ASK.range)}</span>${ASK.qa.length?'':`<p class="muted" style="margin:0">O Claude lê o código da ${esc(ASK.where)} para responder. Ele não edita nada e a resposta não vira comentário.</p>`}
       ${ASK.qa.map((x,i)=>`<div class="qa"><span class="q">› ${esc(x.q)}</span>${x.tools.map(t=>`<span class="tl">↳ ${esc(t)}</span>`).join('')}<span class="a" id="askA${i}">${md(x.a)}${ASK.busy&&i===ASK.qa.length-1?'▍':''}</span></div>`).join('')}
@@ -2188,6 +2225,7 @@ setTimeout(()=>simNotify(),8000);
 const H=feat('health');
 run(H,[[4000,'dot','⏺ Update(src/app.ts)','Escrevendo'],[600,'out','  ⎿  Updated src/app.ts with 2 additions'],[1500,'dot','⏺ Bash(npm test)','Testando'],[1800,'out','  ⎿  Tests: 14 passed, 14 total'],
   [800,'dotw','⏺ Pronto: GET /health responde 200 com o banco ok e 503 sem ele.']],()=>setSt(H,'done','pronto pra revisar'));
+$('#rzL').onmousedown=e=>startResize(e,'L'); $('#rzR').onmousedown=e=>startResize(e,'R');
 </script>
 
 </body>
