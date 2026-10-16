@@ -181,17 +181,17 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] instalar `typescript-language-server`/`typescript` (npm -g) e `rust-analyzer` (rustup)
 
 **A. Protótipo (portão: só implemento a UI nova depois da sua aprovação)**
-- [ ] MR: Aprovar/Remover aprovação, Merge (apagado com motivo) e diálogo de merge
-- [ ] MR: Lado a lado | Unificado, Ocultar boilerplate (N), Expandir/Colapsar todos
-- [ ] MR: arquivo colapsável na lista e no cabeçalho, pílula "gerado"
-- [ ] MR: Responder → rascunho dentro da thread; seção Discussões; threads em linha removida
-- [ ] inbox com ponto de novo/nova resposta; toast de notificação
-- [ ] editor: diagnóstico, hover, completar, faixa "sem servidor", problemas na status bar
-- [ ] nova feature: Outros repos e Em cima de; lateral com grupo multi-repo e pilha
-- [ ] blame na linha, aba Histórico, paleta de tarefas, painel Problemas
-- [ ] painel Perguntar ao Claude; Ctrl+Shift+K comando por descrição
-- [ ] modo News e Resumo do dia
-- [ ] screenshots conferidos e artifact republicado
+- [x] MR: Aprovar/Remover aprovação, Merge (apagado com motivo) e diálogo de merge
+- [x] MR: Lado a lado | Unificado (tecla S; Ctrl+Alt+D é do GNOME), Ocultar gerados (N), Expandir/Colapsar todos
+- [x] MR: arquivo colapsável na lista e no cabeçalho, pílula "gerado"
+- [x] MR: Responder → rascunho dentro da thread; seção Discussões; threads em linha removida
+- [x] inbox com ponto de novo/nova resposta; toast de notificação
+- [x] editor: diagnóstico, hover, completar, faixa "sem servidor", problemas na status bar
+- [x] nova feature: Outros repos e Em cima de; lateral com grupo multi-repo e pilha
+- [x] blame na linha, aba Histórico, paleta de tarefas, painel Problemas
+- [x] painel Perguntar ao Claude; Ctrl+Shift+K comando por descrição
+- [x] modo News e Resumo do dia
+- [x] screenshots conferidos e artifact republicado
 - [ ] aprovado por você
 
 **B. Foco por setas e colunas**

@@ -51,6 +51,7 @@ kbd{font:11px var(--mono);padding:0 4px;border:1px solid var(--line);border-radi
 #left{grid-area:left;border-right:1px solid var(--line);background:var(--panel);overflow:auto;min-width:0;display:flex;flex-direction:column}
 .main[data-left="off"] #left{display:none}
 #center{grid-area:center;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--win)}
+#right:focus-within{box-shadow:inset 0 2px 0 var(--accent)}
 #right{grid-area:right;border-left:1px solid var(--line);background:var(--win);display:flex;flex-direction:column;min-height:0;min-width:0}
 .main[data-right="off"] #right{display:none}
 
@@ -208,6 +209,7 @@ kbd{font:11px var(--mono);padding:0 4px;border:1px solid var(--line);border-radi
 .seg .count{font:11px var(--mono);margin-left:4px}
 .ibar input{background:var(--raise);border:1px solid var(--line);border-radius:5px;padding:3px 8px;color:var(--fg);font:inherit;width:200px;max-width:100%}
 .ibar .sp{flex:1}
+.ibar input[type=checkbox]{width:auto;padding:0}
 .list{flex:1;overflow:auto}
 .row{display:grid;grid-template-columns:14px minmax(150px,220px) minmax(0,1fr) 120px 70px 110px;gap:12px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer}
 .row:hover{background:var(--raise)}
@@ -348,6 +350,112 @@ legend{color:var(--muted);font-size:12px;padding:0 4px}
 .tour-pop .n{font:11px var(--mono);color:var(--muted)}
 .tour-pop .wait{color:var(--accent);font-size:12px}
 
+/* rodada 3: diff lado a lado, colapsar, gerados, respostas, merge */
+.fh .tw{width:16px;color:var(--muted);font:12px var(--mono);text-align:center}
+.fh.col{cursor:pointer}
+.fh .ask{font:12px var(--mono);padding:0 6px;border:1px solid var(--line);border-radius:4px;color:var(--muted)}
+.fh .ask:hover,.hh .ask:hover{color:var(--fg);border-color:var(--muted)}
+.hh .ask{font:11.5px var(--mono);padding:0 6px;border:1px solid var(--line);border-radius:4px;background:var(--raise);color:var(--muted)}
+.pill.gen{color:var(--comment);border-style:dashed}
+.pill.ok{color:var(--ok);border-color:var(--ok)}
+.pill.bad{color:var(--bad);border-color:var(--bad)}
+.sbs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.sbs .dl.half{grid-template-columns:40px 16px minmax(0,1fr)}
+.sbs .dl.half+.dl.half{border-left:1px solid var(--line)}
+.sbs .dl.half .cm{left:22px}
+.sbs .dl.emp{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(98,114,164,.08) 6px 12px);cursor:default}
+.sbs .dl.emp:hover{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(98,114,164,.08) 6px 12px)}
+.thr.r{margin-left:calc(50% + 58px);max-width:calc(50% - 70px)}
+.thr.l{margin-left:58px;max-width:calc(50% - 70px)}
+.thr .rp.draftrp{border-left:2px dashed var(--draft);background:var(--draft-soft);padding:4px 8px;border-radius:0 4px 4px 0}
+.thr .rp.draftrp .lbl{color:var(--draft);font-weight:600;letter-spacing:.06em;font-size:11px}
+.thr .rbox{display:grid;gap:6px}
+.disc{border-bottom:1px solid var(--line);padding-bottom:6px}
+.disc .thr{margin-left:12px}
+.flist .tw{color:var(--muted);font:11px var(--mono);margin-right:4px}
+.flist .gsec{display:flex;justify-content:space-between;width:100%;padding:6px 12px 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.mrh .why{font-size:12px;color:var(--orange)}
+.unread.rep{background:var(--orange)}
+/* editor com LSP */
+.sq{text-decoration:underline wavy var(--bad);text-underline-offset:4px;text-decoration-skip-ink:none}
+.sq.w{text-decoration-color:var(--yellow)}
+.lspbar{display:flex;gap:10px;align-items:center;padding:5px 12px;background:rgba(255,184,108,.10);border-bottom:1px solid var(--line);font-size:12px;color:var(--orange);flex:none}
+.lspbar .mono{color:var(--fg)}
+.lspbar .sp{flex:1}
+.hov{position:absolute;z-index:6;max-width:440px;background:var(--raise);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);font:12px/1.5 var(--sans);pointer-events:none}
+.hov .sig{padding:6px 10px;font:12px/1.5 var(--mono);white-space:pre-wrap;color:var(--cyan)}
+.hov p{margin:0;padding:6px 10px;border-top:1px solid var(--line);color:var(--muted)}
+.hov p.e{color:var(--bad)}.hov p.wn{color:var(--yellow)}
+.cmpl{position:absolute;z-index:7;min-width:240px;background:var(--raise);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);font:12.5px/1.6 var(--mono);padding:3px 0;list-style:none;margin:0}
+.cmpl li{display:flex;gap:10px;padding:0 10px;cursor:pointer}
+.cmpl li.on{background:var(--accent-soft)}
+.cmpl li .kd{color:var(--accent);width:14px}
+.cmpl li .ty{margin-left:auto;color:var(--comment)}
+.blame{position:absolute;z-index:3;color:var(--comment);font:12px/20px var(--sans);font-style:italic;white-space:nowrap;cursor:default;opacity:.8}
+.blame:hover{opacity:1;color:var(--muted)}
+.bpop{position:absolute;z-index:8;width:340px;background:var(--raise);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);padding:10px 12px;display:grid;gap:6px;font-size:12.5px}
+.bpop .mono{color:var(--yellow)}
+.hist{flex:1;overflow:auto}
+.hist button.hc{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:10px;width:100%;text-align:left;padding:6px 12px;border-bottom:1px solid var(--line);align-items:baseline}
+.hist button.hc:hover{background:var(--raise)}
+.hist button.hc.on{background:var(--accent-soft)}
+.hist .sha{font:12px var(--mono);color:var(--yellow)}
+.prob{flex:1;overflow:auto}
+.prob .grp{padding:8px 12px 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.prob button{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;width:100%;text-align:left;padding:4px 12px;align-items:baseline}
+.prob button:hover{background:var(--raise)}
+.prob .loc{font:11.5px var(--mono);color:var(--comment)}
+.status .perr{color:var(--bad)}.status .pwarn{color:var(--yellow)}
+/* lateral: multi-repo e pilha */
+.feat.child{margin-left:16px}
+.feat.child::before{content:"↳";position:absolute;left:-12px;top:6px;color:var(--comment);font:12px var(--mono)}
+.feat .sub{grid-column:2/4;display:flex;flex-wrap:wrap;gap:2px 8px;font:11px var(--mono);color:var(--muted)}
+.feat .sub span::before{content:"⎇ ";color:var(--comment)}
+.feat .stk{grid-column:2/4;justify-self:start;font:11px var(--mono);padding:0 6px;border-radius:3px;border:1px solid var(--orange);color:var(--orange)}
+.feat .stk.mv{border-color:var(--ok);color:var(--ok)}
+.warnbox{margin:8px 12px;padding:8px 10px;border:1px solid var(--orange);border-radius:6px;color:var(--orange);font:12.5px/1.5 var(--sans);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.warnbox .mono{color:var(--fg)}
+.warnbox .sp{flex:1}
+.dlg .chips{display:flex;gap:6px 14px;flex-wrap:wrap}
+/* perguntar ao Claude / comando por descrição */
+.drawer .ctxc{font:12px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 6px;justify-self:start}
+.drawer .sugg{display:flex;gap:6px;flex-wrap:wrap}
+.drawer .qa{display:grid;gap:4px}
+.drawer .qa .q{color:var(--accent);font-weight:500}
+.drawer .qa .a{white-space:pre-wrap;line-height:1.55}
+.drawer .qa .tl{font:12px var(--mono);color:var(--comment)}
+.drawer .fin{display:flex;gap:6px;width:100%}
+.drawer .fin input{flex:1;min-width:0;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:13px var(--sans);padding:5px 8px}
+.drawer .ro{width:100%;font-size:11.5px;color:var(--comment)}
+.kpop{position:absolute;left:50%;transform:translateX(-50%);bottom:76px;width:620px;max-width:calc(100% - 28px);z-index:22;background:var(--raise);border:1px solid var(--accent);border-radius:8px;box-shadow:var(--shadow);padding:10px 12px;display:grid;gap:8px}
+.kpop input{width:100%;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:13px var(--sans);padding:6px 8px;outline:none}
+.kpop .cmd{font:13px var(--mono);background:var(--term-bg);border-radius:5px;padding:6px 10px;color:var(--ok);white-space:pre-wrap}
+.kpop .hint{font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+/* news */
+.news{flex:1;overflow:auto}
+.nitem{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 14px;padding:10px 16px;border-bottom:1px solid var(--line)}
+.nitem:hover{background:rgba(68,71,90,.25)}
+.nitem.on{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+.nitem h3{margin:0;font-size:14px;font-weight:500;cursor:pointer}
+.nitem .meta{font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.nitem .tg{font:11px var(--mono);color:var(--comment)}
+.nitem .why{grid-column:1/2;font-size:12.5px;display:flex;gap:6px 12px;flex-wrap:wrap}
+.nitem .aff{color:var(--orange)}
+.nitem .rel{color:var(--accent)}
+.nitem .acts{grid-column:2;grid-row:1/4;align-self:center}
+.nitem .sum{grid-column:1/2;margin:0;color:var(--muted);font-size:12.5px}
+.brief{position:absolute;top:46px;right:14px;width:400px;max-width:calc(100% - 28px);z-index:18;background:var(--raise);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);display:grid}
+.brief .bh{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.brief .bh b{font-weight:600}.brief .bh .sp{flex:1}
+.brief ol{margin:0;padding:8px 12px 8px 30px;display:grid;gap:6px;font-size:12.5px}
+.brief ol .w{display:block;color:var(--muted);font-size:11.5px}
+.brief .bf{display:flex;gap:8px;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--line);align-items:center}
+.brief .bf .sp{flex:1}
+.modes button.dim{opacity:.45}
+.prof{display:grid;gap:2px;padding:4px 12px 10px;font-size:12px}
+.prof div{display:flex;justify-content:space-between;gap:8px}
+.prof .mono{font-size:12px}
+
 @media (max-width:760px){
   .main,.main[data-right="on"]{grid-template-columns:minmax(0,1fr);grid-template-areas:"center"}
   #left{position:absolute;inset:0 25% 0 0;z-index:6;box-shadow:var(--shadow)}
@@ -371,6 +479,7 @@ legend{color:var(--muted);font-size:12px;padding:0 4px}
       <button id="mFeat" aria-pressed="true">Features<span class="count" id="attCount"></span></button>
       <button id="mMrs" aria-pressed="false">MRs<span class="count" id="mrCount" style="color:var(--accent)"></span></button>
       <button id="mVault" aria-pressed="false">Vault</button>
+      <button id="mNews" aria-pressed="false" title="Alt+5">News<span class="count" id="newsCount" style="color:var(--cyan)"></span></button>
     </nav>
     <button class="qbtn" id="qBtn" title="Fila de atenção (Ctrl+Shift+Espaço = próximo)">Fila <b id="qCount"></b></button>
     <span class="sp"></span>
@@ -475,8 +584,19 @@ health.get('/health', async (_req, res) => {
 `,
   'package.json': `{
   "name": "bots-api",
-  "scripts": { "test": "jest", "build": "tsc -p ." }
+  "scripts": { "test": "jest", "lint": "eslint src", "build": "tsc -p ." }
 }
+`,
+  'scripts/backfill.py': `import json
+import sys
+
+def main(path):
+    with open(path) as f:
+        rows = json.load(f)
+    print(len(rows), "bots")
+
+if __name__ == "__main__":
+    main(sys.argv[1])
 `
 };
 const F = {}; for (const p in files) F[p] = { text: files[p], saved: files[p] };
@@ -503,10 +623,17 @@ const FEATS=[
    term:[ccHead(WT+'chore-deps'),{c:'u',t:'> atualiza jest e typescript'},{c:'dot',t:'⏺ Bash(npm i -D jest@30 typescript@5.9)'},{c:'out',t:'  ⎿  added 3 packages, changed 41 packages in 9s'},
      {c:'dot',t:'⏺ Bash(npm test)'},{c:'out',t:'  ⎿  Tests: 14 passed, 14 total'},{c:'dotw',t:'⏺ Pronto. jest 30 e typescript 5.9, 14 testes passando. Não commitei.'}]},
 ];
+FEATS.splice(2,0,{id:'met', branch:'feat/health-metrics', dir:WT+'feat-health-metrics', parent:'health', stack:'rebase', st:'idle', msg:'em cima de feat/healthcheck', ago:'há 20 min', changes:[], tab:0,
+  term:[ccHead(WT+'feat-health-metrics'),{c:'dim',t:'Base: feat/healthcheck (empilhada). O MR aponta para feat/healthcheck.'}]});
+FEATS.push({id:'ret', branch:'feat/retry-config', dir:WT+'feat-retry-config', st:'idle', msg:'MR !146 mergeado', ago:'há 2 h', changes:[], tab:0, term:[ccHead(WT+'feat-retry-config')]},
+  {id:'ret2', branch:'feat/retry-metrics', dir:WT+'feat-retry-metrics', parent:'ret', stack:'merged', st:'idle', msg:'em cima de feat/retry-config', ago:'há 2 h', changes:[], tab:0, term:[ccHead(WT+'feat-retry-metrics')]});
 FEATS.push({id:'home', kind:'ws', branch:'~', dir:'~', st:'idle', msg:'zsh', ago:'', changes:[], tab:0, term:[]});
 const FX={main:{port:3000,cost:0,ctx:0,turns:[]},
   health:{port:3001,cost:.42,ctx:38,turns:[{n:1,p:'cria um endpoint /health que checa o banco e responde 503 se ele cair'},{n:2,p:'agora pluga no app e roda os testes'}]},
-  slack:{port:3002,cost:.18,ctx:82,turns:[{n:1,p:'o client do slack estoura timeout em horário de pico, deixa configurável'}],mr:{iid:147,pipe:'success',sonar:'ok',comments:[{who:'@ana.lima',where:'src/slack.ts:2',body:'Documenta o `SLACK_TIMEOUT_MS` no README e no k8s-configmap?'}]}},
+  met:{port:3004,cost:.06,ctx:9,turns:[],mr:{iid:150,pipe:'success',sonar:'ok',comments:[],target:'feat/healthcheck'}},
+  ret:{port:3005,cost:.31,ctx:20,turns:[],mr:{iid:146,merged:true,pipe:'success',sonar:'ok',comments:[]}},
+  ret2:{port:3006,cost:.12,ctx:15,turns:[],mr:{iid:151,pipe:'success',sonar:'ok',comments:[],target:'feat/retry-config'}},
+  slack:{repos:[{name:'k8s-configmap',files:0},{name:'pipeline',files:1}],port:3002,cost:.18,ctx:82,turns:[{n:1,p:'o client do slack estoura timeout em horário de pico, deixa configurável'}],mr:{iid:147,pipe:'success',sonar:'ok',comments:[{who:'@ana.lima',where:'src/slack.ts:2',body:'Documenta o `SLACK_TIMEOUT_MS` no README e no k8s-configmap?'}]}},
   deps:{port:3003,cost:.09,ctx:12,turns:[{n:1,p:'atualiza jest e typescript'}],mr:{iid:148,pipe:'failed',job:'test:unit',sonar:'fail',sonarMsg:'cobertura do código novo em 71% (o gate pede 80%)',comments:[]}},
   home:{cost:0,ctx:0}};
 FEATS.forEach(f=>Object.assign(f,FX[f.id]));
@@ -543,6 +670,10 @@ function sh(f,t,cmd){
     out(`(protótipo: git ${esc(a.join(' '))} rodaria normalmente)`); return; }
   if(c==='npm'&&a[0]==='run'&&a[1]==='dev'){ if(!git){ out('npm error Missing script: "dev"'); return; } f.devUp=true; out(`\n&gt; bots-api@1.0.0 dev\n&gt; tsx watch src/main.ts\n\n<span class="gr">listening on http://localhost:${f.port}</span>  <span class="cm">(PORT=${f.port}, único desta worktree)</span>`); return; }
   if(c==='npx'&&a[0]==='jest'&&a[1]==='--findRelatedTests'){ out(`<span class="pass"> PASS </span> test/health.spec.ts\n<span class="pass"> PASS </span> test/app.spec.ts\n\n<b>Tests:</b>       <b class="gr">5 passed</b>, 5 total  <span class="cm">(9 testes não afetados pelo diff foram pulados)</span>\n<b>Time:</b>        0.84 s`); return; }
+  if(c==='npm'&&a[0]==='run'&&a[1]==='build'){ if(!git){ out('npm error Missing script: "build"'); return; }
+    out(`\n&gt; bots-api@1.0.0 build\n&gt; tsc -p .\n\n<span class="cy">src/slack.ts</span>:<span class="yl">5</span>:<span class="yl">30</span> - <span class="rd">error</span> <span class="cm">TS2339:</span> Property 'url' does not exist on type 'SlackClient'.\n<span class="cy">src/health.ts</span>:<span class="yl">6</span>:<span class="yl">20</span> - <span class="rd">error</span> <span class="cm">TS2304:</span> Cannot find name 'ping'.\n\nFound 2 errors in 2 files.`); return; }
+  if(c==='npm'&&a[0]==='run'&&a[1]==='lint'){ if(!git){ out('npm error Missing script: "lint"'); return; }
+    out(`\n&gt; bots-api@1.0.0 lint\n&gt; eslint src\n\n<u>src/slack.ts</u>\n  <span class="cm">4:14</span>  <span class="yl">warning</span>  'channel' is defined but never used  <span class="cm">@typescript-eslint/no-unused-vars</span>\n\n<span class="yl">✖ 1 problem (0 errors, 1 warning)</span>`); return; }
   if(c==='npm'&&(a[0]==='test'||a[0]==='t')){ if(!git){ out('npm error Missing script: "test"'); return; }
     out(`\n&gt; bots-api@1.0.0 test\n&gt; jest\n\n<span class="pass"> PASS </span> test/handler.spec.ts\n<span class="pass"> PASS </span> test/slack.spec.ts\n\n<b>Tests:</b>       <b class="gr">14 passed</b>, 14 total\n<b>Time:</b>        2.31 s`); return; }
   if(c==='cat'||c==='bat'){ const p=a[0]&&(F[a[0]]?a[0]:F['src/'+a[0]]?'src/'+a[0]:null); if(!p){ out(`[bat error]: '${esc(a[0]||'')}': No such file or directory`); return; } out(hl(F[p].text.trimEnd())); return; }
@@ -555,10 +686,10 @@ function sh(f,t,cmd){
 FEATS.forEach(f=>{ mkTabs(f); if(f.kind==='ws') sh(f,0,'ls'); else sh(f,1,'git status'); });
 
 const MRS = [
-  {g:'rev', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:124, title:'feat: retry no webhook', who:'@bruno.costa', ci:'success', st:'new', unread:true, src:'feat/retry-webhook', tgt:'main', sha:'9e41c07'},
-  {g:'rev', proj:'zendesk-agents', path:'ctbz/experts/atendimento/zendesk-agents', iid:88, title:'fix: timeout na sincronização de tickets', who:'@carla.dias', ci:'running', st:'inc', inc:2, sha:'a2f9c1e'},
-  {g:'rev', proj:'atendimento-canais', path:'ctbz/experts/atendimento/atendimento-canais', iid:301, title:'chore: atualiza dependências', who:'@diego.alves', ci:'failed', st:'done', sha:'51bb0d2'},
-  {g:'mine', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:119, title:'refactor: extrai SlackClient', who:'você', ci:'success', st:'threads', threads:2},
+  {g:'rev', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:124, title:'feat: retry no webhook', who:'@bruno.costa', ci:'success', st:'new', unread:true, src:'feat/retry-webhook', tgt:'main', sha:'9e41c07', approvals:1, squash:true, rmSrc:true},
+  {g:'rev', proj:'zendesk-agents', path:'ctbz/experts/atendimento/zendesk-agents', iid:88, title:'fix: timeout na sincronização de tickets', who:'@carla.dias', ci:'running', st:'inc', inc:2, sha:'a2f9c1e', approvals:0, squash:false, rmSrc:true},
+  {g:'rev', proj:'atendimento-canais', path:'ctbz/experts/atendimento/atendimento-canais', iid:301, title:'chore: atualiza dependências', who:'@diego.alves', ci:'failed', st:'done', sha:'51bb0d2', approvals:0, approved:true},
+  {g:'mine', proj:'bots-api', path:'ctbz/experts/bots/bots-api', iid:119, title:'refactor: extrai SlackClient', who:'você', ci:'success', st:'threads', threads:2, reply:'@ana.lima'},
   {g:'grp', proj:'agenda-api', path:'ctbz/experts/agenda-api', iid:42, title:'feat: endpoint de reagendamento', who:'@elisa.rocha', ci:'success', st:'none'},
   {g:'grp', proj:'notas-fiscais', path:'ctbz/experts/notas-fiscais', iid:1207, title:'fix: arredondamento do ISS', who:'@fabio.nunes', ci:'success', st:'none'},
   {g:'grp', proj:'onboarding-web', path:'ctbz/experts/onboarding-web', iid:388, title:'feat: etapa de certificado digital', who:'@heitor.mota', ci:'failed', st:'none'},
@@ -572,9 +703,16 @@ const D_MR = [
   {path:'src/retry.ts', isNew:true, hunks:[{h:'@@ -0,0 +1,11 @@', l:[
       ['+',0,1,'export async function retry<T>(fn: () => Promise<T>, tries = Infinity): Promise<T> {'],['+',0,2,'  let last: unknown'],['+',0,3,'  for (let i = 0; i < tries; i++) {'],
       ['+',0,4,'    try {'],['+',0,5,'      return await fn()'],['+',0,6,'    } catch (err) {'],['+',0,7,'      last = err'],['+',0,8,'    }'],['+',0,9,'  }'],['+',0,10,'  throw last'],['+',0,11,'}']]}]},
+  {path:'package-lock.json', gen:true, hunks:[{h:'@@ -2,7 +2,7 @@', l:[
+      [' ',2,2,'  "name": "bots-api",'],[' ',3,3,'  "version": "1.0.0",'],[' ',4,4,'  "lockfileVersion": 3,'],
+      ['-',5,0,'  "requires": false,'],['+',0,5,'  "requires": true,'],[' ',6,6,'  "packages": {'],
+      ['-',7,0,'    "node_modules/p-retry": { "version": "6.2.0" },'],['+',0,7,'    "node_modules/p-retry": { "version": "6.2.1" },'],[' ',8,8,'  }']]}]},
 ];
 let THREADS = [
+  {id:'t2', file:null, resolved:false, notes:[{who:'@ana.lima', ago:'há 3 h', body:'Antes do merge: o `bots-worker` também chama esse webhook? Se sim, ele precisa do mesmo retry.'}]},
+  {id:'t3', file:'src/handler.ts', old:11, resolved:false, notes:[{who:'@carla.dias', ago:'há 2 h', body:'Sem o `throw`, quem chama o `run` deixa de saber que falhou. Era intencional?'}]},
   {id:'t1', file:'src/handler.ts', line:14, resolved:false, notes:[{who:'@ana.lima', ago:'há 2 h', body:'Esse retry tem limite? Se o endpoint cair fica em loop.'},{who:'@bruno.costa', ago:'há 1 h', body:'Coloquei 3, como está na descrição.'}]},
+  {id:'t4', file:'src/retry.ts', line:1, resolved:false, notes:[{who:'você', ago:'ontem', body:'O default `tries = Infinity` é intencional?'}]},
 ];
 const FINDINGS = [
   {file:'src/handler.ts', line:14, sev:'major', label:'issue', body:'`retry` não tem backoff: com o endpoint fora, as tentativas saem coladas. Use espera exponencial.'},
@@ -584,7 +722,9 @@ const FINDINGS = [
 
 /* ---------- estado ---------- */
 const S = { mode:'feat', fid:'health', left:true, right:false, ltab:'changes', rtab:'review', file:null, ln:1, col:1,
-  ibox:'rev', q:'', isel:0, mr:null, sel:null, drafts:[], editing:null, undo:[], reviewed:{}, mq:[], mascot:null };
+  ibox:'rev', q:'', isel:0, mr:null, sel:null, drafts:[], editing:null, undo:[], reviewed:{}, mq:[], mascot:null,
+  layout:'split', hideGen:true, collapsed:new Set(), genOpen:false, replying:null, taskProbs:[], lspOff:{}, hist:null,
+  newsToken:true, newsOnlyAff:false, nsel:0 };
 const feat = id => FEATS.find(f=>f.id===(id||S.fid));
 let did=0;
 
@@ -592,9 +732,11 @@ let did=0;
 function renderFrame(){
   const m=$('#main'); m.dataset.left=S.left&&S.mode!=='mrs'?'on':'off'; m.dataset.right=S.right&&S.mode==='feat'?'on':'off';
   $('#mFeat').setAttribute('aria-pressed',S.mode==='feat'||S.mode==='audit'); $('#mMrs').setAttribute('aria-pressed',S.mode==='mrs'||S.mode==='mr'); $('#mVault').setAttribute('aria-pressed',S.mode==='vault');
+  $('#mNews').setAttribute('aria-pressed',S.mode==='news'); $('#mNews').classList.toggle('dim',!S.newsToken);
+  $('#newsCount').textContent=S.newsToken?newsShown().filter(n=>n.aff.length&&!n.read).length||'':'';
   const att=FEATS.filter(f=>f.st==='blocked').length; $('#attCount').textContent=att?`${att} !`:'';
   $('#qCount').textContent=attention().length||'';
-  $('#mrCount').textContent=MRS.filter(m=>m.g==='rev'&&m.st!=='done'&&!S.reviewed[m.proj+m.iid]).length;
+  $('#mrCount').textContent=MRS.filter(m=>m.g==='rev'&&!isReviewed(m)).length;
 }
 function render(){ renderFrame(); renderLeft(); renderCenter(); renderRight(); renderHints(); renderStatus(); maybeTour(); }
 function setMode(m){ S.mode=m; if(m==='vault'&&!S.vview) S.vview='note'; render(); }
@@ -604,6 +746,7 @@ function renderLeft(){
   const el=$('#left');
   if (S.mode==='mr') return renderMRFiles(el);
   if (S.mode==='vault') return renderVaultTree(el);
+  if (S.mode==='news') return renderNewsLeft(el);
   if (S.mode!=='feat'&&S.mode!=='audit'){ el.innerHTML=''; return; }
   const f=feat();
   let h=`<div class="repo">bots-api <span class="mono">${ROOT}</span></div><div class="feats"><button class="feat ${S.mode==='audit'?'on':''}" id="audBtn"><span class="g ${AU.phase==='run'?'st-working spin':'cm'}">${AU.phase==='run'?'◐':'◇'}</span><span class="b">Auditoria</span><span class="k">${AU.phase==='run'?'rodando':AU.last.when}</span><span class="m">${AU.phase==='run'?'US$ '+AU.spent.toFixed(2).replace('.',','):AU.last.commits?AU.last.commits+' commits desde a última':'em dia'}</span></button></div><div class="phead">Features<span class="sp"></span><span class="mono" style="text-transform:none;letter-spacing:0">${FEATS.length}</span></div><div class="feats" role="listbox" aria-label="Features">`;
@@ -622,11 +765,14 @@ function renderLeft(){
   bindLeft(el);
 }
 function featBtn(x){ const s=ST[x.st], i=FEATS.indexOf(x), ws=x.kind==='ws';
-  return `<button class="feat ${x.id===S.fid&&S.mode==='feat'?'on':''} ${x.unseen?'unseen '+x.st:''}" data-f="${x.id}" role="option" aria-selected="${x.id===S.fid}" title="Ctrl+Shift+${i+1}">
+  const sub=(x.repos?`<span class="sub" title="feature multi-repo: mesma branch em cada repo">${x.repos.map(r=>`<span>${r.name}${r.files?` · ${r.files}`:''}</span>`).join('')}</span>`:'')
+    +(x.stack==='rebase'?`<span class="stk" data-stk="${x.id}" role="button" title="feat/healthcheck ganhou 2 commits depois que esta foi criada">base mudou · Rebase</span>`:x.stack==='merged'?`<span class="stk mv" data-stk="${x.id}" role="button" title="A mãe (!146) foi mergeada em main: rebase --onto main e o MR passa a apontar para main">mergeada · Mover p/ main</span>`:'');
+  return `<button class="feat ${x.parent?'child':''} ${x.id===S.fid&&S.mode==='feat'?'on':''} ${x.unseen?'unseen '+x.st:''}" data-f="${x.id}" role="option" aria-selected="${x.id===S.fid}" title="Ctrl+Shift+${i+1}${x.parent?` · em cima de ${feat(x.parent).branch}`:''}">
     <span class="g ${ws?'cm':'st-'+x.st} ${x.st==='working'?'spin':''}">${ws?'$':s.g}</span><span class="b">${x.branch}${x.group?`<span class="grp">${x.model}</span>`:''}</span><span class="k">${ws?x.tabs.length+' aba'+(x.tabs.length>1?'s':''):x.ago}</span>
-    <span class="m ${x.st}">${ws?'só terminal':(x.st==='blocked'||x.st==='done'?s.l+' · ':'')+esc(x.msg)}</span>${ws?'':`<span class="m2">:${x.port} · US$ ${x.cost.toFixed(2).replace('.',',')} · <span class="${x.ctx>=80?'w8':''}">ctx ${x.ctx}%${x.ctx>=80?' ⚠':''}</span>${mrSum(x.mr)}</span>`}</button>`; }
+    <span class="m ${x.st}">${ws?'só terminal':(x.st==='blocked'||x.st==='done'?s.l+' · ':'')+esc(x.msg)}</span>${ws?'':`<span class="m2">:${x.port} · US$ ${x.cost.toFixed(2).replace('.',',')} · <span class="${x.ctx>=80?'w8':''}">ctx ${x.ctx}%${x.ctx>=80?' ⚠':''}</span>${mrSum(x.mr)}</span>`}${sub}</button>`; }
 function bindLeft(el){
   el.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>selectFeat(b.dataset.f));
+  el.querySelectorAll('[data-stk]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); stackAction(feat(b.dataset.stk)); });
   el.querySelectorAll('[data-lt]').forEach(b=>b.onclick=()=>{ S.ltab=b.dataset.lt; renderLeft(); });
   el.querySelectorAll('[data-ch]').forEach(b=>b.onclick=()=>openReview(b.dataset.ch));
   el.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>openFile(b.dataset.file));
@@ -649,14 +795,16 @@ function renderCenter(){
   if (S.mode==='mr') return renderMR(el);
   if (S.mode==='audit') return renderAudit(el);
   if (S.mode==='vault') return renderVaultMain(el);
+  if (S.mode==='news') return renderNews(el);
   const f=feat();
   const keep={}; let foc=null; el.querySelectorAll('.tin-in').forEach(i=>{ keep[i.dataset.t]=i.value; if(i===document.activeElement) foc=i.dataset.t; });
   const shown = f.split && f.tabs.length>1 && f.tab<2 ? [0,1] : [f.tab];
-  el.innerHTML=`<div class="term"><div class="hbar">${f.tabs.map((t,i)=>`<button class="${shown.includes(i)?'on':''}" data-tb="${i}">${i+1} ${t.k==='claude'?'claude':'zsh'}${t.k==='claude'&&f.st!=='idle'?` <span class="st-${f.st}">${ST[f.st].g}</span>`:''}</button>`).join('')}<button data-newtab title="Nova aba (Ctrl+A c)" aria-label="Nova aba">+</button><span class="sp"></span>${f.devUp?`<button data-dev class="st-done" title="Abrir no navegador">● localhost:${f.port} ↗</button>`:''}
+  el.innerHTML=`<div class="term"><div class="hbar">${f.tabs.map((t,i)=>`<button class="${shown.includes(i)?'on':''}" data-tb="${i}">${i+1} ${t.k==='claude'?'claude':'zsh'}${t.k==='claude'&&f.st!=='idle'?` <span class="st-${f.st}">${ST[f.st].g}</span>`:''}</button>`).join('')}<button data-newtab title="Nova aba (Ctrl+A c)" aria-label="Nova aba">+</button><span class="sp"></span>${f.kind!=='ws'?'<button data-task title="Scripts do package.json, alvos do Makefile, cargo/go test">▶ Rodar tarefa…</button>':''}${f.devUp?`<button data-dev class="st-done" title="Abrir no navegador">● localhost:${f.port} ↗</button>`:''}
     <span class="r ${S.prefix?'pre':''}">${S.prefix?'PREFIX: v divide · - empilha · c aba · x fecha · z zoom':f.split?'Ctrl+Shift+Z: só este pane':'Ctrl+Shift+\\ divide · Ctrl+Shift+Enter empilha'}</span></div>
     <div class="panes ${shown.length>1?f.split:''}">${shown.map(i=>paneHtml(f,i,shown.length>1&&i!==f.tab)).join('')}</div></div>`;
   el.querySelectorAll('[data-tb]').forEach(b=>b.onclick=()=>{ f.tab=+b.dataset.tb; renderCenter(); focusTerm(); });
   el.querySelector('[data-newtab]').onclick=()=>herdr(f,'c');
+  if(el.querySelector('[data-task]')) el.querySelector('[data-task]').onclick=()=>openPal('cmd','Tarefa: ');
   if(el.querySelector('[data-dev]')) el.querySelector('[data-dev]').onclick=()=>toast(`Abriria http://localhost:${f.port} (servidor de dev de ${f.branch})`);
   el.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>answer(f,+b.dataset.p));
   el.querySelectorAll('.tbody').forEach(tb=>tb.scrollTop=tb.scrollHeight);
@@ -702,6 +850,9 @@ function herdr(f,k){
   else if(k==='ArrowLeft'||k==='ArrowUp'){ if(f.split) f.tab=0; } else if(k==='ArrowRight'||k==='ArrowDown'){ if(f.split) f.tab=1; }
   renderLeft(); renderCenter(); focusTerm();
 }
+function wordSel(ta,right){ const v=ta.value, back=ta.selectionDirection==='backward'; let caret=back?ta.selectionStart:ta.selectionEnd; const anchor=back?ta.selectionEnd:ta.selectionStart;
+  if(right){ const m=/^\W*\w+/.exec(v.slice(caret)); caret+=m?m[0].length:v.length-caret; } else { const m=/\w+\W*$/.exec(v.slice(0,caret)); caret-=m?m[0].length:caret; }
+  ta.setSelectionRange(Math.min(anchor,caret),Math.max(anchor,caret),caret<anchor?'backward':'forward'); }
 function focusTerm(){ const i=document.querySelector(`.tin-in[data-t="${feat().tab}"]`)||$('.tin-in'); if(i) i.focus(); }
 function push(f,c,t){ f.term.push({c,t}); if(S.mode==='feat'&&S.fid===f.id) renderCenter(); }
 function setSt(f,st,msg){ f.st=st; f.msg=msg; f.ago='agora'; if(st==='working') f.t0=Date.now();
@@ -740,6 +891,8 @@ function newFeatureDlg(){
     <label class="fld" style="display:grid"><span>Issue do Jira (opcional: preenche branch e tarefa)</span><input type="text" id="nfJ" placeholder="ex.: PRD-171500" autocomplete="off"></label><span class="jira" id="nfJi"></span>
     <div class="row2"><label class="fld" style="display:grid"><span>Branch</span><input type="text" id="nfB" value="feat/" autocomplete="off"></label>
       <label class="fld" style="display:grid"><span>A partir de</span><select id="nfBase"><option>main</option><option>develop</option></select></label></div>
+    <label class="fld" style="display:grid"><span>Em cima de (MRs empilhados: a base e o alvo do MR viram a branch da mãe)</span><select id="nfPar"><option value="">nenhuma: direto na base acima</option>${FEATS.filter(x=>x.kind!=='ws'&&x.id!=='main'&&!(x.mr&&x.mr.merged)).map(x=>`<option value="${x.id}">${esc(x.branch)}</option>`).join('')}</select></label>
+    <div class="fld"><span>Outros repos (mesma branch numa worktree de cada, o Claude enxerga todas)</span><div class="chips">${['k8s-configmap','vault-roleset','pipeline'].map(r=>`<label><input type="checkbox" data-rp="${r}"> <span class="mono">${r}</span></label>`).join('')}</div></div>
     <label class="fld" style="display:grid"><span>O que o Claude deve fazer (opcional)</span><textarea id="nfP" placeholder="ex.: adiciona paginação no GET /bots"></textarea></label>
     <div class="row2"><label class="fld" style="display:grid"><span>Tentativas em paralelo</span><select id="nfN"><option value="1">1</option><option value="2">2 (comparar no fim)</option><option value="3">3 (comparar no fim)</option></select></label>
       <label class="fld" style="display:grid"><span>Modelos</span><select id="nfM"><option value="same">mesmo modelo</option><option value="mix">variar entre Opus e Sonnet</option></select></label></div>
@@ -750,8 +903,10 @@ function newFeatureDlg(){
       <label><input type="checkbox" id="nfCl" checked> Abrir o <span class="mono">claude</span> nessa worktree</label></fieldset>
     <span class="err" id="nfErr" role="alert"></span>
     <div class="acts"><button type="button" class="btn" id="nfNo">Cancelar</button><button class="btn pri" id="nfOk">Criar <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div></form></div>`;
-  const b=$('#nfB'); const prev=()=>{ const n=+$('#nfN').value; $('#nfPrev').textContent=`herdr worktree create --branch ${b.value||'…'}${n>1?` (×${n}: -a, -b${n>2?', -c':''})`:''} --base ${$('#nfBase').value} · PORT=${nextPort()}${n>1?'…'+(nextPort()+n-1):''} · docker compose -p bots-api-${slug(b.value||'…')}`; $('#nfErr').textContent=''; };
-  b.oninput=prev; $('#nfBase').onchange=prev; $('#nfN').onchange=prev; prev(); $('#nfJ').focus();
+  const b=$('#nfB'); const prev=()=>{ const n=+$('#nfN').value, par=$('#nfPar').value, base=par?feat(par).branch:$('#nfBase').value, rps=[...document.querySelectorAll('[data-rp]:checked')].map(x=>x.dataset.rp);
+    $('#nfBase').disabled=!!par;
+    $('#nfPrev').textContent=`herdr worktree create --branch ${b.value||'…'}${n>1?` (×${n}: -a, -b${n>2?', -c':''})`:''} --base ${base}${rps.length?` + ${rps.join(', ')}`:''}${par?` · MR → ${base}`:''} · PORT=${nextPort()}${n>1?'…'+(nextPort()+n-1):''} · docker compose -p bots-api-${slug(b.value||'…')}`; $('#nfErr').textContent=''; };
+  b.oninput=prev; $('#nfBase').onchange=prev; $('#nfN').onchange=prev; $('#nfPar').onchange=prev; document.querySelectorAll('[data-rp]').forEach(c=>c.onchange=prev); prev(); $('#nfJ').focus();
   $('#nfJ').onchange=()=>{ const k=$('#nfJ').value.trim().toUpperCase(); if(!/^[A-Z][A-Z0-9]+-\d+$/.test(k)){ $('#nfJi').textContent=k?'Formato esperado: PROJ-123':''; return; }
     $('#nfJi').textContent='buscando no Jira…'; setTimeout(()=>{ const J={'PRD-171500':{type:'Story',title:'Paginação no GET /bots',crit:'page e size na query (máx. 100) e o total no header X-Total-Count'}}, info=J[k]||{type:'Task',title:'Issue do Jira',crit:'os critérios de aceite da issue'};
       $('#nfJi').textContent=`✓ ${k} · ${info.type} · ${info.title} (MCP Atlassian)`; const s2=info.title.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
@@ -762,10 +917,10 @@ function createFeature(){
   const br=$('#nfB').value.trim(), base=$('#nfBase').value, p=$('#nfP').value.trim(), env=$('#nfEnv').checked, ci=$('#nfCi').checked, cl=$('#nfCl').checked;
   if(!br || br.endsWith('/')){ $('#nfErr').textContent='Dê um nome à branch, ex.: feat/paginacao-bots'; return; }
   if(FEATS.some(f=>f.branch===br)){ $('#nfErr').textContent=`Já existe uma feature em ${br}. Escolha outro nome ou abra a existente.`; return; }
-  const n=+$('#nfN').value, mix=$('#nfM').value==='mix';
+  const n=+$('#nfN').value, mix=$('#nfM').value==='mix', par=$('#nfPar').value||null, repos=[...document.querySelectorAll('[data-rp]:checked')].map(x=>({name:x.dataset.rp,files:0}));
   closeOverlay();
   if(n>1){ const models=mix?['Opus','Sonnet','Opus 1M']:['Opus','Opus','Opus']; ['a','b','c'].slice(0,n).forEach((x,i)=>spawnFeature(`${br}-${x}`,base,p,env,ci,cl,{group:br,model:models[i],variant:i})); toast(`${n} tentativas de ${br} em paralelo. A fila avisa quando der para comparar.`); return; }
-  spawnFeature(br,base,p,env,ci,cl,{});
+  spawnFeature(br,par?feat(par).branch:base,p,env,ci,cl,{parent:par,repos:repos.length?repos:null});
 }
 const VARIANTS=[
   {approach:'Offset (page/size) com total via COUNT(*). Mais simples; o COUNT pesa em tabela grande.',tests:'16/16',lines:["router.get('/bots', async (req, res) => {","  const { page = 1, size = 20 } = req.query","  const [rows, total] = await bots.page(+page, Math.min(+size, 100))","  res.set('X-Total-Count', String(total)).json(rows)","})"]},
@@ -775,10 +930,14 @@ const nextPort=()=>Math.max(...FEATS.map(x=>x.port||3000))+1;
 function spawnFeature(br,base,p,env,ci,cl,o){
   o=o||{}; const dir=WT+slug(br), V=VARIANTS[o.variant||0];
   const f={id:'f'+Date.now()+Math.random().toString(36).slice(2,5), branch:br, dir, st:'working', msg:'preparando worktree', ago:'agora', changes:[], tab:0, t0:Date.now(), verb:'Preparando',
-    port:nextPort(), cost:0, ctx:3, turns:[], group:o.group||null, model:o.model||'Opus', approach:V.approach, tests:V.tests,
+    port:nextPort(), cost:0, ctx:3, turns:[], group:o.group||null, model:o.model||'Opus', approach:V.approach, tests:V.tests, parent:o.parent||null, repos:o.repos||null,
     term:[{c:'ps',t:`$ herdr worktree create --branch ${br} --base ${base}`}]};
-  mkTabs(f); FEATS.splice(FEATS.findIndex(x=>x.kind==='ws'),0,f); S.fid=f.id; S.mode='feat'; render();
+  mkTabs(f);
+  if(f.parent){ let i=FEATS.indexOf(feat(f.parent))+1; while(FEATS[i]&&FEATS[i].parent===f.parent) i++; FEATS.splice(i,0,f); } else FEATS.splice(FEATS.findIndex(x=>x.kind==='ws'),0,f);
+  S.fid=f.id; S.mode='feat'; render();
   const steps=[[500,'okc',`✓ worktree em ${dir}`]];
+  (f.repos||[]).forEach(r=>steps.push([400,'okc',`✓ worktree ${r.name} em ~/repos-ctbz/${r.name}.wt/${slug(br)} (mesma branch)`]));
+  if(f.parent) steps.push([200,'okc',`✓ empilhada em ${base}: o MR vai apontar para ${base}`]);
   if(env) steps.push([400,'okc','✓ copiados .env, .env.local']);
   steps.push([300,'okc',`✓ PORT=${f.port} · docker compose -p bots-api-${slug(br)}`]);
   if(ci) steps.push([600,'ps','$ npm ci'],[1500,'okc','✓ 412 pacotes em 8s']);
@@ -796,6 +955,14 @@ function removeFeatureDlg(f){
   const warn = f.uncommitted ? `${f.uncommitted} arquivo não commitado vai ser apagado junto com a worktree.` : f.st==='working' ? 'O Claude ainda está trabalhando nela e vai ser encerrado.' : 'Nada pendente. A branch local continua existindo; só a pasta da worktree sai.';
   confirmDlg(`Remover a feature ${f.branch}?`,`${warn} Pasta: ${f.dir}`,'Remover worktree',()=>{
     const i=FEATS.indexOf(f); FEATS.splice(i,1); if(S.fid===f.id) S.fid=FEATS[Math.max(0,i-1)].id; render(); toast(`Worktree ${f.branch} removida`); }, !!(f.uncommitted||f.st==='working'));
+}
+
+function stackAction(f){
+  const p=feat(f.parent); if(!p) return;
+  if(f.stack==='rebase') confirmDlg(`Rebase de ${f.branch} em ${p.branch}?`,`${p.branch} ganhou 2 commits depois que esta foi criada. Roda git rebase ${p.branch} na worktree desta feature; se der conflito, para e abre o terminal dela com a lista.`,'Rebase',()=>{
+    f.stack=null; f.term.push({c:'ps',t:`$ git rebase ${p.branch}`},{c:'okc',t:`✓ Successfully rebased and updated refs/heads/${f.branch}.`}); render(); toast(`${f.branch} rebaseada em ${p.branch}`); });
+  else if(f.stack==='merged') confirmDlg(`Mover ${f.branch} para main?`,`${p.branch} (!${p.mr.iid}) foi mergeado. Roda git rebase --onto main ${p.branch} nesta worktree e muda o alvo do MR !${f.mr.iid} para main no GitLab.`,'Mover para main',()=>{
+    f.stack=null; f.parent=null; f.mr.target='main'; f.term.push({c:'ps',t:`$ git rebase --onto main ${p.branch}`},{c:'okc',t:'✓ rebase ok · MR !'+f.mr.iid+' agora aponta para main'}); render(); toast(`${f.branch} agora sai de main; MR !${f.mr.iid} → main`); });
 }
 
 /* ---------- alertas: mascote ---------- */
@@ -835,15 +1002,23 @@ function renderRight(){
   const f=feat(), ws=f.kind==='ws';
   if(S.rtab==='vault') S.rtab='review';
   const T=(k,l)=>`<button class="t" aria-pressed="${S.rtab===k}" data-rt="${k}">${l}</button>`;
-  const tabs=`<div class="rtabs">${ws?'':T('review','Revisar')+T('mr',f.mr?`MR !${f.mr.iid}`:'MR')}${S.file?`<button class="t" aria-pressed="${S.rtab==='file'}" data-rt="file">${S.file.split('/').pop()}${F[S.file].text!==F[S.file].saved?' <span style="color:var(--accent)">●</span>':''}</button>`:''}<span class="sp"></span><button class="x" id="rClose" title="Ctrl+Shift+E" aria-label="Fechar painel">×</button></div>`;
+  const np=problems().length;
+  const tabs=`<div class="rtabs">${ws?'':T('review','Revisar')+T('mr',f.mr?`MR !${f.mr.iid}`:'MR')}${S.file?`<button class="t" aria-pressed="${S.rtab==='file'}" data-rt="file">${S.file.split('/').pop()}${F[S.file].text!==F[S.file].saved?' <span style="color:var(--accent)">●</span>':''}</button>`+T('hist','Histórico'):''}${ws?'':T('prob',`Problemas${np?` <span class="mono" style="color:var(--bad)">${np}</span>`:''}`)}<span class="sp"></span><button class="x" id="rClose" title="Ctrl+Shift+E" aria-label="Fechar painel">×</button></div>`;
   if(S.rtab==='file' && S.file){
-    el.innerHTML=tabs+`<div class="ed"><div class="gut" id="gut"></div><div class="edwrap"><pre id="hl" aria-hidden="true"></pre><textarea id="code" spellcheck="false" aria-label="Editor ${S.file}"></textarea></div></div>`;
+    const py=/\.py$/.test(S.file)&&!S.lspOff[S.file];
+    el.innerHTML=tabs+(py?`<div class="lspbar" role="status"><span>Sem servidor de linguagem para Python · instale com <span class="mono">npm i -g pyright</span></span><button class="btn" id="lspCp">Copiar</button><span class="sp"></span><button id="lspX" aria-label="Dispensar">×</button></div>`:'')+`<div class="ed"><div class="gut" id="gut"></div><div class="edwrap" id="edw"><pre id="hl" aria-hidden="true"></pre><textarea id="code" spellcheck="false" aria-label="Editor ${S.file}"></textarea><div id="edOv"></div></div></div>`;
     const ta=$('#code'); ta.value=F[S.file].text; paint();
-    ta.oninput=()=>{ F[S.file].text=ta.value; paint(); renderStatus(); };
-    ta.onscroll=()=>{ $('#hl').scrollTop=ta.scrollTop; $('#hl').scrollLeft=ta.scrollLeft; $('#gut').scrollTop=ta.scrollTop; };
-    ta.onkeyup=ta.onclick=()=>{ const pre=ta.value.slice(0,ta.selectionStart).split('\n'); S.ln=pre.length; S.col=pre[pre.length-1].length+1; renderStatus(); };
-    ta.onkeydown=e=>{ if(e.key==='Tab'){ e.preventDefault(); ta.setRangeText('  ',ta.selectionStart,ta.selectionEnd,'end'); ta.oninput(); } };
-  } else if(S.rtab==='mr'){ el.innerHTML=tabs+renderMRTab(f); bindMRTab(el,f); }
+    if(py){ $('#lspCp').onclick=()=>toast('Copiado: npm i -g pyright'); $('#lspX').onclick=()=>{ S.lspOff[S.file]=true; renderRight(); }; }
+    ta.oninput=e=>{ F[S.file].text=ta.value; paint(); renderStatus(); if(e&&e.data==='.') openCompl(ta); else if(CMPL) closeCompl(); };
+    ta.onscroll=()=>{ $('#hl').scrollTop=ta.scrollTop; $('#hl').scrollLeft=ta.scrollLeft; $('#gut').scrollTop=ta.scrollTop; paintBlame(); };
+    ta.onkeyup=ta.onclick=e=>{ const pre=ta.value.slice(0,ta.selectionStart).split('\n'); S.ln=pre.length; S.col=pre[pre.length-1].length+1; renderStatus(); paintBlame(); if(e&&e.type==='click'&&(e.ctrlKey||e.metaKey)) goDef(ta,e); };
+    ta.onkeydown=e=>{ if(CMPL&&complKey(e,ta)) return; if(e.key==='Tab'){ e.preventDefault(); ta.setRangeText('  ',ta.selectionStart,ta.selectionEnd,'end'); ta.oninput(); } };
+    ta.onmousemove=e=>hoverAt(ta,e); ta.onmouseleave=()=>{ const h=$('#hov'); if(h) h.remove(); };
+    if(S.gotoLn){ const ls=ta.value.split('\n'); const pos=ls.slice(0,S.gotoLn-1).reduce((a,l)=>a+l.length+1,0); S.ln=S.gotoLn; S.col=1; S.gotoLn=null; setTimeout(()=>{ ta.focus(); ta.setSelectionRange(pos,pos); ta.scrollTop=Math.max(0,(S.ln-6)*20); paintBlame(); renderStatus(); }); }
+    else setTimeout(paintBlame);
+  } else if(S.rtab==='hist' && S.file){ el.innerHTML=tabs+renderHist(); bindHist(el); }
+  else if(S.rtab==='prob'){ el.innerHTML=tabs+renderProb(); el.querySelectorAll('[data-pb]').forEach(b=>b.onclick=()=>{ const p=problems()[+b.dataset.pb]; S.gotoLn=p.ln; openFile(p.file); }); }
+  else if(S.rtab==='mr'){ el.innerHTML=tabs+renderMRTab(f); bindMRTab(el,f); }
   else if(ws){ el.innerHTML=tabs+'<div class="empty"><h3>Terminal fora de repositório</h3><p>Aqui não há mudanças nem MR para revisar.</p></div>'; }
   else {
     const turns=f.turns||[], tsel=S.turn&&S.turn!=='all'?+S.turn:null;
@@ -853,21 +1028,87 @@ function renderRight(){
     const tool=`<div class="rtool"><select id="turnSel" aria-label="Turno do Claude"><option value="all">Todos os turnos · ${f.changes.length} arquivo${f.changes.length!==1?'s':''}</option>${turns.map(t=>`<option value="${t.n}" ${tsel===t.n?'selected':''}>Turno ${t.n}: ${esc(t.p.slice(0,40))}${t.p.length>40?'…':''}</option>`).join('')}</select>
       ${tsel?`<button class="btn" id="rew">⏪ Voltar para antes do turno ${tsel}</button>`:''}<span class="sp"></span>
       ${f.changes.some(c=>c.path.startsWith('src/'))?'<button class="btn" id="aff" title="ripwire + jest --findRelatedTests">▶ Testes afetados</button>':''}${grp?'<button class="btn" id="cmp">Comparar tentativas</button>':''}${f.changes.length?'<button class="btn" id="accAll">✓ Aceitar tudo</button>':''}</div>`;
-    el.innerHTML=tabs+tool+(shown.length?`<div class="diff" id="diff">${shown.map(c=>diffFile(c,f.id)).join('')}</div>`:`<div class="empty"><h3>${f.changes.length?'Nada neste turno':'Nada para revisar em '+esc(f.branch)}</h3><p>Quando o Claude mudar arquivos nesta worktree, o diff contra <span class="mono">main</span> aparece aqui, separado por turno.</p></div>`)+
+    const envw=f.repos&&f.changes.some(c=>c.hunks.some(h=>h.l.some(l=>l[0]==='+'&&/SLACK_TIMEOUT_MS/.test(l[3]))))&&!f.envOk?`<div class="warnbox"><span><span class="mono">SLACK_TIMEOUT_MS</span> é lida em <span class="mono">src/slack.ts:2</span> mas não está no <span class="mono">k8s-configmap/bots-api</span>. Esta feature já tem a worktree do k8s-configmap.</span><span class="sp"></span><button class="btn" id="envAsk">Pedir ao Claude para adicionar</button></div>`:'';
+    el.innerHTML=tabs+tool+envw+(shown.length?`<div class="diff" id="diff">${shown.map(c=>diffFile(c,f.id)).join('')}</div>`:`<div class="empty"><h3>${f.changes.length?'Nada neste turno':'Nada para revisar em '+esc(f.branch)}</h3><p>Quando o Claude mudar arquivos nesta worktree, o diff contra <span class="mono">main</span> aparece aqui, separado por turno.</p></div>`)+
       `<div class="pubbar">${pend.length||ed?`<span class="cnt">${[pend.length?`${pend.length} comentário${pend.length>1?'s':''}`:'',ed?`${ed} edição${ed>1?'ões':''} sua${ed>1?'s':''}`:''].filter(Boolean).join(' · ')} para o Claude</span>`:'<span class="muted">Edite as linhas aqui mesmo, aceite ou desfaça blocos, ou comente com <kbd>C</kbd>.</span>'}<span class="sp"></span>
       <button class="btn danger" id="dAll" ${pend.length?'':'disabled'}>Descartar</button><button class="btn pri" id="send" ${pend.length||ed?'':'disabled'}>Enviar ao Claude <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div>`;
     bindDiff(el); $('#dAll').onclick=()=>discardAll(f.id); $('#send').onclick=sendToClaude;
     $('#turnSel').onchange=e=>{ S.turn=e.target.value; renderRight(); };
     const b=(id,fn)=>{ const x=el.querySelector('#'+id); if(x) x.onclick=fn; };
     b('rew',()=>rewindTo(f,tsel)); b('aff',()=>runAffected(f)); b('cmp',()=>compareDlg(f));
+    b('envAsk',()=>{ f.envOk=true; f.tab=0; ask(f,'adiciona SLACK_TIMEOUT_MS=10000 no k8s-configmap/bots-api (worktree k8s-configmap desta feature), stg e prd'); f.repos[0].files=2; renderRight(); renderLeft(); });
     b('accAll',()=>{ f.changes.forEach(c=>c.hunks.forEach(h=>h.ok=true)); rerender(); toast('Tudo aceito. Os blocos continuam no diff até você commitar.'); });
   }
   el.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>{ S.rtab=b.dataset.rt; renderRight(); });
   $('#rClose').onclick=toggleRight;
   maybeTour();
 }
-function maybeTour(){ setTimeout(()=>{ if(OV||TOUR) return; const id=S.mode==='feat'?(S.right?{review:'review',mr:'mrtab'}[S.rtab]:'feat'):S.mode==='audit'?'audit':S.mode==='vault'?'vault':S.mode==='mrs'?'mrs':null; if(id) tour(id); },400); }
-function paint(){ const t=F[S.file].text; $('#hl').innerHTML=hl(t)+'\n'; $('#gut').textContent=t.split('\n').map((_,i)=>i+1).join('\n'); }
+const tourId=()=>S.mode==='feat'?(S.right?{review:'review',mr:'mrtab',file:'file'}[S.rtab]:'feat'):{audit:'audit',vault:'vault',mrs:'mrs',mr:'mr',news:'news'}[S.mode]||null;
+function maybeTour(){ setTimeout(()=>{ if(OV||TOUR||BRIEF) return; const id=tourId(); if(id) tour(id); },400); }
+function paint(){ const t=F[S.file].text, dg=DIAG[S.file]||[];
+  $('#hl').innerHTML=t.split('\n').map((ln,i)=>{ const d=dg.filter(x=>x.ln===i+1); if(!d.length||!ln.trim()) return hl(ln); const ind=ln.match(/^\s*/)[0]; return esc(ind)+`<span class="sq ${d.some(x=>x.sev==='err')?'':'w'}">${hl(ln.slice(ind.length))}</span>`; }).join('\n')+'\n';
+  $('#gut').textContent=t.split('\n').map((_,i)=>i+1).join('\n'); }
+
+/* ---------- LSP simulado: diagnóstico, hover, completar, definição, blame ---------- */
+const DIAG={
+  'src/slack.ts':[{ln:5,sev:'err',msg:"Property 'url' does not exist on type 'SlackClient'.",code:'ts(2339)'},{ln:4,sev:'warn',msg:"'channel' is declared but its value is never read.",code:'ts(6133)'},{ln:4,sev:'warn',msg:"'text' is declared but its value is never read.",code:'ts(6133)'}],
+  'src/health.ts':[{ln:6,sev:'err',msg:"Cannot find name 'ping'.",code:'ts(2304)'}]};
+const HOVER={SlackClient:'class SlackClient',timeout:'(property) SlackClient.timeout: number',post:'(method) SlackClient.post(channel: string, text: string): Promise<Response>',
+  fetch:'function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>',AbortSignal:'var AbortSignal: {\n  timeout(milliseconds: number): AbortSignal\n  …\n}',
+  Number:'var Number: NumberConstructor\n(value?: any) => number',process:'var process: NodeJS.Process',env:'(property) NodeJS.Process.env: NodeJS.ProcessEnv',
+  Router:"function Router(options?: RouterOptions): core.Router",health:'const health: Router',ping:'any',express:'function express(): core.Express',app:'const app: core.Express',webhooks:'(alias) const webhooks: Router\nimport webhooks',
+  res:'res: Response<any, Record<string, any>, number>',json:'(method) Response.json(body?: any): Response'};
+const DEFS={health:['src/health.ts',3],SlackClient:['src/slack.ts',1],timeout:['src/slack.ts',2],app:['src/app.ts',4],post:['src/slack.ts',4]};
+const COMPL={this:[['m','post','(channel, text) => Promise<Response>'],['p','timeout','number'],['p','url','(não existe: corrija o erro)']],
+  process:[['p','env','ProcessEnv'],['p','argv','string[]'],['m','exit','(code?) => never'],['m','cwd','() => string']],
+  res:[['m','status','(code) => Response'],['m','json','(body?) => Response'],['m','set','(field, value) => Response'],['m','send','(body?) => Response']],
+  AbortSignal:[['m','timeout','(ms) => AbortSignal'],['m','abort','(reason?) => AbortSignal'],['m','any','(signals) => AbortSignal']],
+  _:[['m','toString','() => string'],['m','valueOf','() => Object'],['m','hasOwnProperty','(v) => boolean']]};
+const BLAME={'src/slack.ts':{2:['Ana Souza','há 3 dias','fix: timeout do slack configurável','51bb0d2',147],5:['Bruno Costa','há 2 semanas','feat: SlackClient com AbortSignal','a2f9c1e',139]},
+  'src/app.ts':{6:['Rafael Maestro','há 1 mês','feat: webhooks do bot','9e41c07',121]}};
+const blameOf=(p,ln)=>(BLAME[p]&&BLAME[p][ln])||(p==='scripts/backfill.py'?['você','não commitado','','',null]:['Ana Souza','há 3 dias','fix: timeout do slack','51bb0d2',147]);
+const HIST={'src/slack.ts':[['51bb0d2','há 3 dias','Ana Souza','fix: timeout do slack configurável','!147'],['a2f9c1e','há 2 semanas','Bruno Costa','feat: SlackClient com AbortSignal','!139'],['3c07d9a','há 2 meses','Rafael Maestro','refactor: extrai SlackClient','!119']]};
+const histOf=p=>HIST[p]||[['9e41c07','há 1 mês','Rafael Maestro','feat: webhooks do bot','!121'],['e11f02b','há 3 meses','Diego Alves','chore: projeto inicial','—']];
+let CW=0; const cw=()=>{ if(CW) return CW; const c=document.createElement('canvas').getContext('2d'); c.font='13px '+getComputedStyle(document.body).getPropertyValue('--mono'); return CW=c.measureText('M'.repeat(50)).width/50; };
+function posAt(ta,e){ const r=ta.getBoundingClientRect(); const ln=Math.floor((e.clientY-r.top+ta.scrollTop-10)/20)+1, col=Math.floor((e.clientX-r.left+ta.scrollLeft-4)/cw()); const line=ta.value.split('\n')[ln-1]; if(line==null) return null;
+  const m=[...line.matchAll(/[A-Za-z_]\w*/g)].find(m=>col>=m.index&&col<m.index+m[0].length); return {ln,col,line,word:m&&m[0],wi:m&&m.index}; }
+function hoverAt(ta,e){ const old=$('#hov'); const p=posAt(ta,e); if(!p||!p.word){ if(old) old.remove(); return; }
+  const key=p.ln+':'+p.wi; if(old&&old.dataset.k===key) return; if(old) old.remove();
+  const dg=(DIAG[S.file]||[]).filter(x=>x.ln===p.ln&&(x.sev==='err'?/url|ping/.test(p.word)||true:true)), ty=HOVER[p.word];
+  if(!ty&&!dg.length) return;
+  const h=document.createElement('div'); h.className='hov'; h.id='hov'; h.dataset.k=key;
+  h.innerHTML=(ty?`<div class="sig">${esc(ty)}</div>`:'')+dg.map(d=>`<p class="${d.sev==='err'?'e':'wn'}">${esc(d.msg)} <span class="mono" style="color:var(--comment)">${d.code}</span></p>`).join('')+(DEFS[p.word]?'<p>Ctrl+clique: ir para a definição</p>':'');
+  h.style.left=Math.max(0,4+p.wi*cw()-ta.scrollLeft)+'px'; h.style.top=(10+p.ln*20-ta.scrollTop+2)+'px'; $('#edOv').appendChild(h); }
+function goDef(ta,e){ const p=posAt(ta,e); if(!p||!p.word) return; const d=DEFS[p.word]; if(!d){ toast(`Sem definição para ${p.word} no protótipo`); return; } if(!F[d[0]]){ toast(`Abriria ${d[0]}`); return; } S.gotoLn=d[1]; openFile(d[0]); toast(`Definição de ${p.word}: ${d[0]}:${d[1]}`); }
+let CMPL=null;
+function openCompl(ta){ const before=ta.value.slice(0,ta.selectionStart-1), w=(before.match(/([A-Za-z_]\w*)$/)||[])[1]; const items=COMPL[w]||COMPL._;
+  const pre=ta.value.slice(0,ta.selectionStart).split('\n'), ln=pre.length, col=pre[pre.length-1].length;
+  CMPL={items,i:0,at:ta.selectionStart}; const u=document.createElement('ul'); u.className='cmpl'; u.id='cmpl';
+  u.style.left=(4+col*cw()-ta.scrollLeft)+'px'; u.style.top=(10+ln*20-ta.scrollTop+2)+'px'; $('#edOv').appendChild(u); paintCompl(ta); }
+function paintCompl(ta){ const u=$('#cmpl'); if(!u) return; u.innerHTML=CMPL.items.map((x,i)=>`<li class="${i===CMPL.i?'on':''}" data-ci="${i}"><span class="kd">${x[0]==='m'?'ƒ':'◆'}</span><span>${x[1]}</span><span class="ty">${esc(x[2])}</span></li>`).join('');
+  u.querySelectorAll('li').forEach(li=>li.onmousedown=e=>{ e.preventDefault(); CMPL.i=+li.dataset.ci; acceptCompl(ta); }); }
+function closeCompl(){ CMPL=null; const u=$('#cmpl'); if(u) u.remove(); }
+function acceptCompl(ta){ const x=CMPL.items[CMPL.i]; closeCompl(); ta.setRangeText(x[1],ta.selectionStart,ta.selectionStart,'end'); F[S.file].text=ta.value; paint(); renderStatus(); }
+function complKey(e,ta){ if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); CMPL.i=(CMPL.i+(e.key==='ArrowDown'?1:CMPL.items.length-1))%CMPL.items.length; paintCompl(ta); return true; }
+  if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); acceptCompl(ta); return true; } if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); closeCompl(); return true; } closeCompl(); return false; }
+function paintBlame(){ const ta=$('#code'), ov=$('#edOv'); if(!ta||!ov) return; ov.querySelectorAll('.blame,.bpop').forEach(x=>x.remove());
+  const line=ta.value.split('\n')[S.ln-1]; if(line==null) return; const b=blameOf(S.file,S.ln);
+  const d=document.createElement('div'); d.className='blame'; d.textContent=b[2]?`${b[0]} · ${b[1]} · ${b[2]}`:`${b[0]} · ${b[1]}`;
+  d.style.left=(4+12+(line.length+4)*cw()-ta.scrollLeft)+'px'; d.style.top=(10+(S.ln-1)*20-ta.scrollTop)+'px'; ov.appendChild(d);
+  d.onmouseenter=()=>{ if(!b[3]) return; const p=document.createElement('div'); p.className='bpop'; p.style.left=d.style.left; p.style.top=(parseFloat(d.style.top)+22)+'px';
+    p.innerHTML=`<div><span class="mono">${b[3]}</span> · ${esc(b[0])} · ${b[1]}</div><div>${esc(b[2])}</div>${b[4]?`<div class="acts"><button class="btn" data-bmr="${b[4]}">Abrir MR !${b[4]}</button><button class="btn" data-bh>Histórico do arquivo</button></div>`:''}`;
+    ov.appendChild(p); p.onmouseleave=()=>p.remove(); const m=p.querySelector('[data-bmr]'); if(m) m.onclick=()=>{ p.remove(); toast(`Abriria bots-api !${b[4]} no modo MRs`); }; const hh=p.querySelector('[data-bh]'); if(hh) hh.onclick=()=>{ S.rtab='hist'; renderRight(); }; };
+  d.onmouseleave=e=>{ const p=ov.querySelector('.bpop'); if(p&&!(e.relatedTarget&&p.contains(e.relatedTarget))) setTimeout(()=>{ if(!p.matches(':hover')) p.remove(); },150); }; }
+function renderHist(){ const hs=histOf(S.file), sel=S.hist&&S.hist.file===S.file?S.hist.sha:null, c=hs.find(x=>x[0]===sel);
+  const L=F[S.file].text.split('\n'), fake=!c?null:S.file==='src/slack.ts'?{path:S.file,hunks:[{h:'@@ -1,4 +1,4 @@',l:[[' ',1,1,L[0]],['-',2,0,'  private timeout = 3000'],['+',0,2,L[1]],[' ',3,3,L[2]],[' ',4,4,L[3]]]}]}
+    :{path:S.file,isNew:true,hunks:[{h:`@@ -0,0 +1,${Math.min(6,L.length)} @@`,l:L.slice(0,6).map((x,i)=>['+',0,i+1,x])}]};
+  return `<div class="rtool"><span class="mono">${S.file}</span><span class="muted">git log --follow · ${hs.length} commits</span></div><div class="hist">${hs.map(x=>`<button class="hc ${x[0]===sel?'on':''}" data-hc="${x[0]}"><span class="sha">${x[0]}</span><span>${esc(x[3])}<br><span class="muted" style="font-size:12px">${esc(x[2])} · ${x[1]}</span></span><span class="mono muted">${x[4]}</span></button>`).join('')}
+    ${fake?`<div class="diff" style="flex:none;overflow:visible">${diffFile(fake,'hist')}</div>`:'<div class="none" style="padding:10px 12px;color:var(--muted)">Clique num commit para ver o diff deste arquivo nele.</div>'}</div>`; }
+function bindHist(el){ el.querySelectorAll('[data-hc]').forEach(b=>b.onclick=()=>{ S.hist={file:S.file,sha:b.dataset.hc}; renderRight(); }); }
+function problems(){ const out=[]; Object.entries(DIAG).forEach(([file,ds])=>ds.forEach(d=>out.push({...d,file,src:'LSP'}))); S.taskProbs.forEach(p=>out.push(p)); return out; }
+function renderProb(){ const ps=problems(); if(!ps.length) return '<div class="empty"><h3>Nenhum problema</h3><p>Diagnósticos do servidor de linguagem e erros das tarefas aparecem aqui.</p></div>';
+  const g=src=>{ const xs=ps.map((p,i)=>({...p,i})).filter(p=>p.src===src); return xs.length?`<div class="grp">${src==='LSP'?'Servidor de linguagem':'Tarefa: '+esc(src)}</div>`+xs.map(p=>`<button data-pb="${p.i}"><span style="color:${p.sev==='err'?'var(--bad)':'var(--yellow)'}">${p.sev==='err'?'✗':'⚠'}</span><span>${esc(p.msg)}</span><span class="loc">${p.file}:${p.ln}</span></button>`).join(''):''; };
+  return `<div class="prob">${g('LSP')}${[...new Set(S.taskProbs.map(p=>p.src))].map(g).join('')}</div>`; }
 function save(){ if(!(S.right&&S.rtab==='file'&&S.file)) return; if(F[S.file].text===F[S.file].saved){ toast('Nada a salvar'); return; } F[S.file].saved=F[S.file].text; renderRight(); renderLeft(); renderStatus(); toast(`Salvo: ${S.file}`); }
 function sendToClaude(){
   const f=feat(); const pend=S.drafts.filter(d=>d.ctx===f.id&&d.state==='draft'); if(!pend.length&&!f.myEdits) return;
@@ -883,39 +1124,70 @@ function sendToClaude(){
 
 /* ---------- diff compartilhado ---------- */
 function lineRow(f,l,ctx,hi,li,acc){
-  const [t,o,n,code]=l, cls=t==='+'?'add':t==='-'?'del':'', edit=ctx&&ctx!=='mr'&&t!=='-';
-  const sel = S.sel && S.sel.file===f.path && S.sel.n===n && n ? 'sel':'';
-  return `<div class="dl ${cls} ${sel} ${acc?'acc':''}" data-file="${f.path}" data-n="${n}" id="L-${f.path}-${n||'o'+o}"><span class="o">${o||''}</span><span class="nn">${n||''}</span><span class="sg">${t===' '?'':t}</span><span class="cd" ${edit?`contenteditable="plaintext-only" spellcheck="false" data-path="${f.path}" data-hi="${hi}" data-li="${li}"`:''}>${hl(code)}</span>${n?'<span class="cm" title="Comentar (C)">+</span>':''}</div>`;
+  const [t,o,n,code]=l, cls=t==='+'?'add':t==='-'?'del':'', edit=ctx&&ctx!=='mr'&&ctx!=='hist'&&t!=='-';
+  const sel = S.sel && S.sel.file===f.path && ((n&&S.sel.n===n)||(!n&&S.sel.o===o)) ? 'sel':'';
+  return `<div class="dl ${cls} ${sel} ${acc?'acc':''}" data-file="${f.path}" data-n="${n}" ${t==='-'?`data-o="${o}"`:''} id="L-${f.path}-${n||'o'+o}"><span class="o">${o||''}</span><span class="nn">${n||''}</span><span class="sg">${t===' '?'':t}</span><span class="cd" ${edit?`contenteditable="plaintext-only" spellcheck="false" data-path="${f.path}" data-hi="${hi}" data-li="${li}"`:''}>${hl(code)}</span>${(n||t==='-')&&ctx!=='hist'?'<span class="cm" title="Comentar (C)">+</span>':''}</div>`;
+}
+/* lado a lado: cada sequência de − emparelha com a de + logo depois; contexto nos dois lados */
+function sbsPairs(ls){ const out=[]; let i=0; while(i<ls.length){ if(ls[i][0]===' '){ out.push([ls[i],ls[i]]); i++; continue; }
+  const d=[],a=[]; while(i<ls.length&&ls[i][0]==='-') d.push(ls[i++]); while(i<ls.length&&ls[i][0]==='+') a.push(ls[i++]);
+  for(let k=0;k<Math.max(d.length,a.length);k++) out.push([d[k]||null,a[k]||null]); } return out; }
+function halfRow(f,l,side){
+  if(!l) return '<div class="dl half emp" aria-hidden="true"></div>';
+  const [t,o,n,code]=l, left=side==='L', del=left&&t==='-', add=!left&&t==='+';
+  if(left&&t==='+'||!left&&t==='-') return '<div class="dl half emp" aria-hidden="true"></div>';
+  const num=left?o:n, sel=S.sel&&S.sel.file===f.path&&(left?(del&&S.sel.o===o):(S.sel.n===n))?'sel':'';
+  return `<div class="dl half ${del?'del':add?'add':''} ${sel}" data-file="${f.path}" data-n="${left&&!del?n:left?'':n}" ${del?`data-o="${o}"`:''} ${left?'':`id="L-${f.path}-${n}"`}><span class="o">${num||''}</span><span class="sg">${del?'−':add?'+':''}</span><span class="cd">${hl(code)}</span>${del||!left?'<span class="cm" title="Comentar (C)">+</span>':''}</div>`;
+}
+function lineExtras(f,l,ctx,side){
+  let h=''; const [t,o,n]=l, mr=ctx==='mr';
+  if(n&&t!=='-'&&side!=='L'){ if(mr) THREADS.filter(x=>x.file===f.path&&x.line===n).forEach(x=>h+=threadHtml(x,side?'r':''));
+    S.drafts.filter(d=>d.ctx===ctx&&d.file===f.path&&d.line===n&&!d.reply).forEach(d=>h+=draftHtml(d,side?'r':'')); }
+  if(t==='-'&&side!=='R'){ if(mr) THREADS.filter(x=>x.file===f.path&&x.old===o).forEach(x=>h+=threadHtml(x,side?'l':''));
+    S.drafts.filter(d=>d.ctx===ctx&&d.file===f.path&&d.old===o&&!d.reply).forEach(d=>h+=draftHtml(d,side?'l':'')); }
+  return h;
 }
 function diffFile(f,ctx){
-  const {a,r}=counts(f);
-  let h=`<div id="F-${f.path}"><div class="fh"><span class="p">${f.path}</span>${f.isNew?'<span class="pill new">novo</span>':''}<span class="plus">+${a}</span><span class="minus">−${r}</span>${f.userEdited?'<span class="badge">editado por você</span>':''}${ctx!=='mr'&&f.turn?`<span class="muted" style="font-size:11px">turno ${f.turn}</span>`:''}<span class="sp"></span>${ctx!=='mr'&&F[f.path]?`<button class="btn" data-open="${f.path}">Abrir no editor</button>`:''}</div>`;
+  const {a,r}=counts(f), mr=ctx==='mr', ro=mr||ctx==='hist', col=mr&&S.collapsed.has(f.path), split=mr&&S.layout==='split';
+  let h=`<div id="F-${f.path}"><div class="fh ${mr?'col':''}" ${mr?`data-col="${f.path}" title="Clique para ${col?'expandir':'colapsar'}"`:''}>${mr?`<span class="tw" aria-hidden="true">${col?'▸':'▾'}</span>`:''}<span class="p">${f.path}</span>${f.isNew?'<span class="pill new">novo</span>':''}${f.gen?'<span class="pill gen" title="lockfile ou arquivo gerado">gerado</span>':''}<span class="plus">+${a}</span><span class="minus">−${r}</span>${f.userEdited?'<span class="badge">editado por você</span>':''}${!ro&&f.turn?`<span class="muted" style="font-size:11px">turno ${f.turn}</span>`:''}<span class="sp"></span>${col?`<span class="muted" style="font-size:12px">${THREADS.filter(t=>t.file===f.path).length?THREADS.filter(t=>t.file===f.path).length+' thread(s) · ':''}colapsado</span>`:''}${!ro&&F[f.path]?`<button class="btn" data-open="${f.path}">Abrir no editor</button>`:''}</div>`;
+  if(col) return h+'</div>';
   f.hunks.forEach((hk,hi)=>{
-    h+=`<div class="hh ${hk.ok?'okh':''}" data-hunk><span>${esc(hk.h)}</span>${ctx!=='mr'?`<span class="hunkacts">${hk.ok?'<span>✓ aceito</span>':`<button data-hacc="${f.path}|${hi}">✓ Aceitar</button><button data-hrej="${f.path}|${hi}">↶ Desfazer</button>`}</span>`:''}</div>`;
-    hk.l.forEach((l,li)=>{ h+=lineRow(f,l,ctx,hi,li,hk.ok);
-      if(l[2]){ if(ctx==='mr') THREADS.filter(t=>t.file===f.path&&t.line===l[2]).forEach(t=>h+=threadHtml(t));
-        S.drafts.filter(d=>d.ctx===ctx&&d.file===f.path&&d.line===l[2]).forEach(d=>h+=draftHtml(d)); } });
+    const ask=ctx!=='hist'?`<button class="ask" data-ask="${f.path}|${hi}" title="Perguntar ao Claude sobre este bloco (?)">?</button>`:'';
+    h+=`<div class="hh ${hk.ok?'okh':''}" data-hunk><span>${esc(hk.h)}</span><span class="hunkacts">${ask}${ro?'':hk.ok?'<span>✓ aceito</span>':`<button data-hacc="${f.path}|${hi}">✓ Aceitar</button><button data-hrej="${f.path}|${hi}">↶ Desfazer</button>`}</span></div>`;
+    if(split) sbsPairs(hk.l).forEach(([L,R])=>{ h+=`<div class="sbs">${halfRow(f,L,'L')}${halfRow(f,R,'R')}</div>`; if(L&&L[0]==='-') h+=lineExtras(f,L,ctx,'L'); if(R) h+=lineExtras(f,R,ctx,'R'); });
+    else hk.l.forEach((l,li)=>{ h+=lineRow(f,l,ctx,hi,li,hk.ok); h+=lineExtras(f,l,ctx,''); });
   });
-  S.drafts.filter(d=>d.ctx===ctx&&d.file===f.path&&d.line==null).forEach(d=>h+=draftHtml(d));
+  S.drafts.filter(d=>d.ctx===ctx&&d.file===f.path&&d.line==null&&d.old==null&&!d.reply).forEach(d=>h+=draftHtml(d));
   return h+'</div>';
 }
-function threadHtml(t){
-  return `<div class="thr ${t.resolved?'resolved':''}"><div class="th"><b>${t.notes[0].who}</b><span>${t.notes[0].ago}</span><span class="sp"></span><button class="btn" data-res="${t.id}">${t.resolved?'Reabrir':'✓ Resolver'}</button></div>
-    <div class="bd"><p>${md(t.notes[0].body)}</p>${t.notes.slice(1).map(n=>`<div class="rp"><b>${n.who}</b> <span class="muted">${n.ago||''}</span><p>${md(n.body)}</p></div>`).join('')}</div></div>`;
+function threadHtml(t,side){
+  const reps=S.drafts.filter(d=>d.reply===t.id), rep=S.replying===t.id;
+  return `<div class="thr ${side||''} ${t.resolved?'resolved':''}" id="T-${t.id}"><div class="th"><b>${t.notes[0].who}</b><span>${t.notes[0].ago}</span>${t.old?`<span class="mono">linha removida ${t.old}</span>`:''}<span class="sp"></span>${rep?'':`<button class="btn" data-rep="${t.id}">Responder</button>`}<button class="btn" data-res="${t.id}">${t.resolved?'Reabrir':'✓ Resolver'}</button></div>
+    <div class="bd"><p>${md(t.notes[0].body)}</p>${t.notes.slice(1).map(n=>`<div class="rp"><b>${n.who}</b> <span class="muted">${n.ago||''}</span>${n.fresh?' <span class="pill new">nova</span>':''}<p>${md(n.body)}</p></div>`).join('')}
+    ${reps.map(d=>d.state==='posted'?`<div class="rp"><b>você</b> <span class="muted">agora</span><p>${md(d.body)}</p></div>`
+      :`<div class="rp draftrp" id="D-${d.id}"><span class="lbl">RASCUNHO · resposta</span> <span class="muted" style="font-size:12px">sai junto com a review</span>${S.editing===d.id?`<textarea id="dt-${d.id}" aria-label="Texto da resposta">${esc(d.body)}</textarea><div class="acts"><button class="btn pri" data-sv="${d.id}">Salvar</button><button class="btn" data-cn="${d.id}">Cancelar</button></div>`:`<p>${md(d.body)}</p><div class="acts"><button class="btn" data-ed="${d.id}">Editar</button><button class="btn danger" data-del="${d.id}">Descartar</button></div>`}${d.state==='error'?`<p class="em" style="color:var(--bad)">${esc(d.err)}</p>`:''}</div>`).join('')}
+    ${rep?`<div class="rbox"><textarea id="rp-${t.id}" aria-label="Resposta" placeholder="Responder a ${esc(t.notes[t.notes.length-1].who)}… (vira rascunho e sai junto com a review)"></textarea><div class="acts"><button class="btn pri" data-radd="${t.id}">Adicionar à review</button><button class="btn" data-rcn="${t.id}">Cancelar</button><span class="muted" style="font-size:12px">Ctrl+⏎ adiciona · Esc cancela</span></div></div>`:''}</div></div>`;
 }
-function draftHtml(d){
-  if(d.state==='posted') return `<div class="thr"><div class="th"><b>você</b><span>agora</span>${d.sev?`<span class="sev ${d.sev}">${d.sev}</span>`:''}<span class="sp"></span><span class="muted">publicado no GitLab</span></div><div class="bd"><p>${d.label?`<b>${d.label}:</b> `:''}${md(d.body)}</p></div></div>`;
-  if(d.state==='sent') return `<div class="thr sent"><div class="th"><span>enviado ao Claude</span><span class="sp"></span></div><div class="bd"><p>${md(d.body)}</p></div></div>`;
+function draftHtml(d,side){
+  if(d.state==='posted') return `<div class="thr ${side||''}"><div class="th"><b>você</b><span>agora</span>${d.sev?`<span class="sev ${d.sev}">${d.sev}</span>`:''}<span class="sp"></span><span class="muted">publicado no GitLab</span></div><div class="bd"><p>${d.label?`<b>${d.label}:</b> `:''}${md(d.body)}</p></div></div>`;
+  if(d.state==='sent') return `<div class="thr sent ${side||''}"><div class="th"><span>enviado ao Claude</span><span class="sp"></span></div><div class="bd"><p>${md(d.body)}</p></div></div>`;
   const ed=S.editing===d.id, toMR=d.ctx==='mr';
-  return `<div class="thr draft ${d.state==='error'?'err':''} ${d.state==='posting'?'posting':''}" id="D-${d.id}"><div class="th"><span class="lbl">${toMR?'RASCUNHO':'PARA O CLAUDE'}</span><span>· ${d.by}</span>${d.sev?`<span class="sev ${d.sev}">${d.sev}</span>`:''}${d.line==null?'<span class="muted">nota geral</span>':''}<span class="sp"></span>
+  return `<div class="thr draft ${side||''} ${d.state==='error'?'err':''} ${d.state==='posting'?'posting':''}" id="D-${d.id}"><div class="th"><span class="lbl">${toMR?'RASCUNHO':'PARA O CLAUDE'}</span><span>· ${d.by}</span>${d.sev?`<span class="sev ${d.sev}">${d.sev}</span>`:''}${d.line==null&&d.old==null?'<span class="muted">nota geral</span>':''}${d.old!=null?`<span class="muted">linha removida ${d.old}</span>`:''}<span class="sp"></span>
     ${d.state==='posting'?'<span>publicando…</span>':ed?'':`<button class="btn" data-ed="${d.id}">Editar</button><button class="btn danger" data-del="${d.id}">Descartar</button>`}</div>
     <div class="bd">${ed?`<textarea id="dt-${d.id}" aria-label="Texto do comentário" placeholder="${toMR?'Comentário para o autor do MR':'O que o Claude deve mudar aqui?'}">${esc(d.body)}</textarea><div class="acts"><button class="btn pri" data-sv="${d.id}">Salvar</button><button class="btn" data-cn="${d.id}">Cancelar</button><span class="muted" style="font-size:12px">Ctrl+⏎ salva · Esc cancela</span></div>`:`<p>${d.label?`<b>${d.label}:</b> `:''}${md(d.body)}</p>`}
     ${d.state==='error'?`<p class="em">${esc(d.err)}</p><div class="acts"><button class="btn" data-retry="${d.id}">Tentar de novo</button><button class="btn" data-gen="${d.id}">Publicar como nota geral</button></div>`:''}</div></div>`;
 }
+function addReply(tid){ const ta=$('#rp-'+tid); if(!ta||!ta.value.trim()){ toast('Escreva a resposta antes'); return; } const t=THREADS.find(x=>x.id===tid);
+  S.drafts.push({id:++did,ctx:'mr',reply:tid,file:t.file,line:t.line??null,old:t.old??null,by:'você',body:ta.value.trim(),state:'draft'}); S.replying=null; rerender(); toast('Resposta adicionada à review. Sai quando você publicar.'); }
 function bindDiff(el){
   const ctx = S.mode==='mr' ? 'mr' : S.fid;
-  el.querySelectorAll('.dl').forEach(r=>r.onclick=e=>{ const n=+r.dataset.n; if(!n) return; S.sel={file:r.dataset.file,n,ctx}; if(e.target.classList.contains('cm')) newDraft(); else { el.querySelectorAll('.dl.sel').forEach(x=>x.classList.remove('sel')); r.classList.add('sel'); } });
+  el.querySelectorAll('.dl').forEach(r=>r.onclick=e=>{ const n=+r.dataset.n||null, o=+r.dataset.o||null; if(!n&&!o) return; S.sel={file:r.dataset.file,n,o:n?null:o,ctx}; if(e.target.classList.contains('cm')) newDraft(); else { el.querySelectorAll('.dl.sel').forEach(x=>x.classList.remove('sel')); r.classList.add('sel'); } });
   el.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openFile(b.dataset.open));
+  el.querySelectorAll('[data-col]').forEach(h=>h.onclick=e=>{ if(e.target.closest('button')) return; const p=h.dataset.col; S.collapsed.has(p)?S.collapsed.delete(p):S.collapsed.add(p); rerender(); });
+  el.querySelectorAll('[data-ask]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); const [p,hi]=b.dataset.ask.split('|'); openAsk(ctx,p,+hi); });
+  el.querySelectorAll('[data-rep]').forEach(b=>b.onclick=()=>{ S.replying=b.dataset.rep; rerender(); const ta=$('#rp-'+b.dataset.rep); if(ta) ta.focus(); });
+  el.querySelectorAll('[data-radd]').forEach(b=>b.onclick=()=>addReply(b.dataset.radd));
+  el.querySelectorAll('[data-rcn]').forEach(b=>b.onclick=()=>{ S.replying=null; rerender(); });
   el.querySelectorAll('.cd[contenteditable]').forEach(c=>{
     c.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); c.blur(); } if(e.key==='Escape'){ e.stopPropagation(); c.dataset.cancel='1'; c.blur(); } };
     c.onblur=()=>{ const f=feat(), ch=f.changes.find(x=>x.path===c.dataset.path); if(!ch) return; if(c.dataset.cancel){ rerender(); return; }
@@ -936,8 +1208,8 @@ function bindDiff(el){
 }
 function rerender(){ const dv=$('#diff'); const st=dv?dv.scrollTop:0; if(S.mode==='mr') renderCenter(); else renderRight(); renderLeft(); renderStatus(); const n=$('#diff'); if(n) n.scrollTop=st; }
 function newDraft(){
-  if(!S.sel||!S.sel.n){ toast('Clique numa linha do diff primeiro'); return; }
-  const d={id:++did,ctx:S.sel.ctx,file:S.sel.file,line:S.sel.n,by:'você',body:'',state:'draft',isNew:true}; S.drafts.push(d); S.editing=d.id;
+  if(!S.sel||(!S.sel.n&&!S.sel.o)){ toast('Clique numa linha do diff primeiro'); return; }
+  const d={id:++did,ctx:S.sel.ctx,file:S.sel.file,line:S.sel.n||null,old:S.sel.n?null:S.sel.o,by:'você',body:'',state:'draft',isNew:true}; S.drafts.push(d); S.editing=d.id;
   rerender(); const ta=$('#dt-'+d.id); if(ta){ ta.focus(); ta.scrollIntoView({block:'center'}); }
 }
 function saveDraft(id){ const d=S.drafts.find(d=>d.id===id), ta=$('#dt-'+id); if(!ta.value.trim()){ toast('Escreva algo antes de salvar'); return; } d.body=ta.value.trim(); d.isNew=false; S.editing=null; rerender(); }
@@ -948,38 +1220,90 @@ function discardAll(ctx){ const pend=S.drafts.filter(d=>d.ctx===ctx&&(d.state===
 function undo(){ const g=S.undo.pop(); if(!g){ toast('Nada para desfazer'); return; } g.sort((a,b)=>a[1]-b[1]).forEach(([d,i])=>S.drafts.splice(i,0,d)); rerender(); toast('Desfeito'); }
 
 /* ---------- MRs ---------- */
-const GROUPS={rev:'Para revisar',mine:'Meus',grp:'ctbz/experts'};
+const GROUPS={rev:'Para revisar',done:'Revisados',mine:'Meus',grp:'ctbz/experts'};
 const ciTxt=c=>({success:'✓ CI',running:'⟳ CI',failed:'✗ CI',none:'– sem CI'}[c]);
-function inboxRows(){ const q=S.q.toLowerCase(); return MRS.filter(m=>m.g===S.ibox&&(!q||(m.proj+' '+m.title+' '+m.who+' !'+m.iid).toLowerCase().includes(q))); }
-function stPill(m){ if(S.reviewed[m.proj+m.iid]) return '<span class="pill">revisado</span>';
+const isReviewed=m=>!!(S.reviewed[m.proj+m.iid]||m.st==='done'||m.approved);
+const inGroup=(m,g)=>g==='rev'?m.g==='rev'&&!isReviewed(m):g==='done'?m.g==='rev'&&isReviewed(m):m.g===g;
+function inboxRows(){ const q=S.q.toLowerCase(); return MRS.filter(m=>inGroup(m,S.ibox)&&(!q||(m.proj+' '+m.title+' '+m.who+' !'+m.iid).toLowerCase().includes(q))); }
+function stPill(m){ if(m.merged) return '<span class="pill ok">mergeado</span>';
+  if(m.reply) return `<span class="pill inc" title="${m.reply} respondeu a uma thread sua">nova resposta</span>`;
+  if(m.approved) return '<span class="pill ok">aprovado</span>';
+  if(S.reviewed[m.proj+m.iid]) return '<span class="pill">revisado</span>';
   return {new:'<span class="pill new">novo</span>',inc:`<span class="pill inc">+${m.inc} commits</span>`,done:'<span class="pill">revisado</span>',threads:`<span class="pill">${m.threads} threads abertas</span>`,none:'<span class="pill">não revisado</span>'}[m.st]; }
+function dotOf(m){ if(m.reply) return `<span class="unread rep" title="nova resposta de ${m.reply}"></span>`; return m.unread&&!isReviewed(m)?'<span class="unread" title="MR novo"></span>':''; }
 function renderInbox(el){
   const rows=inboxRows(); S.isel=Math.min(S.isel,Math.max(rows.length-1,0));
-  el.innerHTML=`<div class="ibar"><div class="seg">${Object.entries(GROUPS).map(([k,v])=>`<button aria-pressed="${S.ibox===k}" data-g="${k}">${v}<span class="count">${MRS.filter(m=>m.g===k).length}</span></button>`).join('')}</div><span class="sp"></span><input id="iq" placeholder="filtrar  ( / )" value="${esc(S.q)}" aria-label="Filtrar MRs"></div>`+
-    (rows.length?'<div class="list">'+rows.map((m,i)=>`<div class="row ${i===S.isel?'on':''}" data-i="${i}"><span class="uw">${m.unread&&!S.reviewed[m.proj+m.iid]?'<span class="unread"></span>':''}</span><span class="proj">${m.proj} <span class="muted">!${m.iid}</span></span><span class="t">${esc(m.title)}</span><span class="who">${m.who}</span><span class="ci ${m.ci}">${ciTxt(m.ci)}</span>${stPill(m)}</div>`).join('')+'</div>'
-     :`<div class="empty"><h3>Nenhum MR bate com “${esc(S.q)}”</h3><p><kbd>Esc</kbd> limpa o filtro.</p></div>`);
+  el.innerHTML=`<div class="ibar"><div class="seg">${Object.entries(GROUPS).map(([k,v])=>`<button aria-pressed="${S.ibox===k}" data-g="${k}">${v}<span class="count">${MRS.filter(m=>inGroup(m,k)).length}</span></button>`).join('')}</div><span class="sp"></span><input id="iq" placeholder="filtrar  ( / )" value="${esc(S.q)}" aria-label="Filtrar MRs"></div>`+
+    (rows.length?'<div class="list">'+rows.map((m,i)=>`<div class="row ${i===S.isel?'on':''}" data-i="${i}"><span class="uw">${dotOf(m)}</span><span class="proj">${m.proj} <span class="muted">!${m.iid}</span></span><span class="t">${esc(m.title)}</span><span class="who">${m.who}</span><span class="ci ${m.ci}">${ciTxt(m.ci)}</span>${stPill(m)}</div>`).join('')+'</div>'
+     :S.q?`<div class="empty"><h3>Nenhum MR bate com “${esc(S.q)}”</h3><p><kbd>Esc</kbd> limpa o filtro.</p></div>`:`<div class="empty"><h3>Nada aqui</h3><p>${S.ibox==='done'?'MRs que você já revisou ou aprovou aparecem aqui.':'Nenhum MR nesta aba.'}</p></div>`);
   el.querySelectorAll('[data-g]').forEach(b=>b.onclick=()=>{ S.ibox=b.dataset.g; S.isel=0; renderInbox(el); });
   el.querySelectorAll('.row').forEach(r=>{ r.onclick=()=>{ S.isel=+r.dataset.i; renderInbox(el); }; r.ondblclick=()=>openMR(rows[+r.dataset.i]); });
   $('#iq').oninput=e=>{ S.q=e.target.value; S.isel=0; const p=e.target.selectionStart; renderInbox(el); const i=$('#iq'); i.focus(); i.setSelectionRange(p,p); };
 }
-function openMR(m){ if(!m) return; S.mr=m; S.mode='mr'; S.sel=null; render(); }
+function openMR(m){ if(!m) return; if(m.iid===124) m.reply=null; S.mr=m; S.mode='mr'; S.sel=null; render(); }
 function renderMRFiles(el){
   if(!S.mr||S.mr.iid!==124){ el.innerHTML=''; return; }
-  el.innerHTML='<div class="phead">Arquivos do MR</div><div class="flist">'+D_MR.map(f=>{ const {a,r}=counts(f); const n=S.drafts.filter(d=>d.ctx==='mr'&&d.file===f.path&&d.state!=='posted').length; const [dir,nm]=split(f.path);
-    return `<button data-j="${f.path}"><span class="nm"><span class="dir">${dir}</span>${nm}</span><span class="st ${n?'d':''}">${n?n+' rasc.':`+${a} −${r}`}</span></button>`; }).join('')+'</div>';
-  el.querySelectorAll('[data-j]').forEach(b=>b.onclick=()=>{ const t=document.getElementById('F-'+b.dataset.j); if(t) t.scrollIntoView({block:'start'}); });
+  const row=f=>{ const {a,r}=counts(f); const n=S.drafts.filter(d=>d.ctx==='mr'&&d.file===f.path&&d.state!=='posted').length; const [dir,nm]=split(f.path);
+    return `<button data-j="${f.path}"><span class="nm"><span class="tw" data-tw="${f.path}" role="button" title="${S.collapsed.has(f.path)?'Expandir':'Colapsar'}">${S.collapsed.has(f.path)?'▸':'▾'}</span><span class="dir">${dir}</span>${nm}</span><span class="st ${n?'d':''}">${n?n+' rasc.':`+${a} −${r}`}</span></button>`; };
+  const vis=D_MR.filter(f=>!f.gen), gen=D_MR.filter(f=>f.gen);
+  el.innerHTML=`<div class="phead">Arquivos do MR<span class="sp"></span><span class="mono" style="text-transform:none;letter-spacing:0">${D_MR.length}</span></div><div class="flist">`+vis.map(row).join('')
+    +(gen.length?`<button class="gsec" data-gsec aria-expanded="${S.genOpen}"><span>${S.genOpen?'▾':'▸'} Gerados (${gen.length})</span><span>${S.hideGen?'ocultos no diff':''}</span></button>${S.genOpen?gen.map(row).join(''):''}`:'')+'</div>';
+  el.querySelectorAll('[data-j]').forEach(b=>b.onclick=e=>{ const p=b.dataset.j;
+    if(e.target.dataset.tw){ S.collapsed.has(p)?S.collapsed.delete(p):S.collapsed.add(p); rerender(); return; }
+    if(D_MR.find(f=>f.path===p).gen&&S.hideGen){ S.hideGen=false; rerender(); }
+    const t=document.getElementById('F-'+p); if(t) t.scrollIntoView({block:'start'}); });
+  const g=el.querySelector('[data-gsec]'); if(g) g.onclick=()=>{ S.genOpen=!S.genOpen; renderMRFiles(el); };
+}
+function mergeState(m){
+  if(m.merged) return {ok:false,why:'já mergeado'};
+  if(m.ci==='failed') return {ok:false,why:'pipeline falhou: o GitLab bloqueia o merge'};
+  if(m.approvals&&!m.approved) return {ok:false,why:`precisa de ${m.approvals} aprovação (a sua conta)`};
+  return {ok:true,why:m.ci==='running'?'pipeline rodando: só dá para agendar o merge':''};
 }
 function renderMR(el){
-  const m=S.mr, has=m.iid===124;
+  const m=S.mr, has=m.iid===124, ms=mergeState(m);
   const pend=S.drafts.filter(d=>d.ctx==='mr'&&(d.state==='draft'||d.state==='error'));
-  el.innerHTML=`<div class="mrh"><div class="l1"><h2>${esc(m.title)}</h2><span class="mono muted">${m.proj} !${m.iid}</span><span class="muted">${m.who}</span><span class="ci ${m.ci}">${ciTxt(m.ci)}</span></div>
-    <div class="l2"><button class="btn" id="back">← Inbox</button><span class="sp"></span><button class="btn pri" id="revB">Revisar com Claude <kbd style="background:transparent;color:inherit;border-color:currentColor">⇧R</kbd></button></div></div>`+
-    (has?`<div class="diff" id="diff">${D_MR.map(f=>diffFile(f,'mr')).join('')}</div>`:`<div class="empty"><h3>Sem diff de exemplo para este MR</h3><p>No protótipo só <span class="mono">bots-api !124</span> tem diff.</p><div><button class="btn pri" id="go124">Abrir bots-api !124</button></div></div>`)+
+  const files=D_MR.filter(f=>!(S.hideGen&&f.gen)), gen=D_MR.filter(f=>f.gen).length, gThreads=THREADS.filter(t=>!t.file);
+  el.innerHTML=`<div class="mrh"><div class="l1"><h2>${esc(m.title)}</h2><span class="mono muted">${m.proj} !${m.iid}</span><span class="muted">${m.who}</span><span class="ci ${m.ci}">${ciTxt(m.ci)}</span>${m.merged?'<span class="pill ok">mergeado</span>':m.autoMerge?'<span class="pill inc">merge quando o pipeline passar</span>':''}${m.approved?'<span class="pill ok">aprovado por você</span>':''}</div>
+    <div class="l2"><button class="btn" id="back">← Inbox</button><span class="sp"></span>${!ms.ok&&ms.why&&!m.merged?`<span class="why" title="${esc(ms.why)}">⚠ ${esc(ms.why)}</span>`:''}
+      ${m.merged?'':`<button class="btn" id="apB">${m.approved?'Remover aprovação':'✓ Aprovar'}</button><button class="btn" id="mgB" ${ms.ok?'':'disabled'} title="${esc(ms.why||'Merge em '+(m.tgt||'main'))}">${m.autoMerge?'Cancelar merge agendado':'Merge…'}</button>`}
+      <button class="btn pri" id="revB">Revisar com Claude <kbd style="background:transparent;color:inherit;border-color:currentColor">⇧R</kbd></button></div></div>`+
+    (has?`<div class="rtool"><div class="seg" role="group" aria-label="Layout do diff"><button aria-pressed="${S.layout==='split'}" data-lay="split">Lado a lado</button><button aria-pressed="${S.layout==='unified'}" data-lay="unified">Unificado</button></div>
+      <label title="lockfiles, snapshots, dist/, *.generated.* e o que o GitLab marca como gerado"><input type="checkbox" id="genT" ${S.hideGen?'checked':''}> Ocultar gerados (${gen})</label><span class="sp"></span>
+      <button class="btn" id="expA">Expandir todos</button><button class="btn" id="colA">Colapsar todos</button></div>
+      <div class="diff" id="diff">${gThreads.length?`<div class="disc"><div class="fh"><span>Discussões</span><span class="muted">${gThreads.length} geral${gThreads.length>1?'is':''}, fora do código</span></div>${gThreads.map(t=>threadHtml(t)).join('')}</div>`:''}${files.map(f=>diffFile(f,'mr')).join('')}${S.hideGen&&gen?`<div class="none" style="padding:10px 12px;color:var(--muted);font-family:var(--sans)">${gen} arquivo gerado oculto (package-lock.json). <button class="btn" id="genShow">Mostrar</button></div>`:''}</div>`
+      :`<div class="empty"><h3>Sem diff de exemplo para este MR</h3><p>No protótipo só <span class="mono">bots-api !124</span> tem diff.</p><div><button class="btn pri" id="go124">Abrir bots-api !124</button></div></div>`)+
     `<div class="pubbar">${pend.length?`<span class="cnt">${pend.length} rascunho${pend.length>1?'s':''} não publicado${pend.length>1?'s':''}</span><span class="muted">só você vê</span>`:'<span class="muted"><kbd>C</kbd> numa linha comenta; <kbd>⇧R</kbd> pede revisão ao Claude.</span>'}<span class="sp"></span>
     <button class="btn danger" id="dAll" ${pend.length?'':'disabled'}>Descartar todos</button><button class="btn pri" id="pub" ${pend.filter(d=>d.state==='draft').length?'':'disabled'}>Publicar review <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div>`;
   $('#back').onclick=()=>setMode('mrs'); $('#revB').onclick=()=>startReview(m);
   if($('#go124')) $('#go124').onclick=()=>openMR(MRS[0]);
+  const b=(id,fn)=>{ const x=el.querySelector('#'+id); if(x) x.onclick=fn; };
+  b('apB',()=>{ m.approved=!m.approved; renderFrame(); renderMR(el); toast(m.approved?`Você aprovou ${m.proj} !${m.iid}`:`Aprovação removida de ${m.proj} !${m.iid}`); });
+  b('mgB',()=>{ if(m.autoMerge){ m.autoMerge=false; renderMR(el); toast('Merge agendado cancelado'); return; } mergeDlg(m); });
+  el.querySelectorAll('[data-lay]').forEach(x=>x.onclick=()=>{ S.layout=x.dataset.lay; rerender(); });
+  const gt=el.querySelector('#genT'); if(gt) gt.onchange=()=>{ S.hideGen=gt.checked; rerender(); };
+  b('genShow',()=>{ S.hideGen=false; rerender(); });
+  b('expA',()=>{ S.collapsed.clear(); rerender(); }); b('colA',()=>{ D_MR.forEach(f=>S.collapsed.add(f.path)); rerender(); });
   bindDiff(el); $('#dAll').onclick=()=>discardAll('mr'); $('#pub').onclick=askPublish;
+}
+function mergeDlg(m){
+  const run=m.ci==='running';
+  OV={type:'dlg',ok:()=>doMerge(m)};
+  $('#overlay').innerHTML=`<div class="scrim"><div class="dlg" role="alertdialog" aria-label="Merge"><h3>Merge de ${m.proj} !${m.iid}?</h3>
+    <p><span class="mono">${esc(m.src||'feat/retry-webhook')}</span> → <span class="mono">${esc(m.tgt||'main')}</span> · ${ciTxt(m.ci)}${m.approved?' · aprovado por você':''}</p>
+    <fieldset><legend>Opções (vêm do MR)</legend>
+      <label><input type="checkbox" id="mgSq" ${m.squash?'checked':''}> Squash dos commits</label>
+      <label><input type="checkbox" id="mgRm" ${m.rmSrc?'checked':''}> Apagar a branch de origem</label>
+      <label class="${run?'':'off'}"><input type="checkbox" id="mgAu" ${run?'checked disabled':'disabled'}> Merge quando o pipeline passar ${run?'<span class="muted">(pipeline rodando)</span>':'<span class="muted">(pipeline já passou)</span>'}</label></fieldset>
+    <p>Escreve no GitLab e notifica o autor.</p>
+    <div class="acts"><button class="btn" id="dNo">Cancelar</button><button class="btn pri" id="dOk">${run?'Agendar merge':'Merge'} <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div></div></div>`;
+  $('#dNo').onclick=closeOverlay; $('#dOk').onclick=OV.ok; $('#dOk').focus();
+}
+function doMerge(m){
+  const sq=$('#mgSq').checked, rm=$('#mgRm').checked, au=$('#mgAu').checked; closeOverlay();
+  if(au){ m.autoMerge=true; toast(`Merge de !${m.iid} agendado: sai quando o pipeline passar`); }
+  else { m.merged=true; toast(`!${m.iid} mergeado em ${m.tgt||'main'}${sq?' (squash)':''}${rm?' · branch de origem apagada':''}`); }
+  render();
 }
 function askPublish(){
   if(S.mode!=='mr') return; const pend=S.drafts.filter(d=>d.ctx==='mr'&&d.state==='draft'); if(!pend.length){ toast('Nenhum rascunho para publicar'); return; }
@@ -1483,6 +1807,9 @@ const TOURS={
   mrtab:[{sel:'#right .card2',t:'O MR da feature: pipeline, Sonar e comentários. Cada problema tem um botão que chama a skill certa (<span class="mono">/pipe</span>, <span class="mono">/comentario</span>).'}],
   vault:[{sel:'#left [data-vgo="graph"]',t:'O <b>Grafo</b> mostra todas as notas e [[links]] do seu vault, como no Obsidian, mais as features e MRs ativos ligados aos repos.'},{sel:'#left [data-vgo="today"]',t:'<b>Hoje</b> é a daily: a fila do dia, que o Maestro marca com [x] quando a tarefa termina.'},{sel:'#center .card2',t:'A nota, editável, com os links dela e onde ela é mencionada. A nota do repo entra no contexto de toda feature.'}],
   audit:[{sel:'#auNew',t:'A auditoria nunca roda sozinha. Aqui você escolhe incremental ou completa e vê o custo antes.'}],
+  mr:[{sel:'#center .rtool',t:'Lado a lado é o padrão; <b>Unificado</b> e <b>Ocultar gerados</b> ficam aqui, e ▾ no arquivo colapsa. <b>Aprovar</b> e <b>Merge</b> estão no cabeçalho; <b>Responder</b> numa thread vira rascunho da review. <kbd>?</kbd> num bloco pergunta ao Claude.'}],
+  file:[{sel:'#right .ed',t:'O editor fala com o servidor de linguagem: sublinhado é diagnóstico, o mouse em cima mostra o tipo, <kbd>.</kbd> completa e Ctrl+clique vai para a definição. O blame da linha aparece no fim dela.'}],
+  news:[{sel:'#center .news',t:'Notícias do daily.dev filtradas pelos seus repos e pelo vault. Cada item diz por que apareceu e o que pode afetar.'}],
   mrs:[{sel:'#center .list',t:'MRs de outras pessoas. <kbd>⇧R</kbd> roda o revisor; os achados viram rascunhos que só você vê até publicar.'}],
 };
 const TSEEN={}; const tSeen=id=>{ try{ return TSEEN[id]||localStorage.getItem('maestro.tour.'+id)==='1'; }catch(e){ return !!TSEEN[id]; } };
@@ -1509,22 +1836,158 @@ function nextTour(){ if(!TOUR) return; TOUR.i++; if(TOUR.i>=TOUR.steps.length) e
 function endTour(){ const cb=TOUR&&TOUR.after; TOUR=null; paintTour(); if(cb) cb(); if(S.afterTour){ const f=S.afterTour; S.afterTour=null; f(); } }
 addEventListener('resize',()=>TOUR&&paintTour());
 
+/* ---------- perguntar ao Claude sobre um trecho (só leitura) ---------- */
+let ASK=null, askT=[];
+const ASK_SUG=['Explica este bloco','Isso quebra quem chama?','Tem teste cobrindo?'];
+function openAsk(ctx,path,hi){
+  const files=ctx==='mr'?D_MR:feat().changes, f=files.find(x=>x.path===path); if(!f) return;
+  const hk=f.hunks[hi]||f.hunks[0], ns=hk.l.map(l=>l[2]||l[1]).filter(Boolean);
+  closeAsk(); ASK={ctx,path,range:`${path}:${Math.min(...ns)}-${Math.max(...ns)}`,where:ctx==='mr'?`worktree do MR ${S.mr?S.mr.proj+' !'+S.mr.iid:''}`:`worktree de ${feat().branch}`,qa:[],busy:false,cost:0}; paintAsk();
+  setTimeout(()=>{ const i=$('#askIn'); if(i) i.focus(); });
+}
+function askFromSel(){ const ctx=S.mode==='mr'?'mr':S.fid, files=ctx==='mr'?D_MR:feat().changes, f=files.find(x=>x.path===S.sel.file); if(!f) return;
+  const hi=Math.max(0,f.hunks.findIndex(h=>h.l.some(l=>(S.sel.n&&l[2]===S.sel.n)||(S.sel.o&&l[0]==='-'&&l[1]===S.sel.o)))); openAsk(ctx,f.path,hi); }
+function closeAsk(){ askT.forEach(clearTimeout); askT=[]; ASK=null; const s=$('#askSlot'); if(s) s.innerHTML=''; }
+function paintAsk(){
+  let s=$('#askSlot'); if(!s){ s=document.createElement('div'); s.id='askSlot'; $('#app').appendChild(s); }
+  if(!ASK){ s.innerHTML=''; return; }
+  const keep=$('#askIn')?$('#askIn').value:'';
+  s.innerHTML=`<div class="drawer" role="dialog" aria-label="Perguntar ao Claude"><div class="dh"><b>Perguntar ao Claude</b><span class="sp"></span><button id="askX" aria-label="Fechar">×</button></div>
+    <div class="db" id="askDb"><span class="ctxc">${esc(ASK.range)}</span>${ASK.qa.length?'':`<p class="muted" style="margin:0">O Claude lê o código da ${esc(ASK.where)} para responder. Ele não edita nada e a resposta não vira comentário.</p>`}
+      ${ASK.qa.map((x,i)=>`<div class="qa"><span class="q">› ${esc(x.q)}</span>${x.tools.map(t=>`<span class="tl">↳ ${esc(t)}</span>`).join('')}<span class="a" id="askA${i}">${md(x.a)}${ASK.busy&&i===ASK.qa.length-1?'▍':''}</span></div>`).join('')}
+      ${ASK.busy?'':`<div class="sugg">${ASK_SUG.map((q,i)=>`<button class="btn" data-sg="${i}">${q}</button>`).join('')}</div>`}</div>
+    <div class="df"><div class="fin"><input id="askIn" placeholder="${ASK.qa.length?'Continuar a conversa…':'Pergunte sobre este trecho…'}" aria-label="Pergunta" ${ASK.busy?'disabled':''}><button class="btn pri" id="askGo" ${ASK.busy?'disabled':''}>Perguntar</button></div>
+      <span class="ro">só leitura (Read, Grep, Glob) · nada é publicado${ASK.cost?` · US$ ${ASK.cost.toFixed(2).replace('.',',')}`:''}${ASK.qa.length>1?' · mesma sessão (--resume)':''}</span></div></div>`;
+  const i=$('#askIn'); i.value=keep; i.onkeydown=e=>{ if(e.key==='Enter'&&i.value.trim()){ e.preventDefault(); askQ(i.value.trim()); } };
+  $('#askGo').onclick=()=>{ if(i.value.trim()) askQ(i.value.trim()); }; $('#askX').onclick=closeAsk;
+  s.querySelectorAll('[data-sg]').forEach(b=>b.onclick=()=>askQ(ASK_SUG[+b.dataset.sg]));
+  const db=$('#askDb'); db.scrollTop=db.scrollHeight;
+}
+function askQ(q){
+  if(!ASK||ASK.busy) return; const it={q,tools:[],a:''}; ASK.qa.push(it); ASK.busy=true; if($('#askIn')) $('#askIn').value=''; paintAsk();
+  const A=/explica/i.test(q)?['Read src/handler.ts','Read src/retry.ts']:/quebra|chama/i.test(q)?['Grep "\\.run\\(" src/ test/','Read src/worker.ts','Read test/handler.spec.ts']:/teste|test/i.test(q)?['Glob test/**/*retry*','Grep "retry" test/']:['Read '+ASK.path];
+  const ans=/explica/i.test(q)?'O bloco troca o `throw` por uma nova tentativa: quando `res.ok` é falso, ele loga um aviso e chama `retry(() => this.svc.call(payload))`. O `retry` (src/retry.ts) repete até dar certo ou acabar `tries`, que por padrão é `Infinity`. Com o endpoint fora, `run` não termina.'
+    :/quebra|chama/i.test(q)?'Quem chama: `WebhookWorker.consume` (src/worker.ts:31) e `handler.spec.ts`. O worker dava `nack` quando `run` lançava erro. Agora `run` só lança depois do último retry, então o Pub/Sub para de reentregar e a mensagem fica presa no retry infinito. O teste `falha quando o webhook responde 500` vai quebrar: ele espera o `throw` imediato.'
+    :/teste|test/i.test(q)?'Não. Nenhum arquivo em `test/` cita `retry`: `src/retry.ts` é novo e está sem teste. O `handler.spec.ts` só cobre o caminho feliz. Faltam: limite de tentativas, erro final relançado e espera entre tentativas.'
+    :'Pelo que li no trecho: a mudança não altera a assinatura pública. O ponto de atenção continua sendo o limite de tentativas, que não é passado pelo handler.';
+  let t=250; A.forEach(x=>{ askT.push(setTimeout(()=>{ it.tools.push(x); paintAsk(); },t)); t+=450; });
+  const w=ans.split(/(\s+)/); w.forEach((x,i)=>askT.push(setTimeout(()=>{ it.a+=x; const el=$('#askA'+(ASK.qa.length-1)); if(el) el.innerHTML=md(it.a)+'▍';
+    if(i===w.length-1){ ASK.busy=false; ASK.cost+=.03; paintAsk(); } },t+i*28)));
+}
+
+/* ---------- Ctrl+Shift+K: comando por descrição (Haiku, sem ferramentas; nunca executa) ---------- */
+let KC=null;
+const KOPTS=[[/pod|kube|k8s/i,['kubectl get pods -n bots --field-selector=status.phase!=Running','kubectl get pods -n bots | grep -v Running','kubectl get pods -n bots -o wide --sort-by=.status.startTime']],
+  [/log|erro/i,['gcloud logging read \'resource.type="k8s_container" AND resource.labels.container_name="bots-api" AND severity>=ERROR\' --freshness=1h --limit=50','kubectl logs -n bots deploy/bots-api --since=1h | grep -i error']],
+  [/porta|port/i,['lsof -i :3002','ss -ltnp | grep 3002']],
+  [/branch|commit/i,['git log --oneline origin/main..HEAD','git branch --merged main | grep -v main']],
+  [/./,['rg -n "SLACK_TIMEOUT_MS" --hidden -g "!node_modules"','grep -rn "SLACK_TIMEOUT_MS" --exclude-dir=node_modules .']]];
+function openKcmd(){ if(S.mode!=='feat'){ toast('Ctrl+Shift+K funciona com o terminal em foco'); return; }
+  OV={type:'k'}; KC={phase:'ask',i:0,opts:[]}; paintK(); }
+function paintK(){ const f=feat(), keep=$('#kIn')?$('#kIn').value:'';
+  $('#overlay').innerHTML=`<div class="kpop" role="dialog" aria-label="Comando por descrição"><input id="kIn" placeholder="Descreva o comando (ex.: pods com erro no namespace bots)" autocomplete="off" aria-label="Descrição do comando">
+    ${KC.phase==='think'?'<span class="muted">pensando… <span class="mono">claude -p --model haiku --tools ""</span></span>':''}
+    ${KC.phase==='show'?`<div class="cmd">${esc(KC.opts[KC.i])}</div>`:''}
+    <div class="hint">${KC.phase==='show'?`<span><kbd>Enter</kbd> digita no terminal (não executa)</span><span><kbd>Tab</kbd> outra opção ${KC.i+1}/${KC.opts.length}</span>`:'<span><kbd>Enter</kbd> pede ao Claude</span>'}<span><kbd>Esc</kbd> cancela</span><span class="mono">cwd ${esc(f.dir)} · zsh · Linux</span></div></div>`;
+  const i=$('#kIn'); i.value=keep; i.focus();
+  i.oninput=()=>{ if(KC.phase==='show'){ KC.phase='ask'; paintK(); } };
+  i.onkeydown=e=>{ if(e.key==='Enter'&&KC.phase==='ask'&&i.value.trim()){ e.preventDefault(); KC.phase='think'; paintK(); setTimeout(()=>{ if(!KC) return; KC.opts=KOPTS.find(([re])=>re.test(i.value))[1]; KC.i=0; KC.phase='show'; paintK(); },700); }
+    else if(e.key==='Enter'&&KC.phase==='show'){ e.preventDefault(); typeCmd(KC.opts[KC.i]); }
+    else if(e.key==='Tab'&&KC.phase==='show'){ e.preventDefault(); KC.i=(KC.i+1)%KC.opts.length; paintK(); } };
+}
+function typeCmd(c){ closeOverlay(); KC=null; const f=feat(); let t=f.tabs.findIndex(x=>x.k==='shell'); if(t<0){ f.tabs.push({k:'shell',lines:[],cwd:f.dir,hist:[]}); t=f.tabs.length-1; }
+  f.tab=t; renderCenter(); const i=document.querySelector(`.tin-in[data-t="${t}"]`); if(i){ i.value=c; i.focus(); } toast('Comando digitado no zsh. Enter roda; nada foi executado.'); }
+
+/* ---------- tarefas por repo + problemas ---------- */
+function runTask(name){
+  if(S.mode!=='feat'){ S.mode='feat'; render(); } const f=feat(); if(f.kind==='ws'){ toast('Este terminal não está num repo: sem tarefas'); return; }
+  let t=f.tabs.findIndex(x=>x.k==='shell'); if(t<0){ f.tabs.push({k:'shell',lines:[],cwd:f.dir,hist:[]}); t=f.tabs.length-1; }
+  if(f.tabs[0].k==='claude') f.split=f.split||'h'; f.tab=t; sh(f,t,name==='test'?'npm test':`npm run ${name}`); renderCenter();
+  S.taskProbs=S.taskProbs.filter(p=>p.src!==name);
+  if(name==='build') S.taskProbs.push({src:'build',sev:'err',file:'src/slack.ts',ln:5,msg:"TS2339: Property 'url' does not exist on type 'SlackClient'."},{src:'build',sev:'err',file:'src/health.ts',ln:6,msg:"TS2304: Cannot find name 'ping'."});
+  if(name==='lint') S.taskProbs.push({src:'lint',sev:'warn',file:'src/slack.ts',ln:4,msg:"'channel' is defined but never used (@typescript-eslint/no-unused-vars)"});
+  const n=S.taskProbs.filter(p=>p.src===name).length;
+  if(n){ S.right=true; S.rtab='prob'; renderFrame(); renderRight(); toast(`${name}: ${n} problema${n>1?'s':''}, veja em Problemas`); } else { renderRight(); toast(`${name}: passou, nenhum problema`); }
+}
+function focusEditor(){ const t=$('#code')||$('#right .diff'); if(!t){ toast('Abra o painel de revisão (Ctrl+Shift+E) para o foco ir até ele'); return false; } if(!t.id) t.tabIndex=-1; t.focus(); return true; }
+
+/* ---------- notificação de MR (no app: toast + notify-send quando a janela está fora de foco) ---------- */
+let notified=false;
+function simNotify(force){ if(notified&&!force) return; notified=true; const t=THREADS.find(x=>x.id==='t4'), m=MRS[0];
+  if(!t.notes.some(n=>n.fresh)) t.notes.push({who:'@bruno.costa',ago:'agora',body:'Não era. Troquei para 3 e passei o limite no handler.',fresh:true});
+  m.reply='@bruno.costa'; renderFrame(); if(S.mode==='mrs') renderCenter(); if(S.mode==='mr') rerender();
+  toast('@bruno.costa respondeu à sua thread em bots-api !124',{label:'Abrir',run:()=>{ openMR(m); setTimeout(()=>{ const x=document.getElementById('T-t4'); if(x) x.scrollIntoView({block:'center'}); },50); }}); }
+
+/* ---------- News (daily.dev, filtrado pelos seus repos e pelo vault) ---------- */
+S.newsHidden=new Set(); S.newsBm=new Set();
+const NEWS=[
+  {id:1,title:'NestJS 11: ConfigModule valida o schema na inicialização e o Node 18 sai do suporte',src:'NestJS Blog',ago:'há 5 h',min:6,tags:['nestjs','nodejs'],aff:['email-service','agenda-api','bots-api'],dep:'@nestjs/core 10',why:'breaking change numa dependência de 7 repos seus',score:.95,sum:'Quem lê process.env direto não muda; quem usa ConfigModule com Joi precisa revisar os defaults.'},
+  {id:2,title:'Node.js 24.17 corrige falha de segurança no undici (fetch)',src:'Node.js Blog',ago:'há 9 h',min:3,tags:['nodejs','security'],aff:['bots-api','email-service','notas-fiscais'],dep:'node:24',why:'imagem base de 12 repos seus',vault:'node-24-dimensiona-a-heap-pelo-cgroup',score:.93,sum:'Atualização de patch; afeta quem usa fetch com proxy. Basta subir a tag da imagem.'},
+  {id:3,title:'Jest 30: --testPathPattern virou --testPathPatterns e o jsdom saiu do padrão',src:'Jest Blog',ago:'ontem',min:5,tags:['jest','testing'],aff:['bots-api'],dep:'jest 30',why:'chore/deps acabou de subir o bots-api para o jest 30',score:.88,sum:'O job test:unit que usa --testPathPattern quebra com a mensagem "was replaced".'},
+  {id:4,title:'Pub/Sub: entrega exactly-once em GA para pull subscriptions',src:'Google Cloud Blog',ago:'ontem',min:7,tags:['gcp','pubsub'],aff:['bots-api','email-service'],dep:'@google-cloud/pubsub',why:'worker Pub/Sub em 2 repos seus',score:.81,sum:'Elimina o dedup manual por messageId se a subscription for recriada com a flag.'},
+  {id:5,title:'Cloud Run muda o padrão de concorrência por instância em serviços novos',src:'Google Cloud Blog',ago:'há 2 dias',min:4,tags:['gcp','cloud-run'],aff:['notas-fiscais'],dep:'Cloud Run',why:'1 repo seu faz deploy em Cloud Run',score:.72,sum:'Serviços existentes não mudam; vale fixar a concorrência no YAML do deploy.'},
+  {id:6,title:'Vitest 4: cobertura v8 passa a contar linhas como o Istanbul',src:'Vitest',ago:'há 2 dias',min:6,tags:['vitest','testing'],aff:[],why:'5 repos usam vitest',vault:'ctbz-check-sonar-vitest',score:.66,sum:'Os números de cobertura mudam um pouco; o gate do Sonar pode oscilar na primeira análise.'},
+  {id:7,title:'TypeScript 5.9: import defer e --module node20',src:'TypeScript Blog',ago:'há 3 dias',min:8,tags:['typescript'],aff:[],why:'tag typescript · 14 repos',score:.58,sum:'Nada quebra; node20 deixa o tsconfig dos serviços mais simples.'},
+  {id:8,title:'GitLab 18.6: sugestões de código em lote na revisão de MR',src:'GitLab Blog',ago:'há 4 dias',min:4,tags:['gitlab','code-review'],aff:[],why:'você revisa MRs todo dia',score:.52,sum:'Aplicar várias sugestões vira um commit só.'}];
+const PROFILE=[['node:24','12 repos'],['typescript 5','14 repos'],['@nestjs/core 10','7 repos'],['jest','6 repos'],['vitest','5 repos'],['@google-cloud/pubsub','2 repos'],['Cloud Run · k8s','1 · 15 repos'],['GitLab CI','19 repos']];
+const newsShown=()=>NEWS.filter(n=>!S.newsHidden.has(n.id)&&(!S.newsOnlyAff||n.aff.length)).sort((a,b)=>b.score-a.score);
+function openNews(){ closeBrief(); S.mode='news'; render(); }
+function renderNewsLeft(el){
+  el.innerHTML=`<div class="repo">Seu perfil <span class="mono">sem token do Claude</span></div><div class="prof">${PROFILE.map(([a,b])=>`<div><span class="mono">${a}</span><span class="muted">${b}</span></div>`).join('')}</div>
+    <div class="fsep">Do vault</div><div class="prof"><div><span>decisions/</span><span class="muted">2 notas</span></div><div><span>repos/</span><span class="muted">bots-api, email-service…</span></div></div>
+    <div class="fsep">Ocultos <span class="mono" style="letter-spacing:0">${S.newsHidden.size}</span></div><div class="flist">${S.newsHidden.size?[...S.newsHidden].map(id=>{ const n=NEWS.find(x=>x.id===id); return `<button data-unh="${id}"><span class="nm">${esc(n.tags[0])} · ${esc(n.src)}</span><span class="st">mostrar</span></button>`; }).join(''):'<div class="none">Nada oculto. “Não relevante” guarda o tag e a fonte só aqui, sem mexer no daily.dev.</div>'}</div>
+    <div class="flist"><div class="none">Perfil lido de <span class="mono">~/repos-ctbz</span> (package.json, Dockerfile, CI) e do vault. Atualiza quando eles mudam.</div></div>`;
+  el.querySelectorAll('[data-unh]').forEach(b=>b.onclick=()=>{ S.newsHidden.delete(+b.dataset.unh); render(); });
+}
+function renderNews(el){
+  if(!S.newsToken){ el.innerHTML=`<div class="empty" style="opacity:.9"><h3>News precisa de um token do daily.dev</h3><p style="text-align:left">1. Em <span class="mono">daily.dev/settings/api</span>, gere um token pessoal.<br>2. Salve em <span class="mono">~/.config/maestro/dailydev.token</span> com <span class="mono">chmod 600</span>.<br>3. Volte aqui: o Maestro lê o arquivo sozinho.</p><p>O token nunca sai da sua máquina, a não ser para a API do daily.dev.</p></div>`; return; }
+  const xs=newsShown(); S.nsel=Math.min(S.nsel,Math.max(xs.length-1,0));
+  el.innerHTML=`<div class="ibar"><label><input type="checkbox" id="nAff" ${S.newsOnlyAff?'checked':''}> Só o que afeta meus repos</label><span class="sp"></span><span class="muted" style="font-size:12px">daily.dev · atualizado há 12 min · ordenado pelo Claude hoje (Haiku, ~6 mil tokens)</span><button class="btn" id="nRf" title="Coleta no máximo a cada 3 h">↻</button></div>
+    <div class="news">${xs.length?xs.map((n,i)=>`<div class="nitem ${i===S.nsel?'on':''}" data-ni="${i}"><h3 data-nopen="${n.id}">${esc(n.title)}</h3>
+      <div class="meta"><span>${esc(n.src)}</span><span>· ${n.ago}</span><span>· ${n.min} min</span>${n.tags.map(t=>`<span class="tg">#${t}</span>`).join('')}</div>
+      <div class="why">${n.aff.length?`<span class="aff">pode afetar: ${n.aff.join(', ')} (${esc(n.dep)})</span>`:''}${n.vault?`<span class="rel">relacionado no vault: [[${n.vault}]]</span>`:''}<span class="muted">${esc(n.why)}</span></div>
+      <p class="sum">${esc(n.sum)}</p>
+      <div class="acts"><button class="btn" data-nopen="${n.id}">Abrir</button><button class="btn" data-nsv="${n.id}">Salvar no vault</button><button class="btn" data-nbm="${n.id}" aria-pressed="${S.newsBm.has(n.id)}">${S.newsBm.has(n.id)?'★ Salvo':'☆ Bookmark'}</button><button class="btn" data-nx="${n.id}">Não relevante</button></div></div>`).join('')
+      :'<div class="empty"><h3>Nada que afete seus repos hoje</h3><p>Desmarque o filtro para ver o resto.</p></div>'}</div>`;
+  const b=(id,fn)=>{ const x=el.querySelector('#'+id); if(x) x.onclick=fn; };
+  $('#nAff').onchange=e=>{ S.newsOnlyAff=e.target.checked; renderFrame(); renderNews(el); }; b('nRf',()=>toast('Coletado há 12 min; a próxima coleta é em 2 h 48. A API pede no máximo 60 chamadas por minuto.'));
+  el.querySelectorAll('[data-ni]').forEach(r=>r.onclick=e=>{ if(e.target.closest('button,[data-nopen]')) return; S.nsel=+r.dataset.ni; renderNews(el); });
+  el.querySelectorAll('[data-nopen]').forEach(x=>x.onclick=()=>{ const n=NEWS.find(y=>y.id===+x.dataset.nopen); n.read=true; renderFrame(); toast(`Abriria no navegador: ${n.title.slice(0,50)}…`); });
+  el.querySelectorAll('[data-nsv]').forEach(x=>x.onclick=()=>{ const n=NEWS.find(y=>y.id===+x.dataset.nsv); const t={t:`ler: ${n.title}`,done:false}; DAILY.tasks.push(t); vlog(`${DKEY} · link salvo: ${n.title.slice(0,40)}…`,()=>DAILY.tasks.splice(DAILY.tasks.indexOf(t),1)); });
+  el.querySelectorAll('[data-nbm]').forEach(x=>x.onclick=()=>{ const id=+x.dataset.nbm; S.newsBm.has(id)?S.newsBm.delete(id):S.newsBm.add(id); renderNews(el); toast(S.newsBm.has(id)?'Bookmark salvo no daily.dev':'Bookmark removido do daily.dev'); });
+  el.querySelectorAll('[data-nx]').forEach(x=>x.onclick=()=>{ const id=+x.dataset.nx, n=NEWS.find(y=>y.id===id); S.newsHidden.add(id); render(); toast(`Oculto. Menos de #${n.tags[0]} de ${n.src} daqui pra frente (só local)`,{label:'Desfazer',run:()=>{ S.newsHidden.delete(id); render(); }}); });
+}
+let BRIEF=false;
+function openBrief(){ if(!S.newsToken){ toast('Resumo do dia precisa do token do daily.dev'); return; } BRIEF=true; paintBrief(); }
+function closeBrief(){ BRIEF=false; paintBrief(); }
+function paintBrief(){ let s=$('#briefSlot'); if(!s){ s=document.createElement('div'); s.id='briefSlot'; $('#app').appendChild(s); }
+  if(!BRIEF){ s.innerHTML=''; return; } const xs=NEWS.filter(n=>!S.newsHidden.has(n.id)).sort((a,b)=>(b.aff.length?1:0)-(a.aff.length?1:0)||b.score-a.score).slice(0,5);
+  s.innerHTML=`<div class="brief" role="dialog" aria-label="Resumo do dia"><div class="bh"><b>Resumo do dia</b><span class="muted">15 out · daily.dev</span><span class="sp"></span><button id="brX" aria-label="Fechar">×</button></div>
+    <ol>${xs.map(n=>`<li>${esc(n.title)}<span class="w">${n.aff.length?`pode afetar ${n.aff.slice(0,2).join(', ')}${n.aff.length>2?` +${n.aff.length-2}`:''}`:esc(n.why)}</span></li>`).join('')}</ol>
+    <div class="bf"><span class="muted" style="font-size:11.5px">aparece na primeira abertura do dia</span><span class="sp"></span><button class="btn" id="brC">Fechar</button><button class="btn pri" id="brO">Abrir News</button></div></div>`;
+  $('#brX').onclick=closeBrief; $('#brC').onclick=closeBrief; $('#brO').onclick=openNews; }
+
 /* ---------- dicas e status ---------- */
 const HINTS={
-  feat:[['Ctrl+Shift+Espaço','próximo da fila'],['Ctrl+Shift+1…9','feature'],['Ctrl+Shift+E','revisar mudanças'],['Ctrl+Shift+\\','dividir'],['Ctrl+Shift+Enter','empilhar'],['Ctrl+Shift+←→','trocar pane'],['Ctrl+A','herdr'],['Ctrl+Shift+L','seleção → Claude'],['Alt+N','nova feature'],['?','atalhos']],
+  feat:[['Ctrl+Shift+Espaço','próximo da fila'],['Ctrl+Shift+1…9','feature'],['Ctrl+Shift+E','revisar mudanças'],['Ctrl+Shift+\\','dividir'],['Ctrl+Shift+Enter','empilhar'],['Ctrl+Shift+←→','pane ↔ editor'],['Ctrl+Shift+K','comando por descrição'],['Ctrl+A','herdr'],['Ctrl+Shift+L','seleção → Claude'],['Alt+N','nova feature'],['?','atalhos']],
   mrs:[['j k','navegar'],['Enter','abrir'],['⇧R','revisar com Claude'],['/','filtrar']],
   vault:[['clique','abrir nota'],['[[link]]','navegar'],['◎ Grafo','visão geral'],['Hoje','daily'],['?','atalhos']],
   audit:[['Nova auditoria…','incremental ou completa'],['espaço','marcar achado'],['?','atalhos']],
-  mr:[['C','comentar linha'],['⇧R','revisar com Claude'],['Ctrl+⏎','publicar'],['Ctrl+Z','desfazer descarte'],['Esc','voltar']],
+  mr:[['C','comentar linha'],['?','perguntar sobre o bloco'],['S','lado a lado/unificado'],['⇧R','revisar com Claude'],['Ctrl+⏎','publicar'],['Ctrl+Z','desfazer descarte'],['Esc','voltar']],
+  news:[['Alt+5','News'],['título','abrir'],['Não relevante','oculta só aqui'],['?','atalhos']],
 };
 function renderHints(){ $('#hints').innerHTML=HINTS[S.mode].map(([k,v])=>`<span><kbd>${k}</kbd> ${v}</span>`).join(''); }
+function lspStatus(){ if(/\.py$/.test(S.file)) return '<span class="muted" title="instale com npm i -g pyright">Python: sem servidor</span>';
+  if(!/\.(ts|js)$/.test(S.file)) return ''; const d=DIAG[S.file]||[], e=d.filter(x=>x.sev==='err').length, w=d.length-e;
+  return `<button id="stProb" title="Problemas deste arquivo"><span class="${e?'perr':''}">${e} erro${e!==1?'s':''}</span> · <span class="${w?'pwarn':''}">${w} aviso${w!==1?'s':''}</span></button><span class="muted">TS · typescript-language-server</span>`; }
 function renderStatus(){
   const f=feat(); const att=FEATS.filter(x=>x.st==='blocked'), work=FEATS.filter(x=>x.st==='working').length;
   const dr=S.drafts.filter(d=>d.state==='draft').length;
   $('#status').innerHTML=`<span>herdr: conectado</span>${att.length?`<button class="att" id="stAtt">! ${att.length} precisa${att.length>1?'m':''} de você</button>`:''}<span>${work} trabalhando</span><span title="soma das features">hoje: US$ ${FEATS.reduce((a,x)=>a+(x.cost||0),0).toFixed(2).replace('.',',')}</span>
     ${S.mode==='feat'&&f?`<span>⎇ ${f.branch}</span>`:''}${dr?`<span class="drafts">${dr} comentário${dr>1?'s':''} pendente${dr>1?'s':''}</span>`:''}${RV&&RV.phase==='run'?'<span>Claude: revisando MR</span>':''}${AU.phase==='run'?`<span>auditoria: US$ ${AU.spent.toFixed(2).replace('.',',')}</span>`:''}
-    <span class="sp"></span>${S.mode==='feat'&&S.right&&S.rtab==='file'?`<span>Ln ${S.ln}, Col ${S.col}</span>`:''}<span title="lido de ~/.config/ghostty/config">ghostty: Dracula · JetBrains Mono 13</span>`;
+    <span class="sp"></span>${S.mode==='feat'&&S.right&&S.rtab==='file'&&S.file?lspStatus():''}${S.mode==='feat'&&S.right&&S.rtab==='file'?`<span>Ln ${S.ln}, Col ${S.col}</span>`:''}<span title="lido de ~/.config/ghostty/config">ghostty: Dracula · JetBrains Mono 13</span>`;
   const a=$('#stAtt'); if(a) a.onclick=()=>selectFeat(att[0].id);
+  const pb=$('#stProb'); if(pb) pb.onclick=()=>{ S.rtab='prob'; renderRight(); };
 }
 
 /* ---------- overlays ---------- */
@@ -1547,7 +2010,7 @@ const CMDS=[
   ['Vault: Daily de hoje','',()=>openVault(DKEY)],
   ['Vault: Atividade','',()=>openVault(null,'log')],
   ['Ir para: Vault','',()=>openVault()],
-  ['Ajuda: Rever tutorial desta tela','',()=>{ const id=S.mode==='feat'?(S.right?{review:'review',mr:'mrtab'}[S.rtab]:'feat'):S.mode==='audit'?'audit':S.mode==='vault'?'vault':'mrs'; tour(id,true); }],
+  ['Ajuda: Rever tutorial desta tela','',()=>{ const id=tourId(); if(id) tour(id,true); }],
   ['Feature: Remover a atual…','',()=>removeFeatureDlg()],
   ['Feature: Ir para a que precisa de você','',()=>{ const f=FEATS.find(x=>x.st==='blocked')||FEATS.find(x=>x.unseen); f?selectFeat(f.id):toast('Nenhuma feature esperando você'); }],
   ['Feature: Revisar mudanças','Ctrl+Shift+E',()=>{ S.mode='feat'; S.right=true; S.rtab='review'; render(); }],
@@ -1568,6 +2031,19 @@ const CMDS=[
   ['Ir para: MRs','',()=>setMode('mrs')],
   ['MR: Revisar com Claude','⇧R',()=>startReview(MRS[0])],
   ['Ajuda: Atalhos e decisões de UX','?',()=>openHelp()],
+  ['Tarefa: test','npm test',()=>runTask('test')],
+  ['Tarefa: lint','npm run lint',()=>runTask('lint')],
+  ['Tarefa: build','npm run build',()=>runTask('build')],
+  ['Editor: Problemas','',()=>{ S.mode='feat'; S.right=true; S.rtab='prob'; render(); }],
+  ['Editor: Abrir src/slack.ts (LSP)','',()=>{ S.mode='feat'; render(); openFile('src/slack.ts'); }],
+  ['Editor: Abrir scripts/backfill.py (sem servidor)','',()=>{ S.mode='feat'; render(); openFile('scripts/backfill.py'); }],
+  ['Terminal: Comando por descrição','Ctrl+Shift+K',()=>{ if(S.mode!=='feat'){ S.mode='feat'; render(); } openKcmd(); }],
+  ['MR: Alternar lado a lado / unificado','S',()=>{ S.layout=S.layout==='split'?'unified':'split'; if(S.mode==='mr') rerender(); else toast(`Diff de MR: ${S.layout==='split'?'lado a lado':'unificado'}`); }],
+  ['MR: Abrir bots-api !124','',()=>openMR(MRS[0])],
+  ['Simular: notificação de MR (resposta à sua thread)','',()=>simNotify(true)],
+  ['Ir para: News','Alt+5',openNews],
+  ['News: Resumo do dia','',openBrief],
+  ['News: Simular sem token / com token','',()=>{ S.newsToken=!S.newsToken; if(!S.newsToken) closeBrief(); render(); toast(S.newsToken?'Token do daily.dev encontrado':'Sem ~/.config/maestro/dailydev.token'); }],
   ['Simular: feature de fundo pede permissão','',()=>{ const f=FEATS.find(x=>x.id!==S.fid&&x.id!=='main'&&x.kind!=='ws'&&x.st!=='blocked'&&x.st!=='working')||FEATS.find(x=>x.id!==S.fid&&x.kind!=='ws'&&x.st!=='blocked'); if(!f){ toast('Todas as outras já estão esperando você'); return; } f.ask='npm run migrate'; f.tab=0; f.term.push({c:'dotw',t:'⏺ Preciso rodar a migration.'}); setSt(f,'blocked','pediu permissão: npm run migrate'); }],
 ];
 let PAL={mode:'cmd',q:'',i:0,items:[]};
@@ -1577,12 +2053,12 @@ function palItems(){ const q=PAL.q.trim();
   if(PAL.mode==='file') return Object.keys(F).map(p=>({t:p,g:'',run:()=>{ if(S.mode!=='feat'){ S.mode='feat'; render(); } openFile(p); },s:q?fuzzy(q,p):0})).filter(x=>x.s>=0).sort((a,b)=>b.s-a.s);
   const feats=FEATS.map((f,i)=>({t:`Feature: ${f.branch}`,g:`Ctrl+Shift+${i+1}`,run:()=>selectFeat(f.id),s:q?fuzzy(q,'feature '+f.branch):-1})).filter(x=>x.s>=0);
   return CMDS.map(([t,k,run])=>({t,g:k,run,s:q?fuzzy(q,t):0})).filter(x=>x.s>=0).concat(feats).sort((a,b)=>b.s-a.s); }
-function openPal(mode){
-  OV={type:'pal'}; PAL={mode,q:'',i:0};
+function openPal(mode,q0){
+  OV={type:'pal'}; PAL={mode,q:q0||'',i:0};
   const ph=mode==='file'?'Nome do arquivo…':mode==='att'?'Fila de atenção: filtrar…':'Comando ou nome da feature…';
   $('#overlay').innerHTML=`<div class="scrim" id="pS"><div class="pal" role="dialog" aria-label="Paleta"><input id="pIn" placeholder="${ph}" autocomplete="off" aria-label="${ph}"><ul id="pL" role="listbox"></ul></div></div>`;
   $('#pS').onclick=e=>{ if(e.target.id==='pS') closeOverlay(); };
-  const i=$('#pIn'); i.oninput=()=>{ PAL.q=i.value; PAL.i=0; paintPal(); }; i.focus(); paintPal();
+  const i=$('#pIn'); i.value=PAL.q; i.oninput=()=>{ PAL.q=i.value; PAL.i=0; paintPal(); }; i.focus(); paintPal();
 }
 function paintPal(){ PAL.items=palItems(); const ul=$('#pL');
   ul.innerHTML=PAL.items.length?PAL.items.map((x,i)=>`<li class="${i===PAL.i?'on':''}" data-i="${i}" role="option">${x.tag?`<span class="pr pr${x.p}">${x.tag}</span>`:''}<span>${esc(x.t)}</span><span class="sp"></span>${x.g?`<kbd>${x.g}</kbd>`:''}</li>`).join(''):(PAL.mode==='att'?'<div class="none">Fila vazia. Nada esperando você.</div>':'<div class="none">Nada encontrado</div>');
@@ -1608,13 +2084,18 @@ function openHelp(){
       <tr><td>4</td><td><kbd>Alt+N</kbd> cria uma feature nova com prompt.</td></tr>
       <tr><td>5</td><td>Aba <b>2 zsh</b>: <span class="mono">ls</span>, <span class="mono">git status</span>, <span class="mono">git diff</span>, <span class="mono">npm test</span>, <span class="mono">cat src/app.ts</span>, ↑ para histórico.</td></tr>
       <tr><td>6</td><td><kbd>Ctrl+Shift+\</kbd> divide claude | zsh lado a lado; <kbd>Ctrl+A</kbd> <kbd>c</kbd> abre outra aba.</td></tr>
-      <tr><td>7</td><td>Em “Terminais”, <span class="mono">~</span> é um terminal comum, sem Claude.</td></tr></table></div>
-    <div><h4>Atalhos desta tela</h4><table>${HINTS[S.mode].concat([['Ctrl+P','abrir arquivo'],['Ctrl+Shift+P','comandos']]).map(([k,v])=>`<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table>
+      <tr><td>7</td><td>Em “Terminais”, <span class="mono">~</span> é um terminal comum, sem Claude.</td></tr>
+      <tr><td>8</td><td>MRs → <span class="mono">bots-api !124</span>: lado a lado, gerados ocultos, ▾ colapsa, <b>Responder</b> vira rascunho, <b>Aprovar</b> e <b>Merge</b> no cabeçalho, <kbd>?</kbd> num bloco pergunta ao Claude.</td></tr>
+      <tr><td>9</td><td><kbd>Ctrl+Shift+O</kbd> <span class="mono">src/slack.ts</span>: sublinhados do LSP, mouse sobre <span class="mono">timeout</span>, digite <span class="mono">this.</span>, Ctrl+clique em <span class="mono">SlackClient</span>; o blame fica no fim da linha.</td></tr>
+      <tr><td>10</td><td><b>▶ Rodar tarefa…</b> na barra do terminal → <span class="mono">build</span>: os erros caem em Problemas.</td></tr>
+      <tr><td>11</td><td><kbd>Ctrl+Shift+K</kbd> no terminal: descreva o comando; ele é digitado, nunca executado.</td></tr>
+      <tr><td>12</td><td><kbd>Alt+5</kbd> abre News. Respostas a threads suas chegam como toast (e notificação do sistema com a janela fora de foco).</td></tr></table></div>
+    <div><h4>Atalhos desta tela</h4><table>${HINTS[S.mode].concat([['Ctrl+P','abrir arquivo'],['Ctrl+Shift+P','comandos'],['Alt+1…5','Features · MRs · Vault · Auditoria · News'],['Ctrl+Shift+←/→','terminal ↔ editor: na borda do último pane, o foco passa para o editor'],['Shift+Alt+←/→','selecionar por palavra no editor'],['Ctrl+Shift+K','comando por descrição']].filter(([k])=>!HINTS[S.mode].some(h=>h[0]===k))).map(([k,v])=>`<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table>
       <p style="margin-top:8px"><b>Regra dos atalhos:</b> com o foco no terminal, Ctrl+tecla vai para o terminal (Ctrl+A herdr, Ctrl+C, Ctrl+L, Ctrl+R, Ctrl+E de readline). Ctrl+Shift+tecla é do Maestro, como no seu Ghostty, e os binds de split do seu ghostty/config viram ações do herdr.</p>
       <p style="margin-top:6px">Visual: fonte, paleta, padding, opacidade e cursor vêm do ghostty/config; o prompt vem do starship.toml; <span class="mono">ls</span>/<span class="mono">cat</span> seguem seus aliases eza/bat. No navegador, os ícones Nerd Font só aparecem porque a JetBrainsMono Nerd Font está instalada na sua máquina. Alt+N aqui é o Ctrl+Shift+N do app (o navegador reserva esse).</p></div></div>
     <h4>Heurísticas de Nielsen aplicadas</h4><table>${N.map(([a,b],i)=>`<tr><td>${i+1}. ${a}</td><td>${b}</td></tr>`).join('')}</table>
     <div class="acts" style="justify-content:flex-end"><button class="btn" id="hT">Rever tutorial desta tela</button><button class="btn" id="hC">Fechar <kbd>Esc</kbd></button></div></div></div>`;
-  $('#hT').onclick=()=>{ closeOverlay(); const id=S.mode==='feat'?(S.right?{review:'review',mr:'mrtab'}[S.rtab]:'feat'):S.mode==='audit'?'audit':S.mode==='vault'?'vault':'mrs'; tour(id,true); };
+  $('#hT').onclick=()=>{ closeOverlay(); const id=tourId(); if(id) tour(id,true); };
   $('#hC').onclick=closeOverlay; $('#hS').onclick=e=>{ if(e.target.id==='hS') closeOverlay(); };
 }
 function toast(msg,action){ const t=document.createElement('div'); t.className='toast'; t.innerHTML=`<span>${esc(msg)}</span>`;
@@ -1633,12 +2114,15 @@ function sendSel(){
 
 /* ---------- teclado: Ctrl+tecla é do terminal; Ctrl+Shift+tecla é do Maestro (igual ao Ghostty) ---------- */
 document.addEventListener('keydown',e=>{
-  const k=e.key, ctrl=e.ctrlKey||e.metaKey, inField=e.target.matches('input,textarea,select')||e.target.isContentEditable;
+  const k=e.key, ctrl=e.ctrlKey||e.metaKey, inField=!!(e.target.matches&&e.target.matches('input,textarea,select'))||e.target.isContentEditable;
   const inTerm=!!(e.target.classList&&e.target.classList.contains('tin-in'));
   if(k==='Escape'){
     if(TOUR){ endTour(); return; }
     if(OV){ e.preventDefault(); closeOverlay(); return; }
     if(S.prefix){ S.prefix=false; renderCenter(); return; }
+    if(CMPL){ closeCompl(); return; }
+    if(ASK){ closeAsk(); return; }
+    if(S.replying){ S.replying=null; rerender(); return; }
     if(S.editing){ cancelEdit(S.editing); return; }
     if(RV&&RV.phase!=='run'){ closeDrawer(); return; }
     if(S.mascot&&!S.mascot.leaving){ dismissMascot(); return; }
@@ -1649,14 +2133,19 @@ document.addEventListener('keydown',e=>{
   if(OV&&OV.type==='pal'){ if(k==='ArrowDown'){ e.preventDefault(); PAL.i=Math.min(PAL.i+1,PAL.items.length-1); paintPal(); } else if(k==='ArrowUp'){ e.preventDefault(); PAL.i=Math.max(PAL.i-1,0); paintPal(); } else if(k==='Enter'){ e.preventDefault(); runPal(); } return; }
   if(OV&&OV.type==='dlg'){ if(ctrl&&k==='Enter'){ e.preventDefault(); OV.ok(); } return; }
   if(OV) return;
+  if(ctrl&&e.shiftKey&&e.altKey&&(k==='ArrowLeft'||k==='ArrowRight')&&e.target.id==='code'){ e.preventDefault(); wordSel(e.target,k==='ArrowRight'); return; }
+  if(e.altKey&&!ctrl&&/^Digit[1-5]$/.test(e.code)){ e.preventDefault(); [()=>setMode('feat'),()=>setMode('mrs'),()=>openVault(),()=>setMode('audit'),openNews][+e.code.slice(5)-1](); return; }
+  if(!ctrl&&!e.altKey&&!e.shiftKey&&!inField&&e.key==='s'&&S.mode==='mr'){ e.preventDefault(); S.layout=S.layout==='split'?'unified':'split'; rerender(); return; }
   if(ctrl&&e.shiftKey){
     const c=e.code, f=feat(), act={
       KeyP:()=>openPal('cmd'), KeyO:()=>openPal('file'), KeyE:()=>{ if(S.mode!=='feat'){ S.mode='feat'; S.right=true; render(); } else toggleRight(); },
       KeyB:()=>{ S.left=!S.left; renderFrame(); }, KeyL:sendSel, KeyN:newFeatureDlg, Space:nextAttention,
       Enter:()=>S.mode==='feat'&&herdr(f,'-'), Backslash:()=>S.mode==='feat'&&herdr(f,'v'), KeyZ:()=>S.mode==='feat'&&herdr(f,'z'), KeyT:()=>S.mode==='feat'&&herdr(f,'c'),
-      ArrowLeft:()=>herdr(f,'ArrowLeft'), ArrowRight:()=>herdr(f,'ArrowRight'), ArrowUp:()=>herdr(f,'ArrowUp'), ArrowDown:()=>herdr(f,'ArrowDown'),
+      ArrowLeft:()=>{ if(S.mode!=='feat') return; if(e.target.closest&&e.target.closest('#right')){ focusTerm(); return; } herdr(f,'ArrowLeft'); },
+      ArrowRight:()=>{ if(S.mode!=='feat') return; if(e.target.closest&&e.target.closest('#right')) return; if(f.split&&f.tab===0){ herdr(f,'ArrowRight'); return; } if(S.right) focusEditor(); else toast('Não há pane à direita. Ctrl+Shift+E abre o editor.'); },
+      ArrowUp:()=>herdr(f,'ArrowUp'), ArrowDown:()=>herdr(f,'ArrowDown'), KeyK:openKcmd,
     }[c];
-    if(c.startsWith('Arrow')&&inField&&!inTerm) return;
+    if(c.startsWith('Arrow')&&inField&&!inTerm&&!(e.target.closest&&e.target.closest('#right')&&(c==='ArrowLeft'||c==='ArrowRight'))) return;
     const dg=/^Digit([1-9])$/.exec(c);
     if(dg){ const x=FEATS[+dg[1]-1]; if(x){ e.preventDefault(); selectFeat(x.id); } return; }
     if(act){ e.preventDefault(); act(); return; }
@@ -1667,6 +2156,7 @@ document.addEventListener('keydown',e=>{
   if(ctrl&&k==='k'){ e.preventDefault(); openPal('cmd'); return; }
   if(ctrl&&k==='Enter'){
     if(S.editing&&e.target.id==='dt-'+S.editing){ e.preventDefault(); saveDraft(S.editing); return; }
+    if(S.replying&&e.target.id==='rp-'+S.replying){ e.preventDefault(); addReply(S.replying); return; }
     if(S.mode==='mr'){ e.preventDefault(); askPublish(); return; }
     if(S.mode==='feat'&&S.right){ e.preventDefault(); sendToClaude(); return; }
   }
@@ -1674,7 +2164,7 @@ document.addEventListener('keydown',e=>{
   if(inField) return;
   if(ctrl&&k==='z'){ e.preventDefault(); undo(); return; }
   if(ctrl||e.altKey) return;
-  if(k==='?'){ openHelp(); return; }
+  if(k==='?'){ if(S.sel&&(S.mode==='mr'||(S.mode==='feat'&&S.right&&S.rtab==='review'))){ askFromSel(); return; } openHelp(); return; }
   if(RV&&RV.phase==='setup'&&k==='Enter'){ e.preventDefault(); runReview(); return; }
   if(k==='R'&&e.shiftKey&&S.mode!=='feat'){ startReview(); return; }
   if(S.mode==='mrs'){ const rows=inboxRows();
@@ -1686,14 +2176,15 @@ document.addEventListener('keydown',e=>{
   if((k==='c'||k==='C')&&(S.mode==='mr'||(S.mode==='feat'&&S.right&&S.rtab==='review'))){ e.preventDefault(); newDraft(); return; }
   if(S.mode==='feat'&&k.length===1&&!(e.target.closest&&e.target.closest('#right'))){ focusTerm(); }
 });
-$('#mVault').onclick=()=>openVault(); $('#mFeat').onclick=()=>setMode('feat'); $('#mMrs').onclick=()=>setMode('mrs');
+$('#mVault').onclick=()=>openVault(); $('#mFeat').onclick=()=>setMode('feat'); $('#mMrs').onclick=()=>setMode('mrs'); $('#mNews').onclick=openNews;
 $('#qBtn').onclick=()=>openPal('att'); $('#hFile').onclick=()=>openPal('file'); $('#hCmd').onclick=()=>openPal('cmd'); $('#hHelp').onclick=()=>openHelp();
 if(innerWidth<760){ S.left=false; }
 render();
 
 /* roteiro: o mascote aparece para a feature bloqueada; a healthcheck termina sozinha */
 const scenario=()=>{ const f=feat('slack'); if(f&&f.st==='blocked'&&!(S.mode==='feat'&&S.fid==='slack')){ f.unseen=true; if(!S.mq.find(x=>x.fid==='slack')) S.mq.push({fid:'slack',kind:'ask'}); if(!S.mascot) nextMascot(); renderLeft(); } };
-if(tour('feat')) S.afterTour=()=>setTimeout(scenario,800); else setTimeout(scenario,1500);
+if(tour('feat')) S.afterTour=()=>{ setTimeout(openBrief,300); setTimeout(scenario,800); }; else { setTimeout(openBrief,600); setTimeout(scenario,1500); }
+setTimeout(()=>simNotify(),8000);
 const H=feat('health');
 run(H,[[4000,'dot','⏺ Update(src/app.ts)','Escrevendo'],[600,'out','  ⎿  Updated src/app.ts with 2 additions'],[1500,'dot','⏺ Bash(npm test)','Testando'],[1800,'out','  ⎿  Tests: 14 passed, 14 total'],
   [800,'dotw','⏺ Pronto: GET /health responde 200 com o banco ok e 503 sem ele.']],()=>setSt(H,'done','pronto pra revisar'));
