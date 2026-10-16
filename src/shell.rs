@@ -956,8 +956,10 @@ impl Shell {
         let Some(root) = sidebar.read(cx).top_worktree() else {
             return;
         };
-        let dirty = |this: &Self, p: &str, cx: &App| {
-            this.review
+        // as abas só são desta árvore se a revisão estiver na mesma worktree (multi-repo troca a dela)
+        let review = self.review.clone().filter(|r| r.read(cx).root == root);
+        let dirty = |p: &str, cx: &App| {
+            review
                 .as_ref()
                 .is_some_and(|r| r.read(cx).dirty_under(p, cx))
         };
@@ -972,7 +974,7 @@ impl Shell {
                 Err(e) => self.toast(e, cx),
             },
             FsOp::Rename(from, to) => {
-                if dirty(self, &from, cx) {
+                if dirty(&from, cx) {
                     return self.toast(
                         format!("{from} tem alterações não salvas: salve antes de renomear"),
                         cx,
@@ -980,7 +982,7 @@ impl Shell {
                 }
                 match changes::rename(&root, &from, &to) {
                     Ok(to) => {
-                        if let Some(r) = &self.review {
+                        if let Some(r) = &review {
                             r.update(cx, |r, cx| r.moved(&from, &to, window, cx));
                         }
                         sidebar.update(cx, |s, cx| s.reload_files(Some(&to), cx));
@@ -989,7 +991,7 @@ impl Shell {
                 }
             }
             FsOp::Delete(rel, dir) => {
-                if dirty(self, &rel, cx) {
+                if dirty(&rel, cx) {
                     return self.toast(
                         format!("{rel} tem alterações não salvas: salve antes de excluir"),
                         cx,
@@ -1017,7 +1019,7 @@ impl Shell {
                     if matches!(a, Answer::Ok) {
                         match changes::remove(&root, &rel) {
                             Ok(()) => {
-                                if let Some(r) = &this.review {
+                                if let Some(r) = &review {
                                     r.update(cx, |r, cx| r.forget(&rel, window, cx));
                                 }
                                 sidebar.update(cx, |s, cx| s.reload_files(None, cx));
@@ -1783,6 +1785,7 @@ impl Shell {
         };
         let items = crate::changes::files(&root)
             .into_iter()
+            .filter(|p| !p.ends_with('/'))
             .map(|p| palette_cmd::Item {
                 title: p.clone(),
                 key: String::new(),

@@ -286,6 +286,7 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] Shell: arquivo novo abre no editor; Excluir pede Confirm vermelho
 - [x] Editor: abas seguem o renomear e fecham no excluir; aba suja bloqueia com toast
 - [x] Teste no app num repo descartável
+- Desvio: no protótipo o Renomear já seleciona só o nome; no app o campo (`TextField`) não tem seleção, o cursor fica no fim e apaga com Backspace
 
 ## Backlog (não entra sem decisão)
 

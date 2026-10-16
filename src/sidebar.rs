@@ -99,6 +99,7 @@ pub struct Sidebar {
     expanded: HashSet<String>,
     /// aba Arquivos: o menu do botão direito (item, é pasta, onde); item vazio é a raiz
     menu: Option<(String, bool, Point<Pixels>)>,
+    menu_focus: FocusHandle,
     naming: Option<(Naming, Entity<TextField>)>,
     /// por worktree principal: os outros repos da feature (nome, worktree, arquivos mudados)
     extra: HashMap<PathBuf, Vec<(String, PathBuf, usize)>>,
@@ -409,6 +410,7 @@ impl Sidebar {
             focused_cwd: None,
             expanded: HashSet::new(),
             menu: None,
+            menu_focus: cx.focus_handle(),
             naming: None,
             extra: HashMap::new(),
             stacks: HashMap::new(),
@@ -1283,6 +1285,14 @@ impl Sidebar {
         let n = if p.is_empty() { 2 } else { 4 };
         let mut m = div()
             .id("fl-menu")
+            .track_focus(&self.menu_focus)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key == "escape" {
+                    this.menu = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .occlude()
             .min_w(px(170.))
             .p(px(4.))
@@ -1446,8 +1456,9 @@ impl Sidebar {
                             })
                             .on_mouse_down(
                                 MouseButton::Right,
-                                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                                cx.listener(move |this, e: &MouseDownEvent, window, cx| {
                                     this.menu = Some((menu_path.clone(), dir, e.position));
+                                    window.focus(&this.menu_focus, cx);
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -1470,8 +1481,9 @@ impl Sidebar {
                 // a lista estica até o fim da lateral: botão direito no vazio cria na raiz
                 list = list.flex_grow(1.).on_mouse_down(
                     MouseButton::Right,
-                    cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                    cx.listener(|this, e: &MouseDownEvent, window, cx| {
                         this.menu = Some((String::new(), true, e.position));
+                        window.focus(&this.menu_focus, cx);
                         cx.notify();
                     }),
                 );

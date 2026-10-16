@@ -922,9 +922,9 @@ function fileMenu(e,p){ closeFileMenu(); const dir=p?split(p)[0].replace(/\/$/,'
   const it=[['Novo arquivo',()=>{ S.naming={kind:'new',p:dir}; renderLeft(); }],['Nova pasta',()=>{ S.naming={kind:'newdir',p:dir}; renderLeft(); }]];
   if(p) it.push(null,['Renomear',()=>{ S.naming={kind:'rename',p}; renderLeft(); }],['Excluir',()=>delFile(p),'danger']);
   it.forEach(x=>{ if(!x){ m.insertAdjacentHTML('beforeend','<hr>'); return; } const b=document.createElement('button'); b.textContent=x[0]; if(x[2]) b.className=x[2]; b.onclick=()=>{ closeFileMenu(); x[1](); }; m.appendChild(b); });
-  document.body.appendChild(m); setTimeout(()=>document.addEventListener('mousedown',closeFileMenuOut)); }
-function closeFileMenuOut(e){ if(!e.target.closest('#fMenu')) closeFileMenu(); }
-function closeFileMenu(){ const m=$('#fMenu'); if(m) m.remove(); document.removeEventListener('mousedown',closeFileMenuOut); }
+  document.body.appendChild(m); setTimeout(()=>{ document.addEventListener('mousedown',closeFileMenuOut); document.addEventListener('keydown',closeFileMenuOut,true); }); }
+function closeFileMenuOut(e){ if(e.type==='keydown'?e.key==='Escape':!e.target.closest('#fMenu')){ if(e.type==='keydown') e.stopPropagation(); closeFileMenu(); } }
+function closeFileMenu(){ const m=$('#fMenu'); if(m) m.remove(); document.removeEventListener('mousedown',closeFileMenuOut); document.removeEventListener('keydown',closeFileMenuOut,true); }
 function badName(v){ return !v||v.startsWith('/')||v.split('/').some(x=>x==='..')?'Nome inválido: fica dentro da worktree, sem .. nem / no começo':null; }
 function nameDone(v){ const n=S.naming; S.naming=null;
   const err=badName(v.replace(/\/$/,'')); if(err){ toast(err); renderLeft(); return; }
@@ -935,7 +935,7 @@ function nameDone(v){ const n=S.naming; S.naming=null;
   if(F[v]){ toast(`${v} já existe`); renderLeft(); return; }
   F[v]={text:'',saved:''}; openFile(v); }
 function delFile(p){ if(F[p].text!==F[p].saved){ toast(`${p} tem alterações não salvas: salve antes de excluir`); return; }
-  confirmDlg(`Excluir ${p}?`,'Some do disco. Se o git já conhece o arquivo, volta com git restore; se não, não volta.','Excluir',()=>{
+  confirmDlg(`Excluir ${p}?`,'Some do disco. O que o git já conhece volta com git restore; o resto não volta.','Excluir',()=>{
     delete F[p]; if(S.open){ const i=S.open.indexOf(p); if(i>=0){ S.open.splice(i,1); if(S.file===p) S.file=S.open[Math.min(i,S.open.length-1)]||null; if(!S.file&&S.rtab==='file') S.rtab='review'; } }
     toast(`${p} excluído`); render(); },true); }
 function featBtn(x){ const s=ST[x.st], i=FEATS.indexOf(x), ws=x.kind==='ws';
