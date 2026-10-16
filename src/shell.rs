@@ -19,7 +19,7 @@ use crate::{
     news_view::{self, NewsView},
     palette_cmd::{self, Cmd, CommandPalette},
     review::{self, Redo, Review},
-    sidebar::{Go, Sidebar, SidebarEvent},
+    sidebar::{FsOp, Go, Sidebar, SidebarEvent},
     terminal::TerminalView,
     theme::Theme,
     tour::{self, Anchors},
@@ -54,6 +54,7 @@ pub struct Shell {
     review: Option<Entity<Review>>,
     want_review: Option<Option<String>>,
     want_file: Option<String>,
+    want_fs: Option<FsOp>,
     want_merged: Option<(std::path::PathBuf, u64, String)>,
     /// "⎇ repo · N" da lateral: a revisão daquela worktree
     want_review_at: Option<std::path::PathBuf>,
@@ -340,6 +341,7 @@ impl Shell {
                     SidebarEvent::Picked => this.leave_modes(),
                     SidebarEvent::OpenReviewAt(p) => this.want_review_at = Some(p.clone()),
                     SidebarEvent::Stack(wt, st) => this.want_stack = Some((wt.clone(), *st)),
+                    SidebarEvent::Fs(op) => this.want_fs = Some(op.clone()),
                 }
                 cx.notify();
             })
@@ -410,6 +412,7 @@ impl Shell {
             review: None,
             want_review: None,
             want_file: None,
+            want_fs: None,
             want_merged: None,
             want_review_at: None,
             want_stack: None,
@@ -943,6 +946,93 @@ impl Shell {
         .detach();
         self.confirm = Some(c);
         cx.notify();
+    }
+
+    /// Botão direito na aba Arquivos: mexe no disco e leva as abas do editor junto.
+    fn file_op(&mut self, op: FsOp, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sidebar) = self.sidebar.clone() else {
+            return;
+        };
+        let Some(root) = sidebar.read(cx).top_worktree() else {
+            return;
+        };
+        let dirty = |this: &Self, p: &str, cx: &App| {
+            this.review
+                .as_ref()
+                .is_some_and(|r| r.read(cx).dirty_under(p, cx))
+        };
+        match op {
+            FsOp::Create(rel, dir) => match changes::create(&root, &rel, dir) {
+                Ok(rel) => {
+                    sidebar.update(cx, |s, cx| s.reload_files(Some(&rel), cx));
+                    if !dir {
+                        self.run(Cmd::OpenFile(rel), window, cx);
+                    }
+                }
+                Err(e) => self.toast(e, cx),
+            },
+            FsOp::Rename(from, to) => {
+                if dirty(self, &from, cx) {
+                    return self.toast(
+                        format!("{from} tem alterações não salvas: salve antes de renomear"),
+                        cx,
+                    );
+                }
+                match changes::rename(&root, &from, &to) {
+                    Ok(to) => {
+                        if let Some(r) = &self.review {
+                            r.update(cx, |r, cx| r.moved(&from, &to, window, cx));
+                        }
+                        sidebar.update(cx, |s, cx| s.reload_files(Some(&to), cx));
+                    }
+                    Err(e) => self.toast(e, cx),
+                }
+            }
+            FsOp::Delete(rel, dir) => {
+                if dirty(self, &rel, cx) {
+                    return self.toast(
+                        format!("{rel} tem alterações não salvas: salve antes de excluir"),
+                        cx,
+                    );
+                }
+                let title = if dir {
+                    let inner = format!("{rel}/");
+                    let n = changes::files(&root)
+                        .iter()
+                        .filter(|f| f.starts_with(&inner) && !f.ends_with('/'))
+                        .count();
+                    format!(
+                        "Excluir a pasta {rel} e {n} arquivo{}?",
+                        if n == 1 { "" } else { "s" }
+                    )
+                } else {
+                    format!("Excluir {rel}?")
+                };
+                let text = "Some do disco. O que o git já conhece volta com git restore; o resto não volta.".to_string();
+                let theme = self.theme.clone();
+                let c = cx.new(|cx| Confirm::new(theme, title, text, "Excluir", true, window, cx));
+                cx.subscribe_in(&c, window, move |this, _, a: &Answer, window, cx| {
+                    this.confirm = None;
+                    window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                    if matches!(a, Answer::Ok) {
+                        match changes::remove(&root, &rel) {
+                            Ok(()) => {
+                                if let Some(r) = &this.review {
+                                    r.update(cx, |r, cx| r.forget(&rel, window, cx));
+                                }
+                                sidebar.update(cx, |s, cx| s.reload_files(None, cx));
+                                this.toast(format!("{rel} excluído"), cx);
+                            }
+                            Err(e) => this.toast(format!("Não deu para excluir {rel}: {e}"), cx),
+                        }
+                    }
+                    cx.notify();
+                })
+                .detach();
+                self.confirm = Some(c);
+                cx.notify();
+            }
+        }
     }
 
     /// O `compareDlg` do protótipo para o grupo da feature em foco.
@@ -3311,6 +3401,9 @@ impl Render for Shell {
         }
         if let Some(p) = self.want_file.take() {
             self.run(Cmd::OpenFile(p), window, cx);
+        }
+        if let Some(op) = self.want_fs.take() {
+            self.file_op(op, window, cx);
         }
         if let Some(p) = self.want_review.take() {
             self.toggle_review(p, window, cx);

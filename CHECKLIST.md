@@ -278,6 +278,15 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] Shell: modo no título com contagem, Alt+6, Ctrl+Shift+D, comandos na paleta, dicas, "N bancos" na barra de status
 - [x] Teste no app com aliases falsos: liga, cai, desliga, sobrevive ao fechar o app e é reconhecido ao reabrir
 
+## Árvore de arquivos editável (extensão: o protótipo não cobre)
+
+- [x] Protótipo: menu do botão direito (Novo arquivo, Nova pasta, Renomear, Excluir) e campo em linha na aba Arquivos
+- [x] `changes.rs`: criar, renomear e excluir com o caminho preso à worktree (recusa vazio, absoluto, `..`, existente) + teste
+- [x] Lateral: menu no botão direito, campo em linha, pasta vazia recém-criada aparece na árvore
+- [x] Shell: arquivo novo abre no editor; Excluir pede Confirm vermelho
+- [x] Editor: abas seguem o renomear e fecham no excluir; aba suja bloqueia com toast
+- [x] Teste no app num repo descartável
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
