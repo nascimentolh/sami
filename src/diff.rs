@@ -192,14 +192,24 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// A base da worktree: a mãe da pilha, senão o main/master (local ou do origin) mais perto do HEAD.
+/// Um `master` local de meses atrás não pode virar base: o diff traria tudo que o origin andou.
+pub fn base(root: &Path) -> Option<String> {
+    crate::feature::stack_base(root).or_else(|| {
+        ["main", "origin/main", "master", "origin/master"]
+            .into_iter()
+            .filter_map(|b| {
+                let n = git(root, &["rev-list", "--count", &format!("{b}..HEAD")])?;
+                Some((n.trim().parse::<u32>().ok()?, b))
+            })
+            .min_by_key(|(n, _)| *n)
+            .map(|(_, b)| b.to_string())
+    })
+}
+
 /// Tudo que a worktree mudou desde a base (commitado ou não), mais os arquivos novos ainda não rastreados.
 pub fn worktree(root: &Path) -> Option<(String, Vec<FileDiff>)> {
-    let base = crate::feature::stack_base(root).or_else(|| {
-        ["main", "master"]
-            .into_iter()
-            .find(|b| git(root, &["rev-parse", "--verify", "--quiet", b]).is_some())
-            .map(String::from)
-    })?;
+    let base = base(root)?;
     let fork = git(root, &["merge-base", "HEAD", &base])?;
     let mut files = parse(&git(
         root,
@@ -363,6 +373,65 @@ pub fn highlight(line: &str) -> Vec<(std::ops::Range<usize>, Tok)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_e_o_ref_mais_perto_do_head() {
+        let root = std::env::temp_dir().join(format!("maestro-base-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let g = |a: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&root)
+                    .args(a)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            )
+        };
+        g(&["init", "-q", "-b", "master"]);
+        g(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "velho",
+        ]);
+        g(&["checkout", "-q", "-b", "feat"]);
+        for m in ["origin 1", "origin 2"] {
+            g(&[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                m,
+            ]);
+        }
+        g(&["update-ref", "refs/remotes/origin/master", "HEAD"]);
+        g(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "minha",
+        ]);
+        let b = base(&root);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(b.as_deref(), Some("origin/master"));
+    }
 
     #[test]
     fn testes_afetados_escapa_aspas() {

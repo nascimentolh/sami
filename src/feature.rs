@@ -165,6 +165,15 @@ pub fn setup_command(repo: &Path) -> Option<String> {
     )
 }
 
+/// Registry no Artifact Registry: o token do `~/.npmrc` vence e o install toma 403.
+/// O token vai para o `~/.npmrc`, nunca para o `.npmrc` versionado da worktree (iria parar no MR).
+pub fn registry_auth(repo: &Path) -> Option<&'static str> {
+    std::fs::read_to_string(repo.join(".npmrc"))
+        .ok()
+        .filter(|t| t.contains("pkg.dev"))
+        .map(|_| "npx -y google-artifactregistry-auth --repo-config .npmrc --credential-config ~/.npmrc")
+}
+
 /// Os `.env*` da raiz que o git ignora (os versionados já vêm com a worktree).
 pub fn env_files(repo: &Path) -> Vec<String> {
     git(
@@ -277,7 +286,8 @@ pub fn start_command(
         }
         parts.push(c);
     }
-    parts.join(" && ")
+    // install que falha não segura o Claude: o erro fica na tela, acima dele
+    parts.join("; ")
 }
 
 /// Cria a worktree, copia os `.env`, grava o inventário e abre o workspace no herdr com o setup e o Claude.
@@ -387,12 +397,11 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Option<String>,
         let f = data_dir().join(format!("{}.context.md", inv.id));
         std::fs::write(&f, c).ok().map(|_| f)
     });
-    let cmd = start_command(
-        req,
-        setup_command(&req.repo).as_deref(),
-        context.as_deref(),
-        &others,
-    );
+    let setup = setup_command(&req.repo).map(|s| match registry_auth(&req.repo) {
+        Some(a) => format!("{a} && {s}"),
+        None => s,
+    });
+    let cmd = start_command(req, setup.as_deref(), context.as_deref(), &others);
     if let (Some(pane), false) = (&pane, cmd.is_empty()) {
         let _ = herdr.call(
             "pane.send_text",
@@ -1214,7 +1223,7 @@ mod tests {
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
         assert_eq!(
             start_command(&req("faz X"), Some("npm ci"), None, &[]),
-            "npm ci && claude 'faz X'"
+            "npm ci; claude 'faz X'"
         );
         let mut r = req("");
         r.setup = false;
@@ -1252,6 +1261,13 @@ mod tests {
         env.sort();
         assert_eq!(env, vec![".env", ".env.local"]);
         assert_eq!(setup_command(&dir).as_deref(), Some("npm ci"));
+        assert_eq!(registry_auth(&dir), None);
+        std::fs::write(
+            dir.join(".npmrc"),
+            "@x:registry=https://us-central1-npm.pkg.dev/p/npm/\n",
+        )
+        .unwrap();
+        assert!(registry_auth(&dir).is_some_and(|a| a.contains("--credential-config ~/.npmrc")));
         std::fs::write(dir.join(".maestro.toml"), "setup = \"make deps\"\n").unwrap();
         assert_eq!(setup_command(&dir).as_deref(), Some("make deps"));
         std::fs::remove_dir_all(dir).unwrap();

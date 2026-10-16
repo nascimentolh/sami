@@ -41,6 +41,8 @@ mod tasks;
 mod terminal;
 mod theme;
 mod tour;
+mod tunnels;
+mod tunnels_view;
 mod vault;
 mod vault_view;
 

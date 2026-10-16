@@ -84,7 +84,9 @@ pub struct Review {
     /// edição em linha: (arquivo, linha nova, campo)
     editing: Option<(String, u32, Entity<TextField>)>,
     edited: Vec<String>,
-    scroll: ScrollHandle,
+    /// a lista virtual do diff e as entradas dela: (arquivo, bloco, linha); `None` é o cabeçalho
+    list: ListState,
+    rows: Vec<(usize, Option<usize>, Option<usize>)>,
     feature_id: Option<String>,
     /// envs novas que faltam no k8s-configmap da feature: (nome, `arquivo:linha`)
     env_warn: Vec<(String, String)>,
@@ -192,7 +194,8 @@ impl Review {
             next_id: 0,
             editing: None,
             edited: Vec::new(),
-            scroll: ScrollHandle::new(),
+            list: ListState::new(0, ListAlignment::Top, px(400.)),
+            rows: Vec::new(),
             turns: Vec::new(),
             turn: None,
             turn_open: false,
@@ -231,6 +234,10 @@ impl Review {
             return cx.notify();
         }
         self.close_armed = None;
+        self.drop_tab(i, window, cx);
+    }
+
+    fn drop_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.editors.remove(i);
         if self.active >= i && self.active > 0 {
             self.active -= 1;
@@ -241,6 +248,48 @@ impl Review {
         let f = self.focus_handle(cx);
         window.focus(&f, cx);
         cx.notify();
+    }
+
+    /// Abas do arquivo `path` ou de dentro da pasta `path`.
+    fn under(&self, path: &str, cx: &App) -> Vec<usize> {
+        let dir = format!("{path}/");
+        (0..self.editors.len())
+            .rev()
+            .filter(|&i| {
+                let p = &self.editors[i].read(cx).path;
+                p == path || p.starts_with(&dir)
+            })
+            .collect()
+    }
+
+    pub fn dirty_under(&self, path: &str, cx: &App) -> bool {
+        self.under(path, cx)
+            .into_iter()
+            .any(|i| self.editors[i].read(cx).dirty(cx))
+    }
+
+    /// O arquivo (ou a pasta) saiu do disco: as abas dele fecham sem perguntar.
+    pub fn forget(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        for i in self.under(path, cx) {
+            self.drop_tab(i, window, cx);
+        }
+    }
+
+    /// Renomeado na árvore: a aba reabre no caminho novo.
+    pub fn moved(&mut self, from: &str, to: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let moved: Vec<String> = self
+            .under(from, cx)
+            .into_iter()
+            .rev()
+            .map(|i| format!("{to}{}", &self.editors[i].read(cx).path[from.len()..]))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        self.forget(from, window, cx);
+        for p in moved {
+            self.open_file(p, window, cx);
+        }
     }
 
     pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {
@@ -1202,224 +1251,251 @@ impl Review {
         block
     }
 
-    fn file_block(&self, fi: usize, f: &FileDiff, cx: &mut Context<Self>) -> Div {
+    fn file_head(&self, fi: usize, f: &FileDiff, cx: &mut Context<Self>) -> Div {
         let t = &self.theme;
         let (a, r) = f.counts();
         let red: Hsla = rgb(0xff5555).into();
-        let mut block = div().flex().flex_col().child(
-            div()
-                .flex()
-                .gap(px(10.))
-                .items_center()
-                .px(px(12.))
-                .py(px(6.))
-                .bg(t.panel)
-                .border_t_1()
-                .border_b_1()
-                .border_color(t.line)
-                .font_family(t.sans)
-                .child(div().font_family(t.mono.clone()).child(f.path.clone()))
-                .when(f.new, |x| {
-                    x.child(
-                        div()
-                            .font_family(t.mono.clone())
-                            .text_size(px(12.))
-                            .px(px(7.))
-                            .rounded(px(10.))
-                            .border_1()
-                            .border_color(t.accent)
-                            .text_color(t.accent)
-                            .child("novo"),
-                    )
-                })
-                .child(div().text_color(t.ok).child(format!("+{a}")))
-                .child(div().text_color(red).child(format!("−{r}")))
-                .when(self.edited.contains(&f.path), |x| {
-                    x.child(
-                        div()
-                            .font_family(t.mono.clone())
-                            .text_size(px(12.))
-                            .px(px(6.))
-                            .rounded(px(3.))
-                            .border_1()
-                            .border_color(t.accent)
-                            .text_color(t.accent)
-                            .child("editado por você"),
-                    )
-                })
-                .child(div().flex_1())
-                .when(self.root.join(&f.path).is_file(), |x| {
-                    let path = f.path.clone();
-                    x.child(button(t, ("open", fi), "Abrir no editor", false).on_click(
-                        cx.listener(move |this, _, w, cx| this.open_file(path.clone(), w, cx)),
-                    ))
-                }),
-        );
-        for (hi, h) in f.hunks.iter().enumerate() {
-            let ok = self.accepted.contains(&(f.path.clone(), h.header.clone()));
-            let key = (f.path.clone(), h.header.clone());
-            let small = |id: (&'static str, usize), label: &str| {
-                div()
-                    .id(id)
-                    .text_size(px(12.5))
-                    .px(px(6.))
-                    .border_1()
-                    .border_color(t.line)
-                    .rounded(px(4.))
-                    .bg(t.raise)
-                    .text_color(t.fg)
-                    .cursor_pointer()
-                    .hover(|x| x.border_color(t.muted))
-                    .child(label.to_string())
-            };
-            block = block.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .text_color(if ok { t.ok } else { t.comment })
-                    .bg(rgba(0x6272a41f))
-                    .child(h.header.clone())
-                    .child(
-                        div()
-                            .ml_auto()
-                            .flex()
-                            .gap(px(4.))
-                            .font_family(t.sans)
-                            .when(fi == 0 && hi == 0, |x| {
-                                x.relative().child(tour::anchor(&self.anchors, "hunkacts"))
-                            })
-                            .child(
-                                small(("ask", fi * 1000 + hi), "?")
-                                    .font_family(t.mono.clone())
-                                    .text_color(t.muted)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(c) = this.ask_ctx(fi, hi) {
-                                            cx.emit(Event::AskClaude(c));
-                                        }
-                                    })),
-                            )
-                            .when(ok, |x| x.child("✓ aceito"))
-                            .when(!ok, |x| {
-                                x.child(small(("acc", fi * 1000 + hi), "✓ Aceitar").on_click(
-                                    cx.listener(move |this, _, _, cx| {
-                                        this.accepted.insert(key.clone());
-                                        cx.notify();
-                                    }),
-                                ))
-                                .child(
-                                    small(("rej", fi * 1000 + hi), "↶ Desfazer").on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.undo_hunk(fi, hi, cx)
-                                        }),
-                                    ),
-                                )
-                            }),
-                    ),
-            );
-            for (li, l) in h.lines.iter().enumerate() {
-                let sel = self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|(p, n)| *p == f.path && Some(*n) == l.new);
-                let editing = self
-                    .editing
-                    .as_ref()
-                    .filter(|(p, n, _)| *p == f.path && Some(*n) == l.new)
-                    .map(|(_, _, e)| e.clone());
-                let (path, n, text) = (f.path.clone(), l.new, l.text.clone());
-                let bg = match l.kind {
-                    Kind::Add => Some(Hsla::from(rgba(0x50fa7b1a))),
-                    Kind::Del => Some(Hsla::from(rgba(0xff55551f))),
-                    Kind::Context => None,
-                };
-                let sign = match l.kind {
-                    Kind::Add => "+",
-                    Kind::Del => "-",
-                    Kind::Context => "",
-                };
-                let num = |v: Option<u32>| {
+
+        div()
+            .flex()
+            .gap(px(10.))
+            .items_center()
+            .px(px(12.))
+            .py(px(6.))
+            .bg(t.panel)
+            .border_t_1()
+            .border_b_1()
+            .border_color(t.line)
+            .font_family(t.sans)
+            .child(div().font_family(t.mono.clone()).child(f.path.clone()))
+            .when(f.new, |x| {
+                x.child(
                     div()
-                        .w(px(40.))
-                        .flex_none()
-                        .pr(px(8.))
-                        .text_right()
-                        .text_color(t.comment)
-                        .child(v.map(|x| x.to_string()).unwrap_or_default())
-                };
-                let row = div()
-                    .id(("l", (fi * 1000 + hi) * 10_000 + li))
-                    .group("dl")
-                    .relative()
+                        .font_family(t.mono.clone())
+                        .text_size(px(12.))
+                        .px(px(7.))
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(t.accent)
+                        .text_color(t.accent)
+                        .child("novo"),
+                )
+            })
+            .child(div().text_color(t.ok).child(format!("+{a}")))
+            .child(div().text_color(red).child(format!("−{r}")))
+            .when(self.edited.contains(&f.path), |x| {
+                x.child(
+                    div()
+                        .font_family(t.mono.clone())
+                        .text_size(px(12.))
+                        .px(px(6.))
+                        .rounded(px(3.))
+                        .border_1()
+                        .border_color(t.accent)
+                        .text_color(t.accent)
+                        .child("editado por você"),
+                )
+            })
+            .child(div().flex_1())
+            .when(self.root.join(&f.path).is_file(), |x| {
+                let path = f.path.clone();
+                x.child(button(t, ("open", fi), "Abrir no editor", false).on_click(
+                    cx.listener(move |this, _, w, cx| this.open_file(path.clone(), w, cx)),
+                ))
+            })
+    }
+
+    fn hunk_head(&self, fi: usize, hi: usize, f: &FileDiff, cx: &mut Context<Self>) -> Div {
+        let t = &self.theme;
+        let h = &f.hunks[hi];
+        let ok = self.accepted.contains(&(f.path.clone(), h.header.clone()));
+        let key = (f.path.clone(), h.header.clone());
+        let small = |id: (&'static str, usize), label: &str| {
+            div()
+                .id(id)
+                .text_size(px(12.5))
+                .px(px(6.))
+                .border_1()
+                .border_color(t.line)
+                .rounded(px(4.))
+                .bg(t.raise)
+                .text_color(t.fg)
+                .cursor_pointer()
+                .hover(|x| x.border_color(t.muted))
+                .child(label.to_string())
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(12.))
+            .text_color(if ok { t.ok } else { t.comment })
+            .bg(rgba(0x6272a41f))
+            .child(h.header.clone())
+            .child(
+                div()
+                    .ml_auto()
                     .flex()
-                    .h(px(20.))
-                    .cursor_pointer()
-                    .when_some(bg, |x, c| x.bg(c))
-                    .hover(|x| x.bg(rgba(0x44475a73)))
-                    .when(sel, |x| x.border_l_3().border_color(t.accent))
-                    .on_click(cx.listener(move |this, e: &ClickEvent, w, cx| {
-                        let Some(n) = n else { return };
-                        this.selected = Some((path.clone(), n));
-                        if e.click_count() == 2 {
-                            this.start_edit(path.clone(), n, text.clone(), w, cx);
-                        }
-                        cx.notify();
-                    }))
-                    .child(num(l.old))
-                    .child(num(l.new))
-                    .child(div().w(px(18.)).flex_none().text_color(t.muted).child(sign))
-                    .child(match editing {
-                        Some(f) => div().flex_1().child(f),
-                        None => div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .pr(px(8.))
-                            .child(self.code(&l.text)),
+                    .gap(px(4.))
+                    .font_family(t.sans)
+                    .when(fi == 0 && hi == 0, |x| {
+                        x.relative().child(tour::anchor(&self.anchors, "hunkacts"))
                     })
-                    .when(l.new.is_some(), |x| {
-                        let path = f.path.clone();
-                        let n = l.new.unwrap();
+                    .child(
+                        small(("ask", fi * 1000 + hi), "?")
+                            .font_family(t.mono.clone())
+                            .text_color(t.muted)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(c) = this.ask_ctx(fi, hi) {
+                                    cx.emit(Event::AskClaude(c));
+                                }
+                            })),
+                    )
+                    .when(ok, |x| x.child("✓ aceito"))
+                    .when(!ok, |x| {
                         x.child(
-                            div()
-                                .id(("cm", (fi * 1000 + hi) * 10_000 + li))
-                                .absolute()
-                                .left(px(62.))
-                                .top(px(2.))
-                                .size(px(16.))
-                                .rounded(px(3.))
-                                .bg(t.accent)
-                                .text_color(rgb(0x282a36))
-                                .font_family(t.sans)
-                                .text_size(px(13.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .invisible()
-                                .group_hover("dl", |s| s.visible())
-                                .when(sel, |x| x.visible())
-                                .on_click(cx.listener(move |this, _, w, cx| {
-                                    this.selected = Some((path.clone(), n));
-                                    this.new_draft(w, cx);
-                                }))
-                                .child("+"),
+                            small(("acc", fi * 1000 + hi), "✓ Aceitar").on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.accepted.insert(key.clone());
+                                    cx.notify();
+                                },
+                            )),
                         )
-                    });
-                block = block.child(row);
-                if let Some(n) = l.new {
-                    for d in self
-                        .drafts
-                        .iter()
-                        .filter(|d| d.path == f.path && d.line == Some(n))
-                    {
-                        block = block.child(self.draft_box(d, cx));
-                    }
+                        .child(
+                            small(("rej", fi * 1000 + hi), "↶ Desfazer").on_click(
+                                cx.listener(move |this, _, _, cx| this.undo_hunk(fi, hi, cx)),
+                            ),
+                        )
+                    }),
+            )
+    }
+
+    /// A linha do diff e os rascunhos dela.
+    fn line_row(
+        &self,
+        fi: usize,
+        hi: usize,
+        li: usize,
+        f: &FileDiff,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = &self.theme;
+        let l = &f.hunks[hi].lines[li];
+        let sel = self
+            .selected
+            .as_ref()
+            .is_some_and(|(p, n)| *p == f.path && Some(*n) == l.new);
+        let editing = self
+            .editing
+            .as_ref()
+            .filter(|(p, n, _)| *p == f.path && Some(*n) == l.new)
+            .map(|(_, _, e)| e.clone());
+        let (path, n, text) = (f.path.clone(), l.new, l.text.clone());
+        let bg = match l.kind {
+            Kind::Add => Some(Hsla::from(rgba(0x50fa7b1a))),
+            Kind::Del => Some(Hsla::from(rgba(0xff55551f))),
+            Kind::Context => None,
+        };
+        let sign = match l.kind {
+            Kind::Add => "+",
+            Kind::Del => "-",
+            Kind::Context => "",
+        };
+        let num = |v: Option<u32>| {
+            div()
+                .w(px(40.))
+                .flex_none()
+                .pr(px(8.))
+                .text_right()
+                .text_color(t.comment)
+                .child(v.map(|x| x.to_string()).unwrap_or_default())
+        };
+        let row = div()
+            .id(("l", (fi * 1000 + hi) * 10_000 + li))
+            .group("dl")
+            .relative()
+            .flex()
+            .h(px(20.))
+            .cursor_pointer()
+            .when_some(bg, |x, c| x.bg(c))
+            .hover(|x| x.bg(rgba(0x44475a73)))
+            .when(sel, |x| x.border_l_3().border_color(t.accent))
+            .on_click(cx.listener(move |this, e: &ClickEvent, w, cx| {
+                let Some(n) = n else { return };
+                this.selected = Some((path.clone(), n));
+                if e.click_count() == 2 {
+                    this.start_edit(path.clone(), n, text.clone(), w, cx);
                 }
+                cx.notify();
+            }))
+            .child(num(l.old))
+            .child(num(l.new))
+            .child(div().w(px(18.)).flex_none().text_color(t.muted).child(sign))
+            .child(match editing {
+                Some(f) => div().flex_1().child(f),
+                None => div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .pr(px(8.))
+                    .child(self.code(&l.text)),
+            })
+            .when(l.new.is_some(), |x| {
+                let path = f.path.clone();
+                let n = l.new.unwrap();
+                x.child(
+                    div()
+                        .id(("cm", (fi * 1000 + hi) * 10_000 + li))
+                        .absolute()
+                        .left(px(62.))
+                        .top(px(2.))
+                        .size(px(16.))
+                        .rounded(px(3.))
+                        .bg(t.accent)
+                        .text_color(rgb(0x282a36))
+                        .font_family(t.sans)
+                        .text_size(px(13.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .invisible()
+                        .group_hover("dl", |s| s.visible())
+                        .when(sel, |x| x.visible())
+                        .on_click(cx.listener(move |this, _, w, cx| {
+                            this.selected = Some((path.clone(), n));
+                            this.new_draft(w, cx);
+                        }))
+                        .child("+"),
+                )
+            });
+        let mut col = div().flex().flex_col().child(row);
+        if let Some(n) = l.new {
+            for d in self
+                .drafts
+                .iter()
+                .filter(|d| d.path == f.path && d.line == Some(n))
+            {
+                col = col.child(self.draft_box(d, cx));
             }
         }
-        block
+        col
+    }
+
+    /// Uma entrada da lista virtual do diff: só as visíveis são desenhadas.
+    fn diff_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let (Some(files), Some(&(fi, hi, li))) = (&self.files, self.rows.get(ix)) else {
+            return div().into_any_element();
+        };
+        let f = &files[fi];
+        match (hi, li) {
+            (None, _) => self.file_head(fi, f, cx),
+            (Some(hi), None) => self.hunk_head(fi, hi, f, cx),
+            (Some(hi), Some(li)) => self.line_row(fi, hi, li, f, cx),
+        }
+        .w_full()
+        .into_any_element()
     }
 }
 
@@ -1604,21 +1680,42 @@ impl Render for Review {
                 .child(self.hist_body(cx));
         }
         let n = self.files.as_ref().map_or(0, Vec::len);
-        let mut body = div()
-            .id("diff")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll);
+        let body = div().id("diff").flex_1().min_h_0().flex().flex_col();
+        self.rows = self
+            .files
+            .iter()
+            .flatten()
+            .enumerate()
+            .flat_map(|(fi, f)| {
+                std::iter::once((fi, None, None)).chain(f.hunks.iter().enumerate().flat_map(
+                    move |(hi, h)| {
+                        std::iter::once((fi, Some(hi), None))
+                            .chain((0..h.lines.len()).map(move |li| (fi, Some(hi), Some(li))))
+                    },
+                ))
+            })
+            .collect();
+        // contar no fim preserva o topo da rolagem quando o diff relê; remedir pega rascunho e edição em linha
+        let (old, new) = (self.list.item_count(), self.rows.len());
+        if new > old {
+            self.list.splice(old..old, new - old);
+        } else if new < old {
+            self.list.splice(new..old, 0);
+        }
+        self.list.remeasure_items(0..new);
         if let Some(target) = self.scroll_to.take()
-            && let Some(i) = self
+            && let Some(fi) = self
                 .files
                 .as_ref()
                 .and_then(|f| f.iter().position(|x| x.path == target))
+            && let Some(ix) = self.rows.iter().position(|r| *r == (fi, None, None))
         {
-            self.scroll.scroll_to_item(i);
+            self.list.scroll_to(ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.),
+            });
         }
-        body = match &self.files {
+        let body = match &self.files {
             None => body.child(div().p(px(24.)).text_color(t.muted).child("Lendo o diff…")),
             Some(files) if files.is_empty() => body.child(
                 div()
@@ -1636,14 +1733,18 @@ impl Render for Review {
                         self.base
                     )),
             ),
-            Some(files) => {
-                let files = files.clone();
-                let mut list = div().flex().flex_col().pb(px(40.)).font_family(t.mono.clone()).text_size(px(13.5)).line_height(px(22.));
-                for (i, f) in files.iter().enumerate() {
-                    list = list.child(self.file_block(i, f, cx));
-                }
-                body.child(list)
-            }
+            Some(_) => body
+                .font_family(t.mono.clone())
+                .text_size(px(13.5))
+                .line_height(px(22.))
+                .child(
+                    list(
+                        self.list.clone(),
+                        cx.processor(|this, ix, _, cx| this.diff_row(ix, cx)),
+                    )
+                    .flex_1()
+                    .pb(px(40.)),
+                ),
         };
         let pend = self.pending().len();
         let edits = self.edited.len();

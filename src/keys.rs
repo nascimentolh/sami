@@ -4,13 +4,13 @@ use gpui_kit::Keystroke;
 /// Ctrl+Shift+- fica de fora: é o ^_ (desfazer) do readline e do nano.
 pub fn is_app_shortcut(k: &Keystroke) -> bool {
     let m = &k.modifiers;
-    // Alt+N: nova feature, como no protótipo; Alt+1…5: os modos do título; Alt+T/W/[/]: abas de trabalho
+    // Alt+N: nova feature, como no protótipo; Alt+1…6: os modos do título; Alt+T/W/[/]: abas de trabalho
     (m.alt
         && !m.control
         && !m.shift
         && matches!(
             k.key.as_str(),
-            "n" | "1" | "2" | "3" | "4" | "5" | "t" | "w" | "[" | "]"
+            "n" | "1" | "2" | "3" | "4" | "5" | "6" | "t" | "w" | "[" | "]"
         ))
         || feature_digit(k).is_some()
         || m.control
@@ -47,6 +47,8 @@ pub fn to_bytes(k: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
         })
     };
     let named: Option<Vec<u8>> = match k.key.as_str() {
+        // Ctrl/Shift/Alt+Enter: o Claude Code lê ESC+CR como quebra de linha, como o Alt+Enter do Ghostty
+        "enter" if m.control || m.shift || m.alt => Some(b"\x1b\r".to_vec()),
         "enter" => Some(b"\r".to_vec()),
         "backspace" => Some(if m.alt {
             b"\x1b\x7f".to_vec()
@@ -113,6 +115,9 @@ mod tests {
     #[test]
     fn mapeia_teclas() {
         assert_eq!(to_bytes(&ks("enter"), false), Some(b"\r".to_vec()));
+        for k in ["ctrl-enter", "shift-enter", "alt-enter"] {
+            assert_eq!(to_bytes(&ks(k), false), Some(b"\x1b\r".to_vec()), "{k}");
+        }
         assert_eq!(to_bytes(&ks("ctrl-c"), false), Some(vec![3]));
         assert_eq!(to_bytes(&ks("ctrl-a"), false), Some(vec![1]));
         assert_eq!(to_bytes(&ks("up"), false), Some(b"\x1b[A".to_vec()));
@@ -139,6 +144,7 @@ mod tests {
         assert!(!is_app_shortcut(&ks("ctrl-alt-shift-t")));
         assert!(is_app_shortcut(&ks("alt-n")));
         assert!(is_app_shortcut(&ks("alt-t")));
+        assert!(is_app_shortcut(&ks("alt-6")));
         assert!(is_app_shortcut(&ks("alt-]")));
         assert!(!is_app_shortcut(&ks("alt-b")));
     }

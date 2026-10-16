@@ -1,6 +1,7 @@
 //! MRs de outras pessoas e o revisor: o port do `~/mr-review.sh`, uma armadilha por função.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -923,6 +924,49 @@ pub fn review(
 }
 
 /// Grava `path!iid@sha` no mesmo arquivo do `~/.mr-review-seen`.
+/// Arquivos marcados "Visto": `path!iid|arquivo|hash do diff`. Diff com outro hash = mudou depois.
+pub fn viewed_file() -> PathBuf {
+    std::env::var_os("MAESTRO_VIEWED").map_or_else(
+        || {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".local/share/maestro/mr-viewed")
+        },
+        PathBuf::from,
+    )
+}
+
+pub fn viewed(state: &str, key: &str) -> HashMap<String, u64> {
+    state
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.splitn(3, '|');
+            (it.next()? == key).then_some(())?;
+            Some((it.next()?.to_string(), it.next()?.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Troca a linha do arquivo; `None` desmarca.
+pub fn set_viewed(state: &str, key: &str, file: &str, hash: Option<u64>) -> String {
+    let prefix = format!("{key}|{file}|");
+    let mut out: String = state
+        .lines()
+        .filter(|l| !l.starts_with(&prefix))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    if let Some(h) = hash {
+        out.push_str(&format!("{prefix}{h}\n"));
+    }
+    out
+}
+
+/// FNV-1a: estável entre builds (o `DefaultHasher` não promete isso).
+pub fn diff_hash(diff: &str) -> u64 {
+    diff.bytes().fold(0xcbf29ce484222325, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100000001b3)
+    })
+}
+
 pub fn mark_seen(path: &str, iid: u64, sha: &str) {
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -959,6 +1003,23 @@ pub fn discard_remote(path: &str, iid: u64, ids: &[u64]) {
             ),
             &Value::Null,
         );
+    }
+}
+
+#[cfg(test)]
+mod viewed_tests {
+    use super::*;
+
+    #[test]
+    fn visto_cai_quando_o_diff_muda() {
+        let k = "g/p!7";
+        let st = set_viewed("", k, "a.rs", Some(diff_hash("+x")));
+        let st = set_viewed(&st, "g/p!8", "a.rs", Some(1));
+        let v = viewed(&st, k);
+        assert_eq!(v.get("a.rs"), Some(&diff_hash("+x")));
+        assert_ne!(diff_hash("+x"), diff_hash("+y"));
+        let st = set_viewed(&st, k, "a.rs", None);
+        assert!(viewed(&st, k).is_empty() && viewed(&st, "g/p!8").len() == 1);
     }
 }
 

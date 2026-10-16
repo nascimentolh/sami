@@ -57,6 +57,12 @@ pub enum Cmd {
     Kcmd,
     News,
     NewsBrief,
+    /// o modo Bancos (túneis dos aliases do zsh)
+    Db,
+    /// Ctrl+Shift+D: o seletor de bancos, de qualquer tela
+    DbMenu,
+    Tunnel(String),
+    TunnelsOff,
     /// "+" / Alt+T: a lista de repos para a aba nova
     RepoMenu,
     /// abre uma aba de trabalho nesta pasta
@@ -94,7 +100,7 @@ pub fn commands() -> Vec<Item> {
         ),
         c(
             "Fila: Ver tudo que espera por você",
-            "",
+            "Alt+6",
             Some(AttentionMenu),
         ),
         c("Feature: Nova…", "Alt+N", Some(NewFeature)),
@@ -105,7 +111,7 @@ pub fn commands() -> Vec<Item> {
         c("Vault: Nota do repo", "", Some(Vault(VaultGo::RepoNote))),
         c("Vault: Daily de hoje", "", Some(Vault(VaultGo::Today))),
         c("Vault: Atividade", "", Some(Vault(VaultGo::Log))),
-        c("Ir para: Vault", "Alt+3", Some(Vault(VaultGo::Open))),
+        c("Ir para: Vault", "Alt+4", Some(Vault(VaultGo::Open))),
         c("Ajuda: Rever tutorial desta tela", "", Some(Tutorial)),
         c("Feature: Remover a atual…", "", Some(RemoveFeature)),
         // não está no protótipo; o desenho (5.4) pede o comando
@@ -156,7 +162,7 @@ pub fn commands() -> Vec<Item> {
             "Ctrl+Shift+B",
             Some(ToggleLeft),
         ),
-        c("Auditoria: Abrir relatório", "Alt+4", Some(Audit(false))),
+        c("Auditoria: Abrir relatório", "", Some(Audit(false))),
         c(
             "Auditoria: Nova auditoria incremental",
             "",
@@ -168,6 +174,9 @@ pub fn commands() -> Vec<Item> {
         c("MR: Revisar com Claude", "⇧R", Some(MrReview)),
         c("Ir para: News", "Alt+5", Some(News)),
         c("News: Resumo do dia", "", Some(NewsBrief)),
+        c("Ir para: Bancos", "Alt+3", Some(Db)),
+        c("Banco: ligar ou desligar…", "Ctrl+Shift+D", Some(DbMenu)),
+        c("Banco: desligar todos", "", Some(TunnelsOff)),
         c("Ajuda: Atalhos e decisões de UX", "?", Some(Help)),
         c("Terminal: Rodar tarefa…", "", Some(TaskMenu)),
         c("Editor: Problemas", "", Some(Problems)),
@@ -225,6 +234,8 @@ pub enum Event {
     Close,
 }
 
+const SHOWN: usize = 200;
+
 pub struct CommandPalette {
     query: String,
     selected: usize,
@@ -234,6 +245,7 @@ pub struct CommandPalette {
     empty: &'static str,
     focus: FocusHandle,
     theme: Theme,
+    scroll: ScrollHandle,
 }
 
 impl EventEmitter<Event> for CommandPalette {}
@@ -255,6 +267,7 @@ impl CommandPalette {
             empty,
             focus: cx.focus_handle(),
             theme,
+            scroll: ScrollHandle::new(),
         };
         p.refilter();
         p
@@ -267,6 +280,7 @@ impl CommandPalette {
     fn refilter(&mut self) {
         self.items = filter(self.all.clone(), &self.query);
         self.selected = 0;
+        self.scroll.scroll_to_item(0);
     }
 
     fn run(&mut self, i: usize, cx: &mut Context<Self>) {
@@ -279,8 +293,15 @@ impl CommandPalette {
         match e.keystroke.key.as_str() {
             "escape" => cx.emit(Event::Close),
             "enter" => self.run(self.selected, cx),
-            "down" => self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1)),
-            "up" => self.selected = self.selected.saturating_sub(1),
+            "down" => {
+                self.selected =
+                    (self.selected + 1).min(self.items.len().min(SHOWN).saturating_sub(1));
+                self.scroll.scroll_to_item(self.selected);
+            }
+            "up" => {
+                self.selected = self.selected.saturating_sub(1);
+                self.scroll.scroll_to_item(self.selected);
+            }
             "backspace" => {
                 self.query.pop();
                 self.refilter();
@@ -391,7 +412,8 @@ impl Render for CommandPalette {
             .flex_col()
             .py(px(4.))
             .max_h(px(340.))
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll);
         if self.items.is_empty() {
             list = list.child(
                 div()
@@ -402,7 +424,7 @@ impl Render for CommandPalette {
             );
         }
         // ponytail: desenha só os 200 primeiros (a lista de arquivos de um repo grande); lista virtual se fizer falta
-        for (i, it) in self.items.iter().enumerate().take(200) {
+        for (i, it) in self.items.iter().enumerate().take(SHOWN) {
             let ready = it.cmd.is_some();
             list = list.child(
                 div()

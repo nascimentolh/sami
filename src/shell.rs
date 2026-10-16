@@ -19,10 +19,11 @@ use crate::{
     news_view::{self, NewsView},
     palette_cmd::{self, Cmd, CommandPalette},
     review::{self, Redo, Review},
-    sidebar::{Go, Sidebar, SidebarEvent},
+    sidebar::{FsOp, Go, Sidebar, SidebarEvent},
     terminal::TerminalView,
     theme::Theme,
     tour::{self, Anchors},
+    tunnels_view::{self, TunnelsView},
     vault_view::{self, VaultView},
 };
 
@@ -53,6 +54,7 @@ pub struct Shell {
     review: Option<Entity<Review>>,
     want_review: Option<Option<String>>,
     want_file: Option<String>,
+    want_fs: Option<FsOp>,
     want_merged: Option<(std::path::PathBuf, u64, String)>,
     /// "⎇ repo · N" da lateral: a revisão daquela worktree
     want_review_at: Option<std::path::PathBuf>,
@@ -72,6 +74,9 @@ pub struct Shell {
     /// o modo News (daily.dev); nasce com o app para a contagem e o Resumo do dia
     news: Entity<NewsView>,
     in_news: bool,
+    /// o modo Bancos; nasce com o app para a contagem do título e da barra de status
+    tunnels: Entity<TunnelsView>,
+    in_db: bool,
     /// o Resumo do dia na tela (não bloqueia nada)
     brief: bool,
     /// o modo Auditoria (dentro de Features, como no protótipo)
@@ -101,10 +106,15 @@ pub struct Shell {
 const MRS_HINTS: &[(&str, &str, bool)] = &[
     ("j k", "navegar", true),
     ("Enter", "abrir", true),
+    ("O", "abrir no GitLab", true),
     ("⇧R", "revisar com Claude", true),
     ("/", "filtrar", true),
 ];
 const MR_HINTS: &[(&str, &str, bool)] = &[
+    ("n p", "próximo/anterior arquivo", true),
+    ("V", "visto e próximo", true),
+    ("O", "abrir no GitLab", true),
+    ("R", "atualizar", true),
     ("C", "comentar linha", true),
     ("?", "perguntar sobre o bloco", true),
     ("⇧R", "revisar com Claude", true),
@@ -119,6 +129,14 @@ const AUDIT_HINTS: &[(&str, &str, bool)] = &[
     ("Nova auditoria…", "incremental ou completa", true),
     ("espaço", "marcar achado", true),
     ("?", "atalhos", true),
+];
+
+const DB_HINTS: &[(&str, &str, bool)] = &[
+    ("Alt+3", "Bancos", true),
+    ("j k", "navegar", true),
+    ("Enter", "liga/desliga", true),
+    ("/", "filtrar", true),
+    ("Ctrl+Shift+D", "ligar de qualquer tela", true),
 ];
 
 const NEWS_HINTS: &[(&str, &str, bool)] = &[
@@ -244,6 +262,14 @@ impl Shell {
     ) -> Self {
         let sidebar_present = sidebar.is_some();
         let news = cx.new(|cx| NewsView::new(theme.clone(), anchors.clone(), cx));
+        let tunnels = cx.new(|cx| TunnelsView::new(theme.clone(), cx));
+        cx.subscribe(
+            &tunnels,
+            |this: &mut Self, _, e: &tunnels_view::Event, cx| match e {
+                tunnels_view::Event::Toast(t) => this.toast(t.clone(), cx),
+            },
+        )
+        .detach();
         cx.subscribe(
             &news,
             |this: &mut Self, _, e: &news_view::Event, cx| match e {
@@ -315,6 +341,7 @@ impl Shell {
                     SidebarEvent::Picked => this.leave_modes(),
                     SidebarEvent::OpenReviewAt(p) => this.want_review_at = Some(p.clone()),
                     SidebarEvent::Stack(wt, st) => this.want_stack = Some((wt.clone(), *st)),
+                    SidebarEvent::Fs(op) => this.want_fs = Some(op.clone()),
                 }
                 cx.notify();
             })
@@ -385,6 +412,7 @@ impl Shell {
             review: None,
             want_review: None,
             want_file: None,
+            want_fs: None,
             want_merged: None,
             want_review_at: None,
             want_stack: None,
@@ -395,6 +423,8 @@ impl Shell {
             in_vault: false,
             news,
             in_news: false,
+            tunnels,
+            in_db: false,
             brief: false,
             mrs: None,
             in_mrs: false,
@@ -431,9 +461,10 @@ impl Shell {
                 "[" => Cmd::NextWork(-1),
                 "1" => Cmd::Features,
                 "2" => Cmd::Mrs,
-                "3" => Cmd::Vault(crate::palette_cmd::VaultGo::Open),
-                "4" => Cmd::Audit(false),
+                "3" => Cmd::Db,
+                "4" => Cmd::Vault(crate::palette_cmd::VaultGo::Open),
                 "5" => Cmd::News,
+                "6" => Cmd::AttentionMenu,
                 _ => return,
             };
             cx.stop_propagation();
@@ -448,6 +479,7 @@ impl Shell {
                 "b" => return self.run(Cmd::ToggleLeft, window, cx),
                 "f" => return self.run(Cmd::Files, window, cx),
                 "k" => return self.run(Cmd::Kcmd, window, cx),
+                "d" => return self.run(Cmd::DbMenu, window, cx),
                 _ => {}
             }
         }
@@ -520,6 +552,7 @@ impl Shell {
     /// Volta para o terminal de Features (feature escolhida pela lateral ou por Ctrl+Shift+1…9).
     fn leave_modes(&mut self) {
         self.in_news = false;
+        self.in_db = false;
         self.in_vault = false;
         self.in_mrs = false;
         self.in_audit = false;
@@ -915,6 +948,95 @@ impl Shell {
         cx.notify();
     }
 
+    /// Botão direito na aba Arquivos: mexe no disco e leva as abas do editor junto.
+    fn file_op(&mut self, op: FsOp, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sidebar) = self.sidebar.clone() else {
+            return;
+        };
+        let Some(root) = sidebar.read(cx).top_worktree() else {
+            return;
+        };
+        // as abas só são desta árvore se a revisão estiver na mesma worktree (multi-repo troca a dela)
+        let review = self.review.clone().filter(|r| r.read(cx).root == root);
+        let dirty = |p: &str, cx: &App| {
+            review
+                .as_ref()
+                .is_some_and(|r| r.read(cx).dirty_under(p, cx))
+        };
+        match op {
+            FsOp::Create(rel, dir) => match changes::create(&root, &rel, dir) {
+                Ok(rel) => {
+                    sidebar.update(cx, |s, cx| s.reload_files(Some(&rel), cx));
+                    if !dir {
+                        self.run(Cmd::OpenFile(rel), window, cx);
+                    }
+                }
+                Err(e) => self.toast(e, cx),
+            },
+            FsOp::Rename(from, to) => {
+                if dirty(&from, cx) {
+                    return self.toast(
+                        format!("{from} tem alterações não salvas: salve antes de renomear"),
+                        cx,
+                    );
+                }
+                match changes::rename(&root, &from, &to) {
+                    Ok(to) => {
+                        if let Some(r) = &review {
+                            r.update(cx, |r, cx| r.moved(&from, &to, window, cx));
+                        }
+                        sidebar.update(cx, |s, cx| s.reload_files(Some(&to), cx));
+                    }
+                    Err(e) => self.toast(e, cx),
+                }
+            }
+            FsOp::Delete(rel, dir) => {
+                if dirty(&rel, cx) {
+                    return self.toast(
+                        format!("{rel} tem alterações não salvas: salve antes de excluir"),
+                        cx,
+                    );
+                }
+                let title = if dir {
+                    let inner = format!("{rel}/");
+                    let n = changes::files(&root)
+                        .iter()
+                        .filter(|f| f.starts_with(&inner) && !f.ends_with('/'))
+                        .count();
+                    format!(
+                        "Excluir a pasta {rel} e {n} arquivo{}?",
+                        if n == 1 { "" } else { "s" }
+                    )
+                } else {
+                    format!("Excluir {rel}?")
+                };
+                let text = "Some do disco. O que o git já conhece volta com git restore; o resto não volta.".to_string();
+                let theme = self.theme.clone();
+                let c = cx.new(|cx| Confirm::new(theme, title, text, "Excluir", true, window, cx));
+                cx.subscribe_in(&c, window, move |this, _, a: &Answer, window, cx| {
+                    this.confirm = None;
+                    window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                    if matches!(a, Answer::Ok) {
+                        match changes::remove(&root, &rel) {
+                            Ok(()) => {
+                                if let Some(r) = &review {
+                                    r.update(cx, |r, cx| r.forget(&rel, window, cx));
+                                }
+                                sidebar.update(cx, |s, cx| s.reload_files(None, cx));
+                                this.toast(format!("{rel} excluído"), cx);
+                            }
+                            Err(e) => this.toast(format!("Não deu para excluir {rel}: {e}"), cx),
+                        }
+                    }
+                    cx.notify();
+                })
+                .detach();
+                self.confirm = Some(c);
+                cx.notify();
+            }
+        }
+    }
+
     /// O `compareDlg` do protótipo para o grupo da feature em foco.
     fn open_compare(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(sidebar) = self.sidebar.clone() else {
@@ -1293,6 +1415,7 @@ impl Shell {
                 vault_view::Event::Focus(p) => {
                     this.in_vault = false;
                     this.in_news = false;
+                    this.in_db = false;
                     if let Some(s) = &this.sidebar {
                         s.read(cx).focus(p.clone());
                     }
@@ -1662,6 +1785,7 @@ impl Shell {
         };
         let items = crate::changes::files(&root)
             .into_iter()
+            .filter(|p| !p.ends_with('/'))
             .map(|p| palette_cmd::Item {
                 title: p.clone(),
                 key: String::new(),
@@ -1798,6 +1922,7 @@ impl Shell {
                 self.left = true;
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 if let Some(s) = &self.sidebar {
@@ -1894,18 +2019,19 @@ impl Shell {
             }
             Cmd::Work(i) => {
                 if let Some(s) = &self.sidebar {
-                    s.read(cx).go_work(i);
+                    s.update(cx, |s, cx| s.go_work(i, cx));
                 }
                 self.leave_modes();
                 window.focus(&self.terminal.read(cx).focus_handle(), cx);
             }
             Cmd::NextWork(d) => {
                 let Some(s) = &self.sidebar else { return };
-                let s = s.read(cx);
-                let n = s.works.len() as i32;
-                if n > 1 {
-                    s.go_work((s.cur as i32 + d).rem_euclid(n) as usize);
-                }
+                s.update(cx, |s, cx| {
+                    let n = s.works.len() as i32;
+                    if n > 1 {
+                        s.go_work((s.cur as i32 + d).rem_euclid(n) as usize, cx);
+                    }
+                });
                 self.leave_modes();
                 window.focus(&self.terminal.read(cx).focus_handle(), cx);
             }
@@ -1933,6 +2059,7 @@ impl Shell {
                 }
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 window.focus(&self.terminal.read(cx).focus_handle(), cx);
@@ -1960,6 +2087,7 @@ impl Shell {
             Cmd::Features => {
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 self.in_audit = false;
             }
@@ -1972,6 +2100,7 @@ impl Shell {
                 self.in_audit = true;
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 let f = a.read(cx).focus_handle();
                 window.focus(&f, cx);
@@ -1985,6 +2114,7 @@ impl Shell {
                 self.in_mrs = true;
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_audit = false;
                 if cmd == Cmd::MrReview {
                     m.update(cx, |m, cx| m.start_review(cx));
@@ -2006,6 +2136,7 @@ impl Shell {
                 v.update(cx, |v, cx| v.go(&to, repo, cx));
                 self.in_vault = true;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 let f = v.read(cx).focus_handle();
@@ -2015,9 +2146,54 @@ impl Shell {
                 }
                 return cx.notify();
             }
+            Cmd::Db => {
+                self.in_db = true;
+                self.in_news = false;
+                self.in_vault = false;
+                self.in_mrs = false;
+                self.in_audit = false;
+                let f = self.tunnels.read(cx).focus_handle();
+                window.focus(&f, cx);
+                return cx.notify();
+            }
+            Cmd::DbMenu => {
+                let red: Hsla = rgb(0xff5555).into();
+                let items = self
+                    .tunnels
+                    .read(cx)
+                    .items()
+                    .into_iter()
+                    .map(|(name, port, up, prd)| palette_cmd::Item {
+                        title: format!(
+                            "{} {name}{}",
+                            if up { "●" } else { "○" },
+                            if up { " · desligar" } else { "" }
+                        ),
+                        key: format!(":{port}"),
+                        cmd: Some(Cmd::Tunnel(name)),
+                        tag: prd.then(|| ("prd".to_string(), red)),
+                    })
+                    .collect();
+                return self.open_palette(
+                    items,
+                    "Banco… (Enter liga ou desliga · os aliases do zsh)",
+                    "Nenhum alias de túnel no zsh",
+                    window,
+                    cx,
+                );
+            }
+            Cmd::Tunnel(name) => {
+                self.tunnels.update(cx, |t, cx| t.toggle(&name, cx));
+                return cx.notify();
+            }
+            Cmd::TunnelsOff => {
+                self.tunnels.update(cx, |t, cx| t.stop_all(cx));
+                return cx.notify();
+            }
             Cmd::News => {
                 self.brief = false;
                 self.in_news = true;
+                self.in_db = false;
                 self.in_vault = false;
                 self.in_mrs = false;
                 self.in_audit = false;
@@ -2325,7 +2501,7 @@ impl Shell {
                     .child(
                         mode(
                             "Features",
-                            !self.in_vault && !self.in_mrs && !self.in_news,
+                            !self.in_vault && !self.in_mrs && !self.in_news && !self.in_db,
                             (blocked > 0).then(|| format!("{blocked} !")),
                         )
                         .id("m-feat")
@@ -2348,6 +2524,32 @@ impl Shell {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Mrs, w, cx))),
                     )
+                    .child({
+                        let n = self.tunnels.read(cx).up();
+                        div()
+                            .id("m-db")
+                            .flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .px(px(10.))
+                            .py(px(3.))
+                            .rounded(px(5.))
+                            .text_color(if self.in_db { t.fg } else { t.muted })
+                            .when(self.in_db, |d| d.bg(t.raise))
+                            .child("Bancos")
+                            .when(n > 0, |d| {
+                                d.child(
+                                    div()
+                                        .font_family(t.mono.clone())
+                                        .text_size(px(12.))
+                                        .text_color(t.ok)
+                                        .child(n.to_string()),
+                                )
+                            })
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Db, w, cx)))
+                    })
                     .child(
                         mode("Vault", self.in_vault, None)
                             .id("m-vault")
@@ -2569,7 +2771,12 @@ impl Shell {
                     .font_weight(FontWeight::BOLD)
                     .child("PREFIX: v divide · - empilha · c aba · x fecha · z zoom"),
             );
-        } else if s.top_worktree().is_some() && !self.in_mrs && !self.in_vault && !self.in_news {
+        } else if s.top_worktree().is_some()
+            && !self.in_mrs
+            && !self.in_vault
+            && !self.in_news
+            && !self.in_db
+        {
             bar = bar.child(
                 side.id("run-task")
                     .cursor_pointer()
@@ -2717,7 +2924,9 @@ impl Shell {
     /// As dicas da tela atual (o `HINTS[S.mode]` do protótipo).
     fn screen_hints(&self, cx: &App) -> &'static [(&'static str, &'static str, bool)] {
         let mr_open = self.mrs.as_ref().is_some_and(|m| m.read(cx).in_mr());
-        if self.in_news {
+        if self.in_db {
+            DB_HINTS
+        } else if self.in_news {
             NEWS_HINTS
         } else if self.in_audit {
             AUDIT_HINTS
@@ -2761,7 +2970,7 @@ impl Shell {
             [
                 ("Ctrl+Shift+O", "abrir arquivo", true),
                 ("Ctrl+Shift+F", "árvore de arquivos", true),
-                ("Alt+1…5", "Features, MRs, Vault, Auditoria, News", true),
+                ("Alt+1…6", "Features, MRs, Bancos, Vault, News, Fila", true),
                 ("Ctrl+Shift+P", "comandos", true),
                 ("Ctrl+Shift+K", "comando por descrição", true),
             ]
@@ -2934,6 +3143,32 @@ impl Shell {
                     );
                 }
                 bar = bar.child(cell().child(format!("{working} trabalhando")));
+                let (up, down) = {
+                    let d = self.tunnels.read(cx);
+                    (d.up(), d.down())
+                };
+                if up + down > 0 {
+                    bar = bar.child(
+                        cell()
+                            .id("st-db")
+                            .cursor_pointer()
+                            .child(
+                                div()
+                                    .text_color(if down > 0 { rgb(0xff5555).into() } else { t.ok })
+                                    .child("●"),
+                            )
+                            .child(format!(
+                                "{up} banco{}{}",
+                                if up == 1 { "" } else { "s" },
+                                if down > 0 {
+                                    format!(" · {down} caiu")
+                                } else {
+                                    String::new()
+                                }
+                            ))
+                            .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Db, w, cx))),
+                    );
+                }
                 bar = bar.child(
                     cell().child(format!("hoje: US$ {}", crate::sidebar::brl(s.today_cost()))),
                 );
@@ -3170,6 +3405,9 @@ impl Render for Shell {
         if let Some(p) = self.want_file.take() {
             self.run(Cmd::OpenFile(p), window, cx);
         }
+        if let Some(op) = self.want_fs.take() {
+            self.file_op(op, window, cx);
+        }
         if let Some(p) = self.want_review.take() {
             self.toggle_review(p, window, cx);
         }
@@ -3284,7 +3522,11 @@ impl Render for Shell {
                         self.sidebar
                             .clone()
                             .filter(|_| {
-                                self.left && !self.in_vault && !self.in_mrs && !self.in_news
+                                self.left
+                                    && !self.in_vault
+                                    && !self.in_mrs
+                                    && !self.in_news
+                                    && !self.in_db
                             })
                             .map(|s| {
                                 div()
@@ -3299,8 +3541,13 @@ impl Render for Shell {
                         d.child(a)
                     })
                     .when_some(self.in_news.then(|| self.news.clone()), |d, n| d.child(n))
+                    .when_some(self.in_db.then(|| self.tunnels.clone()), |d, n| d.child(n))
                     .when(
-                        !self.in_vault && !self.in_mrs && !self.in_audit && !self.in_news,
+                        !self.in_vault
+                            && !self.in_mrs
+                            && !self.in_audit
+                            && !self.in_news
+                            && !self.in_db,
                         |d| {
                             d.child(
                                 div()
@@ -3320,7 +3567,11 @@ impl Render for Shell {
                         self.review
                             .clone()
                             .filter(|_| {
-                                !self.in_vault && !self.in_mrs && !self.in_audit && !self.in_news
+                                !self.in_vault
+                                    && !self.in_mrs
+                                    && !self.in_audit
+                                    && !self.in_news
+                                    && !self.in_db
                             })
                             .map(|r| {
                                 div()

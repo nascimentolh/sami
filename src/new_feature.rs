@@ -41,6 +41,7 @@ pub struct NewFeature {
     claude: bool,
     env_files: Vec<String>,
     setup_cmd: Option<String>,
+    registry_auth: bool,
     jira_info: Option<(String, bool)>,
     err: String,
     busy: bool,
@@ -97,6 +98,7 @@ impl NewFeature {
             bases: feature::bases(&repo),
             env_files: feature::env_files(&repo),
             setup_cmd: feature::setup_command(&repo),
+            registry_auth: feature::registry_auth(&repo).is_some(),
             herdr,
             repo,
             jira,
@@ -463,11 +465,11 @@ impl Render for NewFeature {
                 .gap(px(4.))
                 .child("Rodar")
                 .child(mono(c.clone()))
-                .child(
-                    div()
-                        .text_color(t.muted)
-                        .child("(setup do repo, vem do .maestro.toml)"),
-                ),
+                .child(div().text_color(t.muted).child(if self.registry_auth {
+                    "(renova antes o token do Artifact Registry no ~/.npmrc)"
+                } else {
+                    "(setup do repo, vem do .maestro.toml)"
+                })),
             None => div().flex().gap(px(4.)).child("Rodar o setup").child(
                 div()
                     .text_color(t.muted)
