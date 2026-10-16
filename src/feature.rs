@@ -1372,6 +1372,9 @@ mod tests {
             run(dir, &["commit", "-qm", file]);
         };
         run(&repo, &["init", "-q", "-b", "main"]);
+        // o rebase do app usa o git sem `-c`: no CI não há identidade global
+        run(&repo, &["config", "user.name", "t"]);
+        run(&repo, &["config", "user.email", "t@t"]);
         commit(&repo, "base.txt");
         let (mwt, cwt) = (root.join("mae"), root.join("filha"));
         run(
