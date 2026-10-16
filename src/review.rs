@@ -234,6 +234,10 @@ impl Review {
             return cx.notify();
         }
         self.close_armed = None;
+        self.drop_tab(i, window, cx);
+    }
+
+    fn drop_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.editors.remove(i);
         if self.active >= i && self.active > 0 {
             self.active -= 1;
@@ -244,6 +248,48 @@ impl Review {
         let f = self.focus_handle(cx);
         window.focus(&f, cx);
         cx.notify();
+    }
+
+    /// Abas do arquivo `path` ou de dentro da pasta `path`.
+    fn under(&self, path: &str, cx: &App) -> Vec<usize> {
+        let dir = format!("{path}/");
+        (0..self.editors.len())
+            .rev()
+            .filter(|&i| {
+                let p = &self.editors[i].read(cx).path;
+                p == path || p.starts_with(&dir)
+            })
+            .collect()
+    }
+
+    pub fn dirty_under(&self, path: &str, cx: &App) -> bool {
+        self.under(path, cx)
+            .into_iter()
+            .any(|i| self.editors[i].read(cx).dirty(cx))
+    }
+
+    /// O arquivo (ou a pasta) saiu do disco: as abas dele fecham sem perguntar.
+    pub fn forget(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        for i in self.under(path, cx) {
+            self.drop_tab(i, window, cx);
+        }
+    }
+
+    /// Renomeado na árvore: a aba reabre no caminho novo.
+    pub fn moved(&mut self, from: &str, to: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let moved: Vec<String> = self
+            .under(from, cx)
+            .into_iter()
+            .rev()
+            .map(|i| format!("{to}{}", &self.editors[i].read(cx).path[from.len()..]))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        self.forget(from, window, cx);
+        for p in moved {
+            self.open_file(p, window, cx);
+        }
     }
 
     pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {

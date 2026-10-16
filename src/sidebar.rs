@@ -10,6 +10,7 @@ use gpui_kit::{prelude::FluentBuilder, *};
 use crate::{
     changes::{self, Changes},
     feature::{self, Inventory, Stack},
+    form::{FieldEvent, TextField},
     herdr::{self, Agent, Herdr, Status, Workspace},
     mascot::{Kind, Note},
     mr::{self, Fetch, Mr},
@@ -39,6 +40,22 @@ pub enum SidebarEvent {
     OpenReviewAt(PathBuf),
     /// a pílula da pilha: (worktree da filha, o que fazer)
     Stack(PathBuf, Stack),
+    /// botão direito na aba Arquivos; o shell mexe no disco e nas abas do editor
+    Fs(FsOp),
+}
+
+#[derive(Clone, Debug)]
+pub enum FsOp {
+    /// (caminho, é pasta)
+    Create(String, bool),
+    Rename(String, String),
+    Delete(String, bool),
+}
+
+/// O nome sendo digitado na árvore: novo item dentro da pasta (é pasta) ou o item renomeado.
+enum Naming {
+    New(String, bool),
+    Rename(String),
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -80,6 +97,10 @@ pub struct Sidebar {
     focused_cwd: Option<String>,
     /// aba Arquivos: as pastas abertas da árvore
     expanded: HashSet<String>,
+    /// aba Arquivos: o menu do botão direito (item, é pasta, onde); item vazio é a raiz
+    menu: Option<(String, bool, Point<Pixels>)>,
+    menu_focus: FocusHandle,
+    naming: Option<(Naming, Entity<TextField>)>,
     /// por worktree principal: os outros repos da feature (nome, worktree, arquivos mudados)
     extra: HashMap<PathBuf, Vec<(String, PathBuf, usize)>>,
     /// por worktree principal da filha: o que a pilha pede
@@ -388,6 +409,9 @@ impl Sidebar {
             audit: (false, String::new(), "nunca rodou".into(), false, false),
             focused_cwd: None,
             expanded: HashSet::new(),
+            menu: None,
+            menu_focus: cx.focus_handle(),
+            naming: None,
             extra: HashMap::new(),
             stacks: HashMap::new(),
             open: None,
@@ -724,6 +748,78 @@ impl Sidebar {
                 .map(|r| changes::files(&r))
                 .unwrap_or_default(),
         );
+        cx.notify();
+    }
+
+    /// Relê a aba Arquivos depois de mexer no disco, com as pastas de `reveal` abertas.
+    pub fn reload_files(&mut self, reveal: Option<&str>, cx: &mut Context<Self>) {
+        if let Some(p) = reveal {
+            let mut dir = p;
+            while let Some((d, _)) = dir.rsplit_once('/') {
+                self.expanded.insert(d.into());
+                dir = d;
+            }
+        }
+        self.show_files(cx);
+    }
+
+    fn menu_pick(
+        &mut self,
+        i: usize,
+        p: &str,
+        dir: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.menu = None;
+        let parent = if dir {
+            p.to_string()
+        } else {
+            p.rsplit_once('/').map_or(String::new(), |(d, _)| d.into())
+        };
+        match i {
+            0 | 1 => self.start_naming(Naming::New(parent, i == 1), window, cx),
+            2 => self.start_naming(Naming::Rename(p.into()), window, cx),
+            _ => {
+                cx.emit(SidebarEvent::Fs(FsOp::Delete(p.into(), dir)));
+                cx.notify();
+            }
+        }
+    }
+
+    fn start_naming(&mut self, n: Naming, window: &mut Window, cx: &mut Context<Self>) {
+        let value = match &n {
+            Naming::New(parent, _) if !parent.is_empty() => {
+                self.expanded.insert(parent.clone());
+                format!("{parent}/")
+            }
+            Naming::New(..) => String::new(),
+            Naming::Rename(p) => p.clone(),
+        };
+        let t = self.theme.clone();
+        let f = cx.new(|cx| TextField::new(t, &value, "nome", false, true, cx));
+        cx.subscribe_in(&f, window, |this, f, e: &FieldEvent, _, cx| match e {
+            FieldEvent::Submit => {
+                let v = f.read(cx).value.trim().to_string();
+                let op = match this.naming.take() {
+                    Some((Naming::New(_, dir), _)) => Some(FsOp::Create(v, dir)),
+                    Some((Naming::Rename(p), _)) => (p != v).then_some(FsOp::Rename(p, v)),
+                    None => None,
+                };
+                if let Some(op) = op {
+                    cx.emit(SidebarEvent::Fs(op));
+                }
+                cx.notify();
+            }
+            FieldEvent::Cancel => {
+                this.naming = None;
+                cx.notify();
+            }
+            FieldEvent::Changed => {}
+        })
+        .detach();
+        window.focus(&f.read(cx).focus_handle(), cx);
+        self.naming = Some((n, f));
         cx.notify();
     }
 
@@ -1183,6 +1279,59 @@ impl Sidebar {
         out
     }
 
+    fn file_menu(&self, p: &str, dir: bool, at: Point<Pixels>, cx: &mut Context<Self>) -> Deferred {
+        let t = &self.theme;
+        let labels = ["Novo arquivo", "Nova pasta", "Renomear", "Excluir"];
+        let n = if p.is_empty() { 2 } else { 4 };
+        let mut m = div()
+            .id("fl-menu")
+            .track_focus(&self.menu_focus)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key == "escape" {
+                    this.menu = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            .occlude()
+            .min_w(px(170.))
+            .p(px(4.))
+            .flex()
+            .flex_col()
+            .bg(t.raise)
+            .border_1()
+            .border_color(t.line)
+            .rounded(px(6.))
+            .shadow_lg()
+            .font_family(t.sans)
+            .text_size(px(13.))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.menu = None;
+                cx.notify();
+            }));
+        for (i, label) in labels.into_iter().enumerate().take(n) {
+            if i == 2 {
+                m = m.child(div().my(px(4.)).h(px(1.)).bg(t.line));
+            }
+            let p = p.to_string();
+            m = m.child(
+                div()
+                    .id(("flm", i))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(px(4.))
+                    .cursor_pointer()
+                    .hover(|d| d.bg(t.accent_soft))
+                    .when(i == 3, |d| d.text_color(rgb(0xff5555)))
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.menu_pick(i, &p, dir, window, cx)
+                    })),
+            );
+        }
+        deferred(anchored().position(at).child(m))
+    }
+
     fn changes_panel(&self, cx: &mut Context<Self>) -> Div {
         let t = &self.theme;
         let n = self.changes.as_ref().map_or(0, |c| c.files.len());
@@ -1236,10 +1385,34 @@ impl Sidebar {
         };
         match (&self.files, &self.changes) {
             (Some(files), _) => {
+                let field = |depth: usize, f: &Entity<TextField>| {
+                    div()
+                        .pl(px(8. + depth as f32 * 14.))
+                        .pr(px(8.))
+                        .py(px(2.))
+                        .child(f.clone())
+                };
+                if let Some((Naming::New(parent, _), f)) = &self.naming
+                    && parent.is_empty()
+                {
+                    list = list.child(field(0, f));
+                }
                 // ponytail: 500 linhas visíveis; lista virtual se uma pasta aberta passar disso
                 for (depth, name, p, dir) in
                     changes::tree(files, &self.expanded).into_iter().take(500)
                 {
+                    match &self.naming {
+                        Some((Naming::Rename(r), f)) if *r == p => {
+                            list = list.child(field(depth, f));
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    let new_here = match &self.naming {
+                        Some((Naming::New(parent, _), f)) if *parent == p => Some(f.clone()),
+                        _ => None,
+                    };
+                    let menu_path = p.clone();
                     let open = self.open.as_ref().filter(|o| o.0 == p);
                     let glyph = match (dir, self.expanded.contains(&p)) {
                         (true, true) => "▾",
@@ -1281,6 +1454,15 @@ impl Sidebar {
                             .when(open.is_some_and(|o| o.1), |d| {
                                 d.child(div().text_size(px(13.)).text_color(t.muted).child("●"))
                             })
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                                    this.menu = Some((menu_path.clone(), dir, e.position));
+                                    window.focus(&this.menu_focus, cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if dir {
                                     if !this.expanded.remove(&path) {
@@ -1292,6 +1474,21 @@ impl Sidebar {
                                 }
                             })),
                     );
+                    if let Some(f) = &new_here {
+                        list = list.child(field(depth + 1, f));
+                    }
+                }
+                // a lista estica até o fim da lateral: botão direito no vazio cria na raiz
+                list = list.flex_grow(1.).on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                        this.menu = Some((String::new(), true, e.position));
+                        window.focus(&this.menu_focus, cx);
+                        cx.notify();
+                    }),
+                );
+                if let Some((p, dir, at)) = &self.menu {
+                    list = list.child(self.file_menu(p, *dir, *at, cx));
                 }
             }
             (None, None) => {}
@@ -1347,6 +1544,7 @@ impl Sidebar {
         div()
             .flex()
             .flex_col()
+            .flex_grow(1.)
             .child(
                 div()
                     .flex()
@@ -1583,7 +1781,7 @@ impl Render for Sidebar {
                 )
         };
 
-        let mut col = div().flex().flex_col();
+        let mut col = div().flex().flex_col().flex_grow(1.).flex_shrink_0();
         // ordem do protótipo: repo · Auditoria · FEATURES · cards · Nova feature · TERMINAIS · Mudanças
         // o repo em foco, com ou sem Claude rodando nele
         if let Some(top) = top.as_ref() {
@@ -1751,6 +1949,8 @@ impl Render for Sidebar {
             .w_full()
             .flex_none()
             .h_full()
+            .flex()
+            .flex_col()
             .overflow_y_scroll()
             .bg(t.panel)
             .border_r_1()
