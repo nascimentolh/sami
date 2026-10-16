@@ -599,7 +599,11 @@ impl Shell {
         };
         let theme = self.theme.clone();
         let d = cx.new(|cx| NewFeature::new(herdr, repo, theme, window, cx));
-        cx.subscribe_in(&d, window, |this, _, _: &new_feature::Event, window, cx| {
+        cx.subscribe_in(&d, window, |this, _, e: &new_feature::Event, window, cx| {
+            let new_feature::Event::Done(warning) = e;
+            if let Some(w) = warning {
+                this.toast(w.clone(), cx);
+            }
             this.dialog = None;
             window.focus(&this.terminal.read(cx).focus_handle(), cx);
             cx.notify();
@@ -1256,11 +1260,13 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let r = cx
                 .background_executor()
-                .spawn(async move { feature::create(&herdr, &req, port).map(drop) })
+                .spawn(async move { feature::create(&herdr, &req, port) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if let Err(e) = r {
-                    this.toast(format!("Não deu para criar a feature: {e}"), cx);
+                match r {
+                    Err(e) => this.toast(format!("Não deu para criar a feature: {e}"), cx),
+                    Ok(Some(w)) => this.toast(w, cx),
+                    Ok(None) => {}
                 }
                 cx.notify();
             });

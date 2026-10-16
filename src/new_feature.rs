@@ -14,7 +14,8 @@ use crate::{
 actions!(new_feature, [NextField, PrevField]);
 
 pub enum Event {
-    Done,
+    /// o aviso de alguma feature criada sem hooks
+    Done(Option<String>),
 }
 
 const ATTEMPTS: &[&str] = &["1", "2 (comparar no fim)", "3 (comparar no fim)"];
@@ -78,7 +79,7 @@ impl NewFeature {
                 }
                 FieldEvent::Submit if f == this.jira => this.lookup_jira(cx),
                 FieldEvent::Submit => this.create(cx),
-                FieldEvent::Cancel => cx.emit(Event::Done),
+                FieldEvent::Cancel => cx.emit(Event::Done(None)),
             })
             .detach();
         }
@@ -269,13 +270,15 @@ impl NewFeature {
                 .spawn(async move {
                     reqs.iter()
                         .zip(ports)
-                        .try_for_each(|(r, p)| feature::create(&herdr, r, p).map(drop))
+                        .map(|(r, p)| feature::create(&herdr, r, p))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(|w| w.into_iter().flatten().next())
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
                 match result {
-                    Ok(()) => cx.emit(Event::Done),
+                    Ok(w) => cx.emit(Event::Done(w)),
                     Err(e) => this.err = e,
                 }
                 cx.notify();
@@ -296,7 +299,7 @@ impl NewFeature {
         let k = &e.keystroke;
         match k.key.as_str() {
             "escape" if self.open.is_some() => self.open = None,
-            "escape" => cx.emit(Event::Done),
+            "escape" => cx.emit(Event::Done(None)),
             "enter" if k.modifiers.control => self.create(cx),
             _ => return,
         }
@@ -657,7 +660,7 @@ impl Render for NewFeature {
                     .gap(px(6.))
                     .child(
                         button(&t, "nf-no", "Cancelar", false)
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Done))),
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Done(None)))),
                     )
                     .child(
                         button(

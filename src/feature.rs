@@ -274,7 +274,8 @@ pub fn start_command(
 }
 
 /// Cria a worktree, copia os `.env`, grava o inventário e abre o workspace no herdr com o setup e o Claude.
-pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Inventory, String> {
+/// `Ok(Some(aviso))`: a feature existe, mas sem os hooks de checkpoint e do gate do `/mr`.
+pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Option<String>, String> {
     if branches(&req.repo).contains(&req.branch) {
         return Err(format!(
             "Já existe uma feature em {}. Escolha outro nome ou abra a existente.",
@@ -355,7 +356,9 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Inventory, Stri
     inv.workspace_id = ws_id.clone();
     save(&inv).map_err(|e| e.to_string())?;
 
-    let _ = install_hook(&req.repo, &path, &inv.id);
+    let warning = install_hook(&req.repo, &path, &inv.id)
+        .err()
+        .map(|e| format!("Feature criada sem os hooks (turnos e gate do /mr): {e}"));
     // a nota do repo no vault e o que ela linka entram no contexto do Claude da feature
     let repo_name = req
         .repo
@@ -398,7 +401,7 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Inventory, Stri
             );
         }
     }
-    Ok(inv)
+    Ok(warning)
 }
 
 fn repo_name(p: &Path) -> String {
