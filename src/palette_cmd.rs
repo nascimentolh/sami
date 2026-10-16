@@ -57,6 +57,14 @@ pub enum Cmd {
     Kcmd,
     News,
     NewsBrief,
+    /// "+" / Alt+T: a lista de repos para a aba nova
+    RepoMenu,
+    /// abre uma aba de trabalho nesta pasta
+    OpenWork(std::path::PathBuf),
+    Work(usize),
+    /// `None`: a aba atual
+    CloseWork(Option<usize>),
+    NextWork(i32),
 }
 
 #[derive(Clone)]
@@ -132,6 +140,10 @@ pub fn commands() -> Vec<Item> {
             Some(Herdr("zoom")),
         ),
         c("Terminal: Abrir terminal da home", "", Some(Home)),
+        c("Trabalho: Nova aba (este repo ou outro)…", "Alt+T", Some(RepoMenu)),
+        c("Trabalho: Fechar aba", "Alt+W", Some(CloseWork(None))),
+        c("Trabalho: Próxima aba", "Alt+]", Some(NextWork(1))),
+        c("Trabalho: Aba anterior", "Alt+[", Some(NextWork(-1))),
         c("Claude: Interromper", "Esc / Ctrl+C", Some(Interrupt)),
         c("Arquivo: Abrir…", "Ctrl+Shift+O", Some(OpenFileMenu)),
         c("Arquivo: Salvar", "Ctrl+S", Some(Save)),

@@ -10,7 +10,7 @@ use gpui_kit::{prelude::FluentBuilder, *};
 use crate::{
     changes::{self, Changes},
     feature::{self, Inventory, Stack},
-    herdr::{self, Agent, Herdr, Status, Tab, Workspace},
+    herdr::{self, Agent, Herdr, Status, Workspace},
     mascot::{Kind, Note},
     mr::{self, Fetch, Mr},
     perms,
@@ -48,7 +48,15 @@ pub struct Sidebar {
     herdr: Arc<Herdr>,
     pub agents: Vec<Agent>,
     pub workspaces: Vec<Workspace>,
-    pub tabs: Vec<Tab>,
+    /// cwd de cada workspace do herdr (o pane em foco nele)
+    ws_cwd: HashMap<String, String>,
+    /// as abas de trabalho, na ordem da faixa; `cur` é a da lateral
+    pub works: Vec<Work>,
+    pub cur: usize,
+    next_work: u64,
+    /// "Nova aba" pediu: o próximo workspace novo em foco abre um trabalho, não entra no atual
+    pub fresh: bool,
+    inited: bool,
     pub offline: bool,
     since: HashMap<String, (Status, Instant)>,
     pub usage: HashMap<String, Usage>,
@@ -102,6 +110,17 @@ pub struct AttItem {
     pub go: Go,
 }
 
+/// agentes, workspaces e o cwd de cada workspace, lidos do herdr a cada polling
+type HerdrState = (Vec<Agent>, Vec<Workspace>, HashMap<String, String>);
+
+/// Uma aba de trabalho: os workspaces do herdr dela e o último em foco.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Work {
+    id: u64,
+    pub ws: Vec<String>,
+    pub last: String,
+}
+
 pub struct Repo {
     pub name: String,
     pub path: String,
@@ -139,14 +158,19 @@ impl Sidebar {
                     .background_executor()
                     .spawn(async move {
                         let ws = h.workspaces()?;
-                        let cwd = h.panes().ok().and_then(|p| {
+                        let panes = h.panes().ok();
+                        let cwd = panes.as_ref().and_then(|p| {
                             let w = ws
                                 .iter()
                                 .find(|w| w.focused)
                                 .map(|w| w.workspace_id.as_str());
-                            herdr::focused_cwd(&p, w)
+                            herdr::focused_cwd(p, w)
                         });
-                        Ok(((h.agents()?, ws, h.tabs()?), cwd))
+                        let cwds = panes
+                            .as_ref()
+                            .map(herdr::workspace_cwds)
+                            .unwrap_or_default();
+                        Ok(((h.agents()?, ws, cwds), cwd))
                     })
                     .await;
                 let (state, cwd) = match state {
@@ -331,7 +355,12 @@ impl Sidebar {
             herdr,
             agents: Vec::new(),
             workspaces: Vec::new(),
-            tabs: Vec::new(),
+            ws_cwd: HashMap::new(),
+            works: Vec::new(),
+            cur: 0,
+            next_work: 0,
+            fresh: false,
+            inited: false,
             offline: false,
             since: HashMap::new(),
             usage: HashMap::new(),
@@ -358,10 +387,10 @@ impl Sidebar {
     /// Aplica o estado do herdr; devolve se mudou e os agentes que acabaram de pedir atenção.
     fn apply(
         &mut self,
-        state: std::io::Result<(Vec<Agent>, Vec<Workspace>, Vec<Tab>)>,
+        state: std::io::Result<HerdrState>,
     ) -> (bool, Vec<Note>) {
         let offline = state.is_err();
-        let (agents, workspaces, tabs) = state.unwrap_or_default();
+        let (agents, workspaces, ws_cwd) = state.unwrap_or_default();
         let now = Instant::now();
         let mut notes = Vec::new();
         for a in &agents {
@@ -404,22 +433,176 @@ impl Sidebar {
                 }
             }
         }
-        let changed = self.agents != agents
+        let mut changed = self.agents != agents
             || self.workspaces != workspaces
-            || self.tabs != tabs
+            || self.ws_cwd != ws_cwd
             || self.offline != offline;
         self.agents = agents;
         self.workspaces = workspaces;
-        self.tabs = tabs;
+        self.ws_cwd = ws_cwd;
         self.offline = offline;
+        if !offline {
+            changed |= self.sync_works();
+        }
         (changed, notes)
+    }
+
+    /// Repositório principal do workspace, pelo cwd do pane em foco nele.
+    fn ws_repo(&self, ws: &str) -> Option<PathBuf> {
+        let cwd = self.ws_cwd.get(ws)?;
+        herdr::repo_root(Path::new(cwd)).map(herdr::main_repo)
+    }
+
+    /// Distribui os workspaces do herdr nas abas de trabalho e segue o em foco.
+    /// Na abertura agrupa por repo; depois, workspace novo em foco entra no trabalho atual (ou abre um, se `fresh`).
+    // ponytail: abas só em memória; reabrir o app reagrupa por repo. Persistir se isso incomodar.
+    fn sync_works(&mut self) -> bool {
+        let before = self.works.clone();
+        let cur_id = self.works.get(self.cur).map(|w| w.id);
+        let live: HashSet<String> = self
+            .workspaces
+            .iter()
+            .map(|w| w.workspace_id.clone())
+            .collect();
+        for w in &mut self.works {
+            w.ws.retain(|id| live.contains(id));
+            if !w.ws.contains(&w.last) {
+                w.last = w.ws.first().cloned().unwrap_or_default();
+            }
+        }
+        self.works.retain(|w| !w.ws.is_empty());
+        self.cur = cur_id
+            .and_then(|id| self.works.iter().position(|w| w.id == id))
+            .unwrap_or(0);
+        for w in self.workspaces.clone() {
+            let id = w.workspace_id;
+            if self.works.iter().any(|x| x.ws.contains(&id)) {
+                continue;
+            }
+            let target = if self.inited && w.focused {
+                (!self.fresh && !self.works.is_empty()).then_some(self.cur)
+            } else {
+                let repo = self.ws_repo(&id);
+                repo.as_ref().and_then(|r| {
+                    self.works
+                        .iter()
+                        .position(|x| x.ws.iter().any(|o| self.ws_repo(o).as_ref() == Some(r)))
+                })
+            };
+            match target {
+                Some(i) => self.works[i].ws.push(id),
+                None => {
+                    if w.focused {
+                        self.fresh = false;
+                    }
+                    self.next_work += 1;
+                    self.works.push(Work {
+                        id: self.next_work,
+                        ws: vec![id.clone()],
+                        last: id,
+                    });
+                }
+            }
+        }
+        self.inited = true;
+        if let Some(f) = self.workspaces.iter().find(|w| w.focused)
+            && let Some(i) = self
+                .works
+                .iter()
+                .position(|w| w.ws.contains(&f.workspace_id))
+        {
+            self.cur = i;
+            self.works[i].last = f.workspace_id.clone();
+        }
+        self.works != before
+    }
+
+    fn here(&self, ws: &str) -> bool {
+        self.works.get(self.cur).is_none_or(|w| w.ws.iter().any(|x| x == ws))
+    }
+
+    /// (repo ou rótulo, branch) da aba: o que estava em foco nela.
+    pub fn work_label(&self, i: usize) -> (String, Option<String>) {
+        let Some(w) = self.works.get(i) else {
+            return (String::new(), None);
+        };
+        let root = self
+            .ws_cwd
+            .get(&w.last)
+            .and_then(|c| herdr::repo_root(Path::new(c)).map(Path::to_path_buf));
+        match root {
+            Some(r) => (
+                herdr::main_repo(&r)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                herdr::branch(&r),
+            ),
+            None => (
+                self.workspaces
+                    .iter()
+                    .find(|x| x.workspace_id == w.last)
+                    .map(|x| x.label.clone())
+                    .unwrap_or_default(),
+                None,
+            ),
+        }
+    }
+
+    /// O estado mais urgente dos Claudes da aba (`Blocked` > `Working`).
+    pub fn work_status(&self, i: usize) -> Option<Status> {
+        let w = self.works.get(i)?;
+        let mine: Vec<_> = self
+            .agents
+            .iter()
+            .filter(|a| w.ws.contains(&a.workspace_id))
+            .map(|a| a.agent_status)
+            .collect();
+        [Status::Blocked, Status::Working]
+            .into_iter()
+            .find(|s| mine.contains(s))
+    }
+
+    pub fn go_work(&self, i: usize) {
+        if let Some(w) = self.works.get(i) {
+            self.focus_workspace(w.last.clone());
+        }
+    }
+
+    /// Fecha os workspaces da aba (as worktrees ficam). Recusa com Claude trabalhando ou pedindo algo.
+    pub fn close_work(&self, i: usize) -> Result<(), &'static str> {
+        let Some(w) = self.works.get(i) else {
+            return Ok(());
+        };
+        if self.work_status(i).is_some() {
+            return Err("Tem Claude trabalhando ou esperando você nesta aba. Resolva antes de fechar.");
+        }
+        if self.works.len() < 2 {
+            return Err("É a única aba. Abra outra (Alt+T) antes de fechar esta.");
+        }
+        if i == self.cur {
+            self.go_work(if i > 0 { i - 1 } else { 1 });
+        }
+        let h = self.herdr.clone();
+        let ws = w.ws.clone();
+        std::thread::spawn(move || {
+            for id in ws {
+                let _ = h.close_workspace(&id);
+            }
+        });
+        Ok(())
     }
 
     /// Repositórios em ordem alfabética; agentes fora de git vão com os Terminais.
     pub fn repos(&self) -> (Vec<Repo>, Vec<&Agent>) {
+        self.repos_in(false)
+    }
+
+    /// `here`: só os Claudes da aba de trabalho atual (a lateral).
+    fn repos_in(&self, here: bool) -> (Vec<Repo>, Vec<&Agent>) {
         let mut repos: Vec<Repo> = Vec::new();
         let mut loose = Vec::new();
-        for a in &self.agents {
+        for a in self.agents.iter().filter(|a| !here || self.here(&a.workspace_id)) {
             let Some(root) = herdr::repo_root(Path::new(&a.cwd)).map(herdr::main_repo) else {
                 loose.push(a);
                 continue;
@@ -547,7 +730,7 @@ impl Sidebar {
 
     /// (pane, nome na lateral) na ordem da tela, para a paleta.
     pub fn features(&self) -> Vec<(String, String)> {
-        let (repos, loose) = self.repos();
+        let (repos, loose) = self.repos_in(true);
         let label = |pane: &str| -> String {
             repos
                 .iter()
@@ -557,7 +740,7 @@ impl Sidebar {
                 .or_else(|| loose.iter().find(|a| a.pane_id == pane).map(|a| title(a)))
                 .unwrap_or_default()
         };
-        self.order()
+        self.order_in(true)
             .into_iter()
             .map(|p| {
                 let l = label(&p);
@@ -568,7 +751,16 @@ impl Sidebar {
 
     /// Ordem em que aparecem na lateral (Ctrl+Shift+1…9).
     pub fn order(&self) -> Vec<String> {
-        let (repos, loose) = self.repos();
+        self.order_in(false)
+    }
+
+    /// Ctrl+Shift+1…9: a ordem da lateral, só da aba atual.
+    pub fn order_here(&self) -> Vec<String> {
+        self.order_in(true)
+    }
+
+    fn order_in(&self, here: bool) -> Vec<String> {
+        let (repos, loose) = self.repos_in(here);
         let top = self.top_repo().map(|p| p.to_string_lossy().into_owned());
         repos
             .iter()
@@ -600,21 +792,6 @@ impl Sidebar {
     pub fn focus(&self, pane_id: String) {
         let h = self.herdr.clone();
         std::thread::spawn(move || h.focus(&pane_id));
-    }
-
-    pub fn focus_tab(&self, id: String) {
-        let h = self.herdr.clone();
-        std::thread::spawn(move || h.focus_tab(&id));
-    }
-
-    pub fn close_tab(&self, id: String) {
-        let h = self.herdr.clone();
-        std::thread::spawn(move || h.close_tab(&id));
-    }
-
-    pub fn new_tab(&self, workspace_id: String) {
-        let h = self.herdr.clone();
-        std::thread::spawn(move || h.new_tab(&workspace_id));
     }
 
     pub fn focus_workspace(&self, id: String) {
@@ -1324,7 +1501,7 @@ impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme.clone();
         let this = cx.entity();
-        let (repos, loose) = self.repos();
+        let (repos, loose) = self.repos_in(true);
         let total: usize = repos.iter().map(|r| r.agents.len()).sum();
         let top = self.top_repo().map(|p| p.to_string_lossy().into_owned());
         let repo_head = |name: String, path: &str| {
@@ -1467,7 +1644,7 @@ impl Render for Sidebar {
                 .child("TERMINAIS"),
         );
         let mut terms = feats();
-        for w in &self.workspaces {
+        for w in self.workspaces.iter().filter(|w| self.here(&w.workspace_id)) {
             let id = w.workspace_id.clone();
             let this = this.clone();
             let row = Row {

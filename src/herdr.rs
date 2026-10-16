@@ -18,13 +18,10 @@ pub struct Herdr {
     socket: PathBuf,
 }
 
-/// O que muda na config do herdr dentro do Maestro: a lateral e as abas são desenhadas pelo Maestro.
-/// A barra de abas fica sempre visível na linha 0 para o Maestro escondê-la sem depender do número de abas.
+/// O que muda na config do herdr dentro do Maestro: a lateral é do Maestro; as abas de dentro do trabalho são do herdr.
 const UI_OVERRIDES: &[(&str, &str)] = &[
     ("sidebar_start_collapsed", "true"),
     ("sidebar_collapsed_mode", "\"hidden\""),
-    ("hide_tab_bar_when_single_tab", "false"),
-    ("tab_bar_position", "\"top\""),
     // com o editor aberto o terminal fica estreito e o herdr trocaria para o layout "mobile"
     ("mobile_width_threshold", "0"),
 ];
@@ -95,13 +92,6 @@ pub struct Workspace {
     pub focused: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Tab {
-    pub tab_id: String,
-    pub workspace_id: String,
-    pub focused: bool,
-}
-
 impl Herdr {
     pub fn from_env() -> Option<Self> {
         let session = std::env::var("MAESTRO_HERDR_SESSION").unwrap_or_else(|_| "maestro".into());
@@ -153,7 +143,7 @@ impl Herdr {
             program: "sh".into(),
             args,
             env,
-            hidden_top: 1,
+            hidden_top: 0,
         }
     }
 
@@ -185,25 +175,9 @@ impl Herdr {
         Ok(serde_json::from_value(result["workspaces"].take())?)
     }
 
-    pub fn tabs(&self) -> io::Result<Vec<Tab>> {
-        let mut result = self.call("tab.list", json!({}))?;
-        Ok(serde_json::from_value(result["tabs"].take())?)
-    }
-
-    pub fn focus_tab(&self, id: &str) -> io::Result<()> {
-        self.call("tab.focus", json!({ "tab_id": id })).map(drop)
-    }
-
-    pub fn close_tab(&self, id: &str) -> io::Result<()> {
-        self.call("tab.close", json!({ "tab_id": id })).map(drop)
-    }
-
-    pub fn new_tab(&self, workspace_id: &str) -> io::Result<()> {
-        self.call(
-            "tab.create",
-            json!({ "workspace_id": workspace_id, "focus": true }),
-        )
-        .map(drop)
+    pub fn close_workspace(&self, id: &str) -> io::Result<()> {
+        self.call("workspace.close", json!({ "workspace_id": id }))
+            .map(drop)
     }
 
     pub fn focus_workspace(&self, id: &str) -> io::Result<()> {
@@ -231,6 +205,23 @@ pub fn focused_cwd(panes: &Value, workspace: Option<&str>) -> Option<String> {
         .find(|p| p["focused"] == true && workspace.is_none_or(|w| p["workspace_id"] == w))
         .and_then(|p| p["foreground_cwd"].as_str().or(p["cwd"].as_str()))
         .map(String::from)
+}
+
+/// O cwd de cada workspace: o do pane em foco nele, ou o do primeiro pane.
+pub fn workspace_cwds(panes: &Value) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for p in panes["panes"].as_array().into_iter().flatten() {
+        let (Some(ws), Some(cwd)) = (
+            p["workspace_id"].as_str(),
+            p["foreground_cwd"].as_str().or(p["cwd"].as_str()),
+        ) else {
+            continue;
+        };
+        if p["focused"] == true || !out.contains_key(ws) {
+            out.insert(ws.to_string(), cwd.to_string());
+        }
+    }
+    out
 }
 
 fn parse_agents(mut result: Value) -> io::Result<Vec<Agent>> {

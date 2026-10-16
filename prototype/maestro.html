@@ -31,12 +31,27 @@ kbd{font:11px var(--mono);padding:0 4px;border:1px solid var(--line);border-radi
 .mono{font-family:var(--mono)}
 .muted{color:var(--muted)}
 
-.app{height:100%;max-width:1480px;margin:0 auto;display:grid;grid-template-rows:36px 1fr 22px 24px;background:var(--panel);
+.app{height:100%;max-width:1480px;margin:0 auto;display:grid;grid-template-rows:36px 32px 1fr 22px 24px;background:var(--panel);
   border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow);position:relative}
 .title{display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel);min-width:0}
 .dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:var(--line)}
 .brand{font-weight:600;letter-spacing:.02em}
 .modes{display:flex;gap:2px;margin-left:8px}
+.wtabs{display:flex;align-items:stretch;gap:2px;padding:4px 8px 0;background:#191a21;border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;min-width:0}
+.wtabs .wt{display:flex;align-items:center;gap:8px;padding:0 10px 0 12px;border-radius:6px 6px 0 0;color:var(--muted);font-size:12.5px;max-width:280px;min-width:0}
+.wtabs .wt .lb{overflow:hidden;text-overflow:ellipsis}
+.wtabs .wt .rp{color:var(--fg)}
+.wtabs .wt .br{font-family:var(--mono);font-size:11.5px;color:var(--comment)}
+.wtabs .wt[aria-selected="true"]{background:var(--panel);color:var(--fg)}
+.wtabs .wt[aria-selected="true"] .br{color:var(--purple,#bd93f9)}
+.wtabs .wt:hover:not([aria-selected="true"]){background:#21222c}
+.wtabs .wt .k{font-family:var(--mono);font-size:10.5px;color:var(--comment)}
+.wtabs .wt .x{color:var(--comment);padding:0 2px;border-radius:3px}.wtabs .wt .x:hover{color:var(--fg);background:#343746}
+.wtabs .wt .att{color:var(--orange);font-weight:700}
+.term>.hbar{display:none}
+.wtabs .sp{flex:1}
+.wtabs .r{padding:0 10px;color:var(--comment);font-size:12px;font-family:var(--mono)}.wtabs .r:hover{color:var(--fg)}
+.wtabs .nt{padding:0 10px;color:var(--comment);font-size:14px}.wtabs .nt:hover{color:var(--fg)}
 .modes button{padding:3px 10px;border-radius:5px;color:var(--muted);display:flex;gap:6px;align-items:center}
 .modes button[aria-pressed="true"]{background:var(--raise);color:var(--fg)}
 .modes .count{font:11px var(--mono);color:var(--orange)}
@@ -499,6 +514,7 @@ legend{color:var(--muted);font-size:12px;padding:0 4px}
       <button id="hHelp" aria-label="Atalhos"><kbd>?</kbd></button>
     </span>
   </header>
+  <nav class="wtabs" id="wtabs" role="tablist" aria-label="Trabalhos"></nav>
   <div class="main" id="main" data-left="on" data-right="off">
     <aside id="left" aria-label="Features"></aside>
     <section id="center" aria-label="Terminal"></section>
@@ -619,7 +635,7 @@ const D_HEALTH=[
 const D_SLACK=[{path:'src/slack.ts', hunks:[{h:'@@ -1,4 +1,4 @@', l:[[' ',1,1,'export class SlackClient {'],['-',2,0,'  private timeout = 3000'],['+',0,2,'  private timeout = Number(process.env.SLACK_TIMEOUT_MS ?? 10000)'],[' ',3,3,''],[' ',4,4,'  async post(channel: string, text: string) {']]}]}];
 const D_DEPS=[{path:'package.json', hunks:[{h:'@@ -8,6 +8,6 @@', l:[[' ',8,8,'  "devDependencies": {'],['-',9,0,'    "jest": "^29.7.0",'],['+',0,9,'    "jest": "^30.1.0",'],['-',10,0,'    "typescript": "^5.4.5"'],['+',0,10,'    "typescript": "^5.9.2"'],[' ',11,11,'  }']]}]}];
 
-const ROOT='~/repos-ctbz/bots-api', WT='~/repos-ctbz/bots-api.wt/';
+let ROOT='~/repos-ctbz/bots-api', WT='~/repos-ctbz/bots-api.wt/', REPO='bots-api';
 const ccHead = dir => ({c:'cc', t:'', dir});
 const FEATS=[
   {id:'main', branch:'main', dir:ROOT, st:'idle', msg:'sem tarefa', ago:'há 1 h', changes:[], tab:0,
@@ -649,7 +665,72 @@ const FX={main:{port:3000,cost:0,ctx:0,turns:[]},
   home:{cost:0,ctx:0}};
 FEATS.forEach(f=>Object.assign(f,FX[f.id]));
 D_HEALTH[0].turn=1; D_HEALTH[1].turn=2;
+setTimeout(()=>{
+  WORKS.push(mkWork('maestro','~/test-repos','main',[{branch:'feat/abas-trabalho', dir:'~/test-repos/maestro.wt/feat-abas-trabalho', st:'working', msg:'editando src/shell.rs', t0:Date.now(), verb:'Pensando',
+    term:[ccHead('~/test-repos/maestro.wt/feat-abas-trabalho'),{c:'u',t:'> sobe as abas para o nível do trabalho; a lateral segue a aba em foco'},{c:'dot',t:'⏺ Read(src/shell.rs)'},{c:'out',t:'  ⎿  Read 2440 lines'}]}]));
+  const w3=mkWork('bots-api','~/repos-ctbz','fix/webhook-retry'); w3.feats[0].msg='MR !152 aberto'; w3.feats[0].st='done'; w3.feats[0].term.push({c:'dotw',t:'⏺ Pronto. Retry com backoff exponencial, 3 tentativas.'});
+  WORKS.push(w3); renderWorks();
+},0);
 { const t=FEATS[1].term; t.splice(t.findIndex(l=>/Wrote 8 lines/.test(l.t||''))+1,0,{c:'u',t:'> agora pluga no app e roda os testes'}); }
+/* ---------- trabalhos: cada aba de cima é um trabalho (um repo, ou o mesmo repo de novo); a lateral é da aba em foco ---------- */
+const REPOS=[['bots-api','~/repos-ctbz'],['email-service','~/repos-ctbz'],['k8s-configmap','~/repos-ctbz'],['pipeline','~/repos-ctbz'],['vault-roleset','~/repos-ctbz'],['maestro','~/test-repos']];
+let TID=0;
+function mkWork(repo,base,branch,extra){
+  const root=repo==='~'?'~':`${base}/${repo}`, wt=`${root}.wt/`, id=()=>'w'+(++TID);
+  const fs=[];
+  if(repo!=='~'){
+    const dir=branch&&branch!=='main'?wt+slug(branch):root;
+    fs.push({id:id(), branch:branch||'main', dir, st:'idle', msg:'sem tarefa', ago:'agora', changes:[], tab:0, cost:0, ctx:0, turns:[], port:3000,
+      term:[ccHead(dir),{c:'dim',t:'Sessão parada. Escreva abaixo para começar.'}]});
+  }
+  fs.push({id:id(), kind:'ws', branch:'~', dir:'~', st:'idle', msg:'zsh', ago:'', changes:[], tab:0, term:[], cost:0, ctx:0});
+  (extra||[]).forEach(f=>fs.splice(fs.length-1,0,Object.assign({id:id(),tab:0,changes:[],turns:[],cost:0,ctx:0,port:3010+TID,ago:'agora'},f)));
+  fs.forEach(f=>{ if(!f.tabs) mkTabs(f); });
+  return {repo, root, wt, feats:fs, fid:fs[0].id};
+}
+const WORKS=[{repo:'bots-api', root:ROOT, wt:WT, feats:null, fid:'health'}];
+let WI=0;
+function workFeats(i){ return i===WI?FEATS:WORKS[i].feats; }
+function workFeat(i){ const w=WORKS[i]; return workFeats(i).find(f=>f.id===(i===WI?S.fid:w.fid)); }
+function goWork(i,focus=true){
+  if(i<0||i>=WORKS.length) return;
+  if(i!==WI){
+    const cur=WORKS[WI]; cur.feats=FEATS.slice(); cur.fid=S.fid;
+    WI=i; const w=WORKS[i]; FEATS.splice(0,FEATS.length,...w.feats); w.feats=null;
+    S.fid=w.fid; ROOT=w.root; WT=w.wt; REPO=w.repo; S.file=null; S.right=false; S.hist=null;
+  }
+  if(S.mode!=='feat') S.mode='feat';
+  render(); if(focus) focusTerm();
+}
+function openWork(repo,base){
+  const w=mkWork(repo,base); WORKS.push(w);
+  goWork(WORKS.length-1);
+  toast(repo==='~'?'Aba nova: terminal na home':`Aba nova em ${w.root}. A lateral agora é deste trabalho.`);
+}
+function closeWork(i){
+  if(WORKS.length<2){ toast('É a única aba. Abra outra (Alt+T) antes de fechar esta.'); return; }
+  const name=WORKS[i].repo;
+  if(i===WI){ const to=i>0?i-1:1; goWork(to,false); }
+  WORKS.splice(i,1); if(WI>i) WI--;
+  render(); focusTerm();
+  toast(`Aba ${name} fechada. As worktrees continuam no disco.`);
+}
+function renderWorks(){
+  const el=$('#wtabs'); if(!el) return;
+  el.innerHTML=WORKS.map((w,i)=>{ const f=workFeat(i), fs=workFeats(i), att=fs.filter(x=>x.st==='blocked').length, run=fs.some(x=>x.st==='working');
+    return `<div class="wt" role="tab" tabindex="${i===WI?0:-1}" aria-selected="${i===WI}" data-wi="${i}" title="${esc(w.root)}${f&&f.kind!=='ws'?' · '+esc(f.branch):''}">
+      ${att?`<span class="att" title="${att} esperando você">!</span>`:run?'<span class="st-working spin">◐</span>':''}
+      <span class="lb"><span class="rp">${esc(w.repo)}</span>${f&&f.kind!=='ws'?` <span class="br">${esc(f.branch)}</span>`:''}</span>
+      <span class="x" data-wx="${i}" role="button" aria-label="Fechar aba ${esc(w.repo)}" title="Fechar aba (Alt+W)">×</span></div>`; }).join('')
+    +`<button class="nt" id="wNew" title="Nova aba de trabalho (Alt+T)" aria-label="Nova aba de trabalho">+</button><span class="sp"></span>`
+    +(S.mode==='feat'&&feat()&&feat().kind!=='ws'?`<button class="r" id="wTask" title="Scripts do package.json, alvos do Makefile, cargo/go test">▶ Rodar tarefa…</button>`:'')
+    +(S.mode==='feat'&&feat()&&feat().devUp?`<button class="r st-done" id="wDev" title="Abrir no navegador">● localhost:${feat().port} ↗</button>`:'');
+  if($('#wTask')) $('#wTask').onclick=()=>{ const b=document.querySelector('[data-task]'); if(b) b.click(); };
+  if($('#wDev')) $('#wDev').onclick=()=>{ const b=document.querySelector('[data-dev]'); if(b) b.click(); };
+  el.querySelectorAll('[data-wi]').forEach(t=>t.onclick=e=>{ if(e.target.dataset.wx) return; goWork(+t.dataset.wi); });
+  el.querySelectorAll('[data-wx]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); closeWork(+x.dataset.wx); });
+  $('#wNew').onclick=()=>openPal('repo');
+}
 const ST={blocked:{g:'!',l:'precisa de você'},working:{g:'◐',l:'trabalhando'},done:{g:'✓',l:'pronto pra revisar'},idle:{g:'○',l:'parado'}};
 
 /* ---------- shell: prompt do ~/.config/starship.toml, aliases do ~/.zshrc (eza, bat) ---------- */
@@ -751,7 +832,7 @@ function renderFrame(){
   $('#qCount').textContent=attention().length||'';
   $('#mrCount').textContent=MRS.filter(m=>m.g==='rev'&&!isReviewed(m)).length;
 }
-function render(){ renderFrame(); renderLeft(); renderCenter(); renderRight(); renderHints(); renderStatus(); maybeTour(); }
+function render(){ renderWorks(); renderFrame(); renderLeft(); renderCenter(); renderRight(); renderHints(); renderStatus(); maybeTour(); }
 function setMode(m){ S.mode=m; if(m==='vault'&&!S.vview) S.vview='note'; render(); }
 
 /* ---------- lateral ---------- */
@@ -762,7 +843,7 @@ function renderLeft(){
   if (S.mode==='news') return renderNewsLeft(el);
   if (S.mode!=='feat'&&S.mode!=='audit'){ el.innerHTML=''; return; }
   const f=feat();
-  let h=`<div class="repo">bots-api <span class="mono">${ROOT}</span></div><div class="feats"><button class="feat ${S.mode==='audit'?'on':''}" id="audBtn"><span class="g ${AU.phase==='run'?'st-working spin':'cm'}">${AU.phase==='run'?'◐':'◇'}</span><span class="b">Auditoria</span><span class="k">${AU.phase==='run'?'rodando':AU.last.when}</span><span class="m">${AU.phase==='run'?'US$ '+AU.spent.toFixed(2).replace('.',','):AU.last.commits?AU.last.commits+' commits desde a última':'em dia'}</span></button></div><div class="phead">Features<span class="sp"></span><span class="mono" style="text-transform:none;letter-spacing:0">${FEATS.length}</span></div><div class="feats" role="listbox" aria-label="Features">`;
+  let h=`<div class="repo">${REPO} <span class="mono">${ROOT}</span></div><div class="feats"><button class="feat ${S.mode==='audit'?'on':''}" id="audBtn"><span class="g ${AU.phase==='run'?'st-working spin':'cm'}">${AU.phase==='run'?'◐':'◇'}</span><span class="b">Auditoria</span><span class="k">${AU.phase==='run'?'rodando':AU.last.when}</span><span class="m">${AU.phase==='run'?'US$ '+AU.spent.toFixed(2).replace('.',','):AU.last.commits?AU.last.commits+' commits desde a última':'em dia'}</span></button></div><div class="phead">Features<span class="sp"></span><span class="mono" style="text-transform:none;letter-spacing:0">${FEATS.length}</span></div><div class="feats" role="listbox" aria-label="Features">`;
   FEATS.filter(x=>x.kind!=='ws').forEach(x=>h+=featBtn(x));
   h+=`</div><button class="newf" id="newF"><span>+ Nova feature</span><kbd>Alt+N</kbd></button><div class="fsep">Terminais</div><div class="feats">${FEATS.filter(x=>x.kind==='ws').map(featBtn).join('')}</div>`;
   if(f.kind==='ws'){ el.innerHTML=h+'<div class="flist"><div class="none">Pasta fora de repositório git. Aqui é só terminal: abas e splits do herdr, nada para revisar.</div></div>'; bindLeft(el); return; }
@@ -796,6 +877,7 @@ const split = p => { const i=p.lastIndexOf('/'); return [p.slice(0,i+1),p.slice(
 const counts = f => { let a=0,r=0; f.hunks.forEach(h=>h.l.forEach(l=>{ if(l[0]==='+')a++; if(l[0]==='-')r++; })); return {a,r}; };
 
 function selectFeat(id,focus=true){
+  if(!FEATS.some(x=>x.id===id)){ const i=WORKS.findIndex((w,j)=>j!==WI&&w.feats&&w.feats.some(x=>x.id===id)); if(i<0) return; WORKS[i].fid=id; goWork(i,false); }
   S.fid=id; const f=feat(); f.unseen=false; if(S.mode!=='feat') S.mode='feat';
   if(S.mascot&&S.mascot.fid===id) dismissMascot();
   render(); if(focus) focusTerm();
@@ -900,7 +982,7 @@ const slug = b => b.replace(/[^a-zA-Z0-9._-]+/g,'-');
 function newFeatureDlg(){
   OV={type:'dlg',ok:createFeature};
   $('#overlay').innerHTML=`<div class="scrim"><form class="dlg" id="nf" role="dialog" aria-label="Nova feature">
-    <h3>Nova feature em bots-api</h3>
+    <h3>Nova feature em ${REPO}</h3>
     <label class="fld" style="display:grid"><span>Issue do Jira (opcional: preenche branch e tarefa)</span><input type="text" id="nfJ" placeholder="ex.: PRD-171500" autocomplete="off"></label><span class="jira" id="nfJi"></span>
     <div class="row2"><label class="fld" style="display:grid"><span>Branch</span><input type="text" id="nfB" value="feat/" autocomplete="off"></label>
       <label class="fld" style="display:grid"><span>A partir de</span><select id="nfBase"><option>main</option><option>develop</option></select></label></div>
@@ -951,7 +1033,7 @@ function spawnFeature(br,base,p,env,ci,cl,o){
   (f.repos||[]).forEach(r=>steps.push([400,'okc',`✓ worktree ${r.name} em ~/repos-ctbz/${r.name}.wt/${slug(br)} (mesma branch)`]));
   if(f.parent) steps.push([200,'okc',`✓ empilhada em ${base}: o MR vai apontar para ${base}`]);
   if(env) steps.push([400,'okc','✓ copiados .env, .env.local']);
-  steps.push([300,'okc',`✓ PORT=${f.port} · docker compose -p bots-api-${slug(br)}`]);
+  steps.push([300,'okc',`✓ PORT=${f.port} · docker compose -p ${REPO}-${slug(br)}`]);
   if(ci) steps.push([600,'ps','$ npm ci'],[1500,'okc','✓ 412 pacotes em 8s']);
   run(f,steps,()=>{
     if(!cl){ f.st='idle'; f.msg='worktree pronta'; f.term.push({c:'ps',t:'$ █'}); render(); toast(`Feature ${br} criada`); return; }
@@ -2005,7 +2087,7 @@ function paintBrief(){ let s=$('#briefSlot'); if(!s){ s=document.createElement('
 
 /* ---------- dicas e status ---------- */
 const HINTS={
-  feat:[['Ctrl+Shift+Espaço','próximo da fila'],['Ctrl+Shift+1…9','feature'],['Ctrl+Shift+E','revisar mudanças'],['Ctrl+Shift+\\','dividir'],['Ctrl+Shift+Enter','empilhar'],['Ctrl+Shift+←→','pane ↔ editor'],['Ctrl+Shift+K','comando por descrição'],['Ctrl+A','herdr'],['Ctrl+Shift+L','seleção → Claude'],['Alt+N','nova feature'],['?','atalhos']],
+  feat:[['Alt+T','nova aba'],['Alt+[ ]','trocar aba'],['Ctrl+Shift+Espaço','próximo da fila'],['Ctrl+Shift+1…9','feature'],['Ctrl+Shift+E','revisar mudanças'],['Ctrl+Shift+\\','dividir'],['Ctrl+Shift+Enter','empilhar'],['Ctrl+Shift+←→','pane ↔ editor'],['Ctrl+Shift+K','comando por descrição'],['Ctrl+A','herdr'],['Ctrl+Shift+L','seleção → Claude'],['Alt+N','nova feature'],['?','atalhos']],
   mrs:[['j k','navegar'],['Enter','abrir'],['⇧R','revisar com Claude'],['/','filtrar']],
   vault:[['clique','abrir nota'],['[[link]]','navegar'],['◎ Grafo','visão geral'],['Hoje','daily'],['?','atalhos']],
   audit:[['Nova auditoria…','incremental ou completa'],['espaço','marcar achado'],['?','atalhos']],
@@ -2036,6 +2118,10 @@ function confirmDlg(title,text,okLabel,ok,danger){
 }
 const CMDS=[
   ['Fila: Ir para o próximo item','Ctrl+Shift+Espaço',nextAttention],
+  ['Trabalho: Nova aba (este repo ou outro)…','Alt+T',()=>openPal('repo')],
+  ['Trabalho: Fechar aba','Alt+W',()=>closeWork(WI)],
+  ['Trabalho: Próxima aba','Alt+]',()=>goWork((WI+1)%WORKS.length)],
+  ['Trabalho: Aba anterior','Alt+[',()=>goWork((WI-1+WORKS.length)%WORKS.length)],
   ['Fila: Ver tudo que espera por você','',()=>openPal('att')],
   ['Feature: Nova…','Alt+N',newFeatureDlg],
   ['Feature: Adicionar repo…','',()=>{ const f=feat(); if(f.kind==='ws'){ toast('Abra uma feature criada pelo Maestro para adicionar um repo'); return; } const have=(f.repos||[]).map(r=>r.name); const opts=['k8s-configmap','vault-roleset','pipeline','email-service'].filter(r=>!have.includes(r)).map((r,i)=>({label:r,pri:i===0,run:()=>{ f.repos=f.repos||[]; f.repos.push({name:r,files:0}); renderLeft(); toast(`${r} entrou na feature; /add-dir enviado ao Claude`); }})); choiceDlg(`Adicionar repo a ${f.branch}`,'A mesma branch vira uma worktree nesse repo e o Claude da feature passa a enxergar a pasta. Use quando descobrir que precisa mexer nele.',opts.concat([{label:'Cancelar'}])); }],
@@ -2087,12 +2173,14 @@ let PAL={mode:'cmd',q:'',i:0,items:[]};
 function fuzzy(q,s){ q=q.toLowerCase(); s=s.toLowerCase(); let j=0,sc=0,last=-2; for(let i=0;i<s.length&&j<q.length;i++){ if(s[i]===q[j]){ sc+=i===last+1?3:1; last=i; j++; } } return j===q.length?sc:-1; }
 function palItems(){ const q=PAL.q.trim();
   if(PAL.mode==='att') return attention().filter(x=>!q||fuzzy(q,x.t+' '+x.tag)>=0).map(x=>({t:x.t,tag:x.tag,p:x.p,run:x.run}));
+  if(PAL.mode==='repo'){ const cur=REPOS.filter(r=>r[0]===REPO), rest=REPOS.filter(r=>r[0]!==REPO);
+    return [...cur,...rest,['~','só terminal']].map(([n,b])=>({t:n==='~'?'~ (só terminal, sem repo)':n+(n===REPO?' · outro trabalho no mesmo repo':''),g:n==='~'?'':b,run:()=>openWork(n,b),s:q?fuzzy(q,n+' '+b):0})).filter(x=>x.s>=0).sort((a,b)=>q?b.s-a.s:0); }
   if(PAL.mode==='file') return Object.keys(F).map(p=>({t:p,g:'',run:()=>{ if(S.mode!=='feat'){ S.mode='feat'; render(); } openFile(p); },s:q?fuzzy(q,p):0})).filter(x=>x.s>=0).sort((a,b)=>b.s-a.s);
   const feats=FEATS.map((f,i)=>({t:`Feature: ${f.branch}`,g:`Ctrl+Shift+${i+1}`,run:()=>selectFeat(f.id),s:q?fuzzy(q,'feature '+f.branch):-1})).filter(x=>x.s>=0);
   return CMDS.map(([t,k,run])=>({t,g:k,run,s:q?fuzzy(q,t):0})).filter(x=>x.s>=0).concat(feats).sort((a,b)=>b.s-a.s); }
 function openPal(mode,q0){
   OV={type:'pal'}; PAL={mode,q:q0||'',i:0};
-  const ph=mode==='file'?'Nome do arquivo…':mode==='att'?'Fila de atenção: filtrar…':'Comando ou nome da feature…';
+  const ph=mode==='repo'?'Nova aba em… (Enter = mesmo repo, ou digite outro)':mode==='file'?'Nome do arquivo…':mode==='att'?'Fila de atenção: filtrar…':'Comando ou nome da feature…';
   $('#overlay').innerHTML=`<div class="scrim" id="pS"><div class="pal" role="dialog" aria-label="Paleta"><input id="pIn" placeholder="${ph}" autocomplete="off" aria-label="${ph}"><ul id="pL" role="listbox"></ul></div></div>`;
   $('#pS').onclick=e=>{ if(e.target.id==='pS') closeOverlay(); };
   const i=$('#pIn'); i.value=PAL.q; i.oninput=()=>{ PAL.q=i.value; PAL.i=0; paintPal(); }; i.focus(); paintPal();
@@ -2119,9 +2207,10 @@ function openHelp(){
       <tr><td>2</td><td>Fique em outra feature e espere <span class="mono">feat/healthcheck</span> terminar.</td></tr>
       <tr><td>3</td><td>Em <span class="mono">feat/healthcheck</span>: <kbd>Ctrl+E</kbd>, comente a linha do <span class="mono">ping()</span>, Enviar ao Claude.</td></tr>
       <tr><td>4</td><td><kbd>Alt+N</kbd> cria uma feature nova com prompt.</td></tr>
-      <tr><td>5</td><td>Aba <b>2 zsh</b>: <span class="mono">ls</span>, <span class="mono">git status</span>, <span class="mono">git diff</span>, <span class="mono">npm test</span>, <span class="mono">cat src/app.ts</span>, ↑ para histórico.</td></tr>
+      <tr><td>5</td><td>No terminal, <kbd>Ctrl+A</kbd> <kbd>c</kbd> abre um zsh (o herdr cuida das abas e splits): <span class="mono">ls</span>, <span class="mono">git status</span>, <span class="mono">git diff</span>, <span class="mono">npm test</span>, <span class="mono">cat src/app.ts</span>, ↑ para histórico.</td></tr>
       <tr><td>6</td><td><kbd>Ctrl+Shift+\</kbd> divide claude | zsh lado a lado; <kbd>Ctrl+A</kbd> <kbd>c</kbd> abre outra aba.</td></tr>
       <tr><td>7</td><td>Em “Terminais”, <span class="mono">~</span> é um terminal comum, sem Claude.</td></tr>
+      <tr><td>★</td><td>Abas de cima = trabalhos. <kbd>Alt+T</kbd> abre outra (o mesmo repo ou outro), <kbd>Alt+[</kbd> <kbd>Alt+]</kbd> trocam, <kbd>Alt+W</kbd> fecha. A lateral é sempre da aba em foco.</td></tr>
       <tr><td>8</td><td>MRs → <span class="mono">bots-api !124</span>: lado a lado, gerados ocultos, ▾ colapsa, <b>Responder</b> vira rascunho, <b>Aprovar</b> e <b>Merge</b> no cabeçalho, <kbd>?</kbd> num bloco pergunta ao Claude.</td></tr>
       <tr><td>9</td><td><kbd>Ctrl+Shift+O</kbd> <span class="mono">src/slack.ts</span>: sublinhados do LSP, mouse sobre <span class="mono">timeout</span>, digite <span class="mono">this.</span>, Ctrl+clique em <span class="mono">SlackClient</span>; o blame fica no fim da linha.</td></tr>
       <tr><td>10</td><td><b>▶ Rodar tarefa…</b> na barra do terminal → <span class="mono">build</span>: os erros caem em Problemas.</td></tr>
@@ -2188,6 +2277,9 @@ document.addEventListener('keydown',e=>{
     if(act){ e.preventDefault(); act(); return; }
   }
   if(e.altKey&&k.toLowerCase()==='n'){ e.preventDefault(); newFeatureDlg(); return; }
+  if(e.altKey&&!ctrl&&k.toLowerCase()==='t'){ e.preventDefault(); openPal('repo'); return; }
+  if(e.altKey&&!ctrl&&k.toLowerCase()==='w'){ e.preventDefault(); closeWork(WI); return; }
+  if(e.altKey&&!ctrl&&(k===']'||k==='[')){ e.preventDefault(); goWork((WI+(k===']'?1:-1)+WORKS.length)%WORKS.length); return; }
   if(inTerm) return;
   if(ctrl&&!e.shiftKey&&k==='p'){ e.preventDefault(); openPal('file'); return; }
   if(ctrl&&k==='k'){ e.preventDefault(); openPal('cmd'); return; }

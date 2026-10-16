@@ -169,6 +169,7 @@ const HELP_STEPS: &[&str] = &[
     "Ctrl+Shift+Espaço leva ao próximo da fila de atenção; Fila lista tudo.",
     "Ctrl+Shift+\\ divide claude | zsh lado a lado; Ctrl+A c abre outra aba.",
     "Em Terminais ficam os workspaces sem Claude; ~ é o terminal da home.",
+    "Abas de cima = trabalhos. Alt+T abre outra (o mesmo repo ou outro), Alt+[ Alt+] trocam, Alt+W fecha. A lateral é sempre da aba em foco.",
 ];
 
 /// As heurísticas do `openHelp` do protótipo.
@@ -217,6 +218,8 @@ const NIELSEN: &[(&str, &str)] = &[
 
 /// Dicas do modo Features do protótipo; `false` = ainda não existe e aparece apagada.
 const HINTS: &[(&str, &str, bool)] = &[
+    ("Alt+T", "nova aba", true),
+    ("Alt+[ ]", "trocar aba", true),
     ("Ctrl+Shift+Espaço", "próximo da fila", true),
     ("Ctrl+Shift+1…9", "feature", true),
     ("Ctrl+Shift+E", "revisar mudanças", true),
@@ -422,6 +425,10 @@ impl Shell {
         if m.alt && !m.control && !m.shift {
             let cmd = match k.key.as_str() {
                 "n" => return self.open_new_feature(window, cx),
+                "t" => Cmd::RepoMenu,
+                "w" => Cmd::CloseWork(None),
+                "]" => Cmd::NextWork(1),
+                "[" => Cmd::NextWork(-1),
                 "1" => Cmd::Features,
                 "2" => Cmd::Mrs,
                 "3" => Cmd::Vault(crate::palette_cmd::VaultGo::Open),
@@ -463,7 +470,7 @@ impl Shell {
         let Some(sidebar) = &self.sidebar else { return };
         let s = sidebar.read(cx);
         let target = if let Some(n) = keys::feature_digit(k) {
-            s.order().into_iter().nth(n - 1)
+            s.order_here().into_iter().nth(n - 1)
         } else {
             return;
         };
@@ -1797,6 +1804,107 @@ impl Shell {
                     window.focus(&self.terminal.read(cx).focus_handle(), cx);
                 }
             }
+            Cmd::RepoMenu => {
+                let top = self.sidebar.as_ref().and_then(|s| s.read(cx).top_repo());
+                let mut repos: Vec<std::path::PathBuf> = std::fs::read_dir(crate::mrs::repos_root())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.join(".git").is_dir())
+                    .collect();
+                if let Some(t) = &top {
+                    repos.extend(feature::sibling_repos(t));
+                }
+                repos.sort();
+                repos.dedup();
+                repos.retain(|r| Some(r) != top.as_ref());
+                let name = |r: &std::path::Path| {
+                    r.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                };
+                let dir = |r: &std::path::Path| {
+                    crate::sidebar::tilde(&r.parent().unwrap_or(r).to_string_lossy())
+                };
+                let mut items: Vec<palette_cmd::Item> = top
+                    .iter()
+                    .map(|t| palette_cmd::Item {
+                        title: format!("{} · outro trabalho no mesmo repo", name(t)),
+                        key: dir(t),
+                        cmd: Some(Cmd::OpenWork(t.clone())),
+                        tag: None,
+                    })
+                    .collect();
+                items.extend(repos.iter().map(|r| palette_cmd::Item {
+                    title: name(r),
+                    key: dir(r),
+                    cmd: Some(Cmd::OpenWork(r.clone())),
+                    tag: None,
+                }));
+                items.push(palette_cmd::Item {
+                    title: "~ (só terminal, sem repo)".into(),
+                    key: String::new(),
+                    cmd: Some(Cmd::OpenWork(std::path::PathBuf::from(
+                        std::env::var("HOME").unwrap_or_default(),
+                    ))),
+                    tag: None,
+                });
+                return self.open_palette(
+                    items,
+                    "Nova aba em… (Enter = mesmo repo, ou digite outro)",
+                    "Nenhum repositório com esse nome",
+                    window,
+                    cx,
+                );
+            }
+            Cmd::OpenWork(dir) => {
+                let Some(s) = self.sidebar.clone() else { return };
+                let herdr = s.update(cx, |s, _| {
+                    s.fresh = true;
+                    s.herdr()
+                });
+                let home = std::env::var("HOME").unwrap_or_default();
+                let label = if dir.as_os_str() == home.as_str() {
+                    "~".to_string()
+                } else {
+                    dir.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                };
+                std::thread::spawn(move || {
+                    herdr.call(
+                        "workspace.create",
+                        serde_json::json!({ "cwd": dir, "label": label, "focus": true }),
+                    )
+                });
+                self.leave_modes();
+                window.focus(&self.terminal.read(cx).focus_handle(), cx);
+            }
+            Cmd::Work(i) => {
+                if let Some(s) = &self.sidebar {
+                    s.read(cx).go_work(i);
+                }
+                self.leave_modes();
+                window.focus(&self.terminal.read(cx).focus_handle(), cx);
+            }
+            Cmd::NextWork(d) => {
+                let Some(s) = &self.sidebar else { return };
+                let s = s.read(cx);
+                let n = s.works.len() as i32;
+                if n > 1 {
+                    s.go_work((s.cur as i32 + d).rem_euclid(n) as usize);
+                }
+                self.leave_modes();
+                window.focus(&self.terminal.read(cx).focus_handle(), cx);
+            }
+            Cmd::CloseWork(i) => {
+                let Some(s) = &self.sidebar else { return };
+                let s = s.read(cx);
+                if let Err(e) = s.close_work(i.unwrap_or(s.cur)) {
+                    return self.toast(e.into(), cx);
+                }
+            }
             Cmd::Home => {
                 let Some(s) = &self.sidebar else { return };
                 let s = s.read(cx);
@@ -2345,21 +2453,19 @@ impl Shell {
             )
     }
 
-    /// Abas do workspace em foco, como no `.hbar` do protótipo (a barra do próprio herdr fica escondida).
-    fn hbar(
-        &self,
-        run_task: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-        cx: &App,
-    ) -> Div {
+    /// As abas de trabalho, acima da lateral e do terminal (o `.wtabs` do protótipo); dentro de cada uma, as abas são do herdr.
+    fn works_bar(&self, cx: &mut Context<Self>) -> Div {
         let t = &self.theme;
         let mut bar = div()
             .flex()
             .flex_none()
-            .items_center()
-            .bg(t.panel)
+            .items_end()
+            .gap(px(2.))
+            .h(px(32.))
+            .px(px(8.))
+            .bg(rgb(0x191a21))
             .border_b_1()
-            .border_color(rgb(0x191a21))
-            .font_family(t.mono.clone())
+            .border_color(t.line)
             .text_size(px(13.))
             .whitespace_nowrap()
             .overflow_hidden();
@@ -2367,107 +2473,102 @@ impl Shell {
             return bar;
         };
         let s = sidebar.read(cx);
-        let ws = s
-            .workspaces
-            .iter()
-            .find(|w| w.focused)
-            .map(|w| w.workspace_id.clone());
-        for (i, tab) in s
-            .tabs
-            .iter()
-            .filter(|x| Some(&x.workspace_id) == ws.as_ref())
-            .enumerate()
-        {
-            let agent = s.agents.iter().find(|a| a.tab_id == tab.tab_id);
-            let id = tab.tab_id.clone();
-            let side = sidebar.clone();
+        for i in 0..s.works.len() {
+            let on = i == s.cur;
+            let (repo, branch) = s.work_label(i);
+            let mark = s.work_status(i).map(|st| {
+                div()
+                    .text_color(self.status_color(st))
+                    .font_weight(FontWeight::BOLD)
+                    .child(crate::sidebar::glyph(st).0)
+            });
             bar = bar.child(
                 div()
-                    .id(SharedString::from(format!("tab:{}", tab.tab_id)))
+                    .id(SharedString::from(format!("work:{i}")))
                     .flex()
                     .items_center()
-                    .px(px(12.))
-                    .py(px(3.))
+                    .gap(px(8.))
+                    .h(px(28.))
+                    .pl(px(12.))
+                    .pr(px(8.))
+                    .max_w(px(300.))
+                    .rounded_t(px(6.))
                     .cursor_pointer()
-                    .text_color(if tab.focused { t.fg } else { t.comment })
-                    .when(tab.focused, |d| d.bg(t.win))
-                    .on_click(move |_, _, cx| side.read(cx).focus_tab(id.clone()))
-                    .child(format!(
-                        "{} {}",
-                        i + 1,
-                        if agent.is_some() { "claude" } else { "zsh" }
-                    ))
-                    .when_some(
-                        agent.filter(|a| !matches!(a.agent_status, Status::Idle | Status::Unknown)),
-                        |d, a| {
-                            let (g, _) = crate::sidebar::glyph(a.agent_status);
-                            d.child(
+                    .text_color(t.muted)
+                    .when(on, |d| d.bg(t.panel).text_color(t.fg))
+                    .when(!on, |d| d.hover(|d| d.bg(t.panel)))
+                    .on_click(cx.listener(move |this, _, w, cx| this.run(Cmd::Work(i), w, cx)))
+                    .children(mark)
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(6.))
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(div().text_color(t.fg).child(repo))
+                            .children(branch.map(|b| {
                                 div()
-                                    .ml(px(6.))
-                                    .text_color(self.status_color(a.agent_status))
-                                    .child(g),
-                            )
-                        },
+                                    .truncate()
+                                    .font_family(t.mono.clone())
+                                    .text_size(px(12.))
+                                    .text_color(if on { t.accent } else { t.comment })
+                                    .child(b)
+                            })),
                     )
-                    .when(agent.is_none(), |d| {
-                        let id = tab.tab_id.clone();
-                        let side = sidebar.clone();
-                        d.child(
-                            div()
-                                .id(SharedString::from(format!("tabx:{}", tab.tab_id)))
-                                .ml(px(8.))
-                                .text_color(t.comment)
-                                .hover(|d| d.text_color(t.fg))
-                                .on_click(move |_, _, cx| {
-                                    cx.stop_propagation();
-                                    side.read(cx).close_tab(id.clone());
-                                })
-                                .child("×"),
-                        )
-                    }),
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("workx:{i}")))
+                            .px(px(3.))
+                            .rounded(px(3.))
+                            .text_color(t.comment)
+                            .hover(|d| d.text_color(t.fg).bg(t.raise))
+                            .on_click(cx.listener(move |this, _, w, cx| {
+                                cx.stop_propagation();
+                                this.run(Cmd::CloseWork(Some(i)), w, cx)
+                            }))
+                            .child("×"),
+                    ),
             );
         }
-        if let Some(ws) = ws {
-            let side = sidebar.clone();
-            bar = bar.child(
-                div()
-                    .id("newtab")
-                    .px(px(12.))
-                    .py(px(3.))
-                    .cursor_pointer()
-                    .text_color(t.comment)
-                    .on_click(move |_, _, cx| side.read(cx).new_tab(ws.clone()))
-                    .child("+"),
-            );
-        }
+        bar = bar.child(
+            div()
+                .id("work-new")
+                .h(px(28.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .cursor_pointer()
+                .text_color(t.comment)
+                .hover(|d| d.text_color(t.fg))
+                .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::RepoMenu, w, cx)))
+                .child("+"),
+        );
         bar = bar.child(div().flex_1());
-        if s.top_worktree().is_some() {
-            bar = bar.child(
-                div()
-                    .id("run-task")
-                    .px(px(10.))
-                    .py(px(3.))
-                    .cursor_pointer()
-                    .text_color(t.comment)
-                    .hover(|d| d.text_color(t.fg))
-                    .on_click(run_task)
-                    .child("▶ Rodar tarefa…"),
-            );
-        }
-        let hint = div().px(px(10.)).py(px(3.));
+        let side = div()
+            .h(px(28.))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .font_family(t.mono.clone())
+            .text_size(px(12.));
         if self.prefix {
-            bar.child(
-                hint.bg(rgb(0xf1fa8c))
+            bar = bar.child(
+                side.bg(rgb(0xf1fa8c))
                     .text_color(rgb(0x282a36))
                     .font_weight(FontWeight::BOLD)
                     .child("PREFIX: v divide · - empilha · c aba · x fecha · z zoom"),
-            )
-        } else {
-            bar.child(
-                hint.text_color(t.comment)
-                    .child("Ctrl+Shift+\\ divide · Ctrl+Shift+Enter empilha"),
-            )
+            );
+        } else if s.top_worktree().is_some() && !self.in_mrs && !self.in_vault && !self.in_news {
+            bar = bar.child(
+                side.id("run-task")
+                    .cursor_pointer()
+                    .text_color(t.comment)
+                    .hover(|d| d.text_color(t.fg))
+                    .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::TaskMenu, w, cx)))
+                    .child("▶ Rodar tarefa…"),
+            );
         }
+        bar
     }
 
     fn status_color(&self, s: Status) -> Hsla {
@@ -3135,6 +3236,7 @@ impl Render for Shell {
             .font_family(t.sans)
             .text_size(px(14.))
             .child(self.title(cx))
+            .child(self.works_bar(cx))
             .child(
                 div()
                     .id("columns")
@@ -3199,12 +3301,6 @@ impl Render for Shell {
                                     .bg(t.win)
                                     .relative()
                                     .child(tour::anchor(&self.anchors, "term"))
-                                    .child(self.hbar(
-                                        cx.listener(|this, _, w, cx| {
-                                            this.run(Cmd::TaskMenu, w, cx)
-                                        }),
-                                        cx,
-                                    ))
                                     .child(div().flex_1().min_h_0().child(self.terminal.clone())),
                             )
                         },
