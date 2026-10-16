@@ -778,6 +778,16 @@ impl FileEditor {
         if text == self.saved {
             return cx.emit(Event::Toast("Nada a salvar".into()));
         }
+        // o polling só lê a cada 1 s: sem reler aqui, a edição do Claude nessa janela some
+        if let Ok(disk) = std::fs::read_to_string(&self.file)
+            && disk != self.saved
+        {
+            self.conflict = Some(disk);
+            cx.notify();
+            return cx.emit(Event::Toast(
+                "O arquivo mudou no disco; escolha no aviso".into(),
+            ));
+        }
         match std::fs::write(&self.file, &text) {
             Ok(()) => {
                 self.saved = text;
