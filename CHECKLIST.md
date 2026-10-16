@@ -160,12 +160,13 @@ Conferido numa cópia do vault (`MAESTRO_VAULT`): a feature nova de um repo `bot
 
 ## Etapa 9: Auditoria
 
-- [ ] relatório salvo por sha; abrir o projeto nunca roda auditoria
-- [ ] incremental (diff desde a última + vizinhos) e completa, com estimativa e `--max-budget-usd`
-- [ ] verificação adversarial + dedup contra work items deste repo, de repos irmãos e as decisões do vault
-- [ ] achados marcáveis, prévia editável, "abrir N work items" com confirmação, "não é problema" persistido
-- [ ] "Corrigir em feature" a partir do work item
-- [ ] tutorial da área
+- [x] relatório salvo por sha (`.maestro/audits/<sha>.json`, fora do `git status` pelo `info/exclude`); abrir o projeto nunca roda auditoria, só lê o relatório e o `git`
+- [x] incremental (diff desde a última + vizinhos de 1 salto; sem relatório, pede o sha) e completa, com estimativa e `--max-budget-usd` dividido entre as duas passadas
+- [x] verificação adversarial (segunda passada com todos os achados) + dedup contra work items deste repo, dos irmãos (mesmo `squad:` no vault) e as decisões do vault; rede de segurança em código (`audit::dedup`, testada com os títulos reais do email-service)
+- [x] achados marcáveis, prévia editável, "abrir N work items" com confirmação (só pelo `mrs::write`), "não é problema" persistido em `.maestro/audit-ignore.json` com desfazer
+- [x] "Corrigir em feature" a partir do work item (`fix/<iid>-slug`, sem commitar)
+- [x] tutorial da área, card na lateral, fila de atenção, status bar, paleta e resumo do dia
+- [ ] ponytail: "dados de produção via MCP" aparece apagado até o Datadog/Cloud SQL estarem autenticados no `claude`
 
 **Pronto quando:** a incremental no email-service desde um sha antigo não devolve nenhum dos #15 a #50 como "novo".
 

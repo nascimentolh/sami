@@ -43,6 +43,8 @@ pub enum Cmd {
     MrReview,
     Vault(VaultGo),
     Go(crate::sidebar::Go),
+    /// o modo Auditoria; `true` já abre a "Nova auditoria…"
+    Audit(bool),
 }
 
 #[derive(Clone)]
@@ -126,8 +128,12 @@ pub fn commands() -> Vec<Item> {
             "Ctrl+Shift+B",
             Some(ToggleLeft),
         ),
-        c("Auditoria: Abrir relatório", "", None),
-        c("Auditoria: Nova auditoria incremental", "", None),
+        c("Auditoria: Abrir relatório", "", Some(Audit(false))),
+        c(
+            "Auditoria: Nova auditoria incremental",
+            "",
+            Some(Audit(true)),
+        ),
         c("Ir para: Features", "", Some(Features)),
         c("Ir para: MRs", "", Some(Mrs)),
         c("MR: Revisar com Claude", "⇧R", Some(MrReview)),

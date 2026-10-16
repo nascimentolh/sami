@@ -1,3 +1,5 @@
+mod audit;
+mod audit_view;
 mod binds;
 mod braille;
 mod changes;

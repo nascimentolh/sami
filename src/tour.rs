@@ -129,6 +129,15 @@ pub const MRS: &[Step] = &[Step {
     wait: false,
 }];
 
+/// O `TOURS.audit` do protótipo.
+pub const AUDIT: &[Step] = &[Step {
+    target: "auNew",
+    text: &[T(
+        "A auditoria nunca roda sozinha. Aqui você escolhe incremental ou completa e vê o custo antes.",
+    )],
+    wait: false,
+}];
+
 /// O `TOURS.vault` do protótipo.
 pub const VAULT: &[Step] = &[
     Step {

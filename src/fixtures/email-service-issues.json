@@ -1,0 +1,252 @@
+[
+{
+"iid": 1,
+"state": "closed",
+"title": "chore(deps): update bullmq to 5.79.3 (major)"
+},
+{
+"iid": 2,
+"state": "closed",
+"title": "chore(deps): update fastify-plugin to 6.0.0 (major)"
+},
+{
+"iid": 3,
+"state": "closed",
+"title": "chore(deps): update fastify-type-provider-zod to 7.0.0 (major)"
+},
+{
+"iid": 4,
+"state": "closed",
+"title": "chore(deps): update file-type to 22.0.1 (major)"
+},
+{
+"iid": 5,
+"state": "closed",
+"title": "chore(deps): update nodemailer to 9.0.3 (major)"
+},
+{
+"iid": 6,
+"state": "closed",
+"title": "chore(deps): update uuid to 14.0.1 (major)"
+},
+{
+"iid": 7,
+"state": "opened",
+"title": "chore(deps): update @types/node to 26.1.1 (major)"
+},
+{
+"iid": 8,
+"state": "closed",
+"title": "chore(deps): update @types/nodemailer to 8.0.1 (major)"
+},
+{
+"iid": 9,
+"state": "opened",
+"title": "chore(deps): update typescript to 7.0.2 (major)"
+},
+{
+"iid": 10,
+"state": "closed",
+"title": "chore(deps): update vite-tsconfig-paths to 6.1.1 (major)"
+},
+{
+"iid": 11,
+"state": "closed",
+"title": "chore(deps): update @google-cloud/pubsub to 6.0.1 (major)"
+},
+{
+"iid": 12,
+"state": "closed",
+"title": "chore(deps): update @google-cloud/storage to 8.0.1 (major)"
+},
+{
+"iid": 13,
+"state": "closed",
+"title": "chore(deps): update bullmq-otel to 2.0.1 (major)"
+},
+{
+"iid": 14,
+"state": "closed",
+"title": "chore(deps): update ioredis to 6.0.0 (major)"
+},
+{
+"iid": 15,
+"state": "closed",
+"title": "[P0] fix(db): Pool.connect() sem release deixa 1 conexão útil por pod"
+},
+{
+"iid": 16,
+"state": "closed",
+"title": "[P0] fix(boot): conexões de DB e Redis sem timeout derrubam a frota em CrashLoop (AVV_ERR_PLUGIN_EXEC_TIMEOUT)"
+},
+{
+"iid": 17,
+"state": "closed",
+"title": "[P0] fix(healthcheck): /healthz único autentica no SMTP da HubSpot a cada probe e governa o restart do pod"
+},
+{
+"iid": 18,
+"state": "closed",
+"title": "[P0] infra(pubsub): retenção de 600s sem dead letter topic descarta e-mail em qualquer queda acima de 10 min"
+},
+{
+"iid": 19,
+"state": "closed",
+"title": "[P0] fix(worker): errorHandler com ack() descarta a mensagem e deixa o e-mail preso em PENDING"
+},
+{
+"iid": 20,
+"state": "closed",
+"title": "[P0] fix(dispatch): job sem jobId e sem checagem de status permite envio duplicado"
+},
+{
+"iid": 21,
+"state": "closed",
+"title": "[P1] fix(sender): from com display name é truncado e tem o domínio reescrito"
+},
+{
+"iid": 22,
+"state": "opened",
+"title": "[P1] fix(template): variables gravado como string JSON desliga a validação de variáveis obrigatórias"
+},
+{
+"iid": 23,
+"state": "closed",
+"title": "[P1] fix(shutdown): onShutdown vazio — pool, Redis, workers BullMQ e subscriptions ficam abertos no SIGTERM"
+},
+{
+"iid": 24,
+"state": "closed",
+"title": "[P1] sec(docker): token do Artifact Registry fica na camada da imagem; build sem --prod e sem compilar"
+},
+{
+"iid": 25,
+"state": "closed",
+"title": "[P1] sec(api): 7 rotas sem autenticação, incluindo POST /send e POST /reprocess"
+},
+{
+"iid": 26,
+"state": "closed",
+"title": "[P1] sec(secrets): tokens do Kong de dev e produção em texto plano no working tree"
+},
+{
+"iid": 27,
+"state": "closed",
+"title": "[P1] sec(logs): payload completo do e-mail em nível INFO e conteúdo binário do anexo em erro"
+},
+{
+"iid": 28,
+"state": "closed",
+"title": "[P1] perf(queue): getJobs(['waiting','delayed']) carrega a fila inteira a cada e-mail enfileirado"
+},
+{
+"iid": 29,
+"state": "closed",
+"title": "[P1] perf(api): POST /reprocess sem LIMIT e com fan-out ilimitado"
+},
+{
+"iid": 30,
+"state": "closed",
+"title": "[P1] infra(k8s): 1 core reservado por pod para 0,03 de uso; memória em 82% do limite sem --max-old-space-size"
+},
+{
+"iid": 31,
+"state": "closed",
+"title": "[P1] fix(smtp): nodemailer sem pool, sem rateLimit e sem timeouts"
+},
+{
+"iid": 32,
+"state": "closed",
+"title": "[P1] fix(db): onConflictDoUpdate reescreve status para PENDING e apaga SENT/FAILED"
+},
+{
+"iid": 33,
+"state": "closed",
+"title": "[P1] fix(worker): subscriptions sem flow control (até 1000 msgs em voo x 5) contra 1 conexão de banco"
+},
+{
+"iid": 34,
+"state": "closed",
+"title": "[P2] fix(config): isPrd() lê a env errada e liga o log de SQL em produção"
+},
+{
+"iid": 35,
+"state": "closed",
+"title": "[P2] perf(db): sem índice em application; findByName não usa o índice lower(name)"
+},
+{
+"iid": 36,
+"state": "opened",
+"title": "[P2] chore(db): email_replications sem retenção; índice de status nunca usado"
+},
+{
+"iid": 37,
+"state": "closed",
+"title": "[P2] fix(validation): callback de erro sai sempre com application not-provided"
+},
+{
+"iid": 38,
+"state": "closed",
+"title": "[P2] fix(di): módulos de domínio sem .singleton() criam uma Queue BullMQ por resolução"
+},
+{
+"iid": 39,
+"state": "closed",
+"title": "[P2] fix(template): replaceHtmlVariables permite ReDoS, injeção de padrão $ e HTML"
+},
+{
+"iid": 40,
+"state": "opened",
+"title": "[P2] chore(infra): cloudsql-proxy v1 em fim de vida, sem health-check do sidecar"
+},
+{
+"iid": 41,
+"state": "closed",
+"title": "[P2] chore(env): sem validação de env; defaults apontam para dev; .env.example incompleto"
+},
+{
+"iid": 42,
+"state": "closed",
+"title": "[P2] chore(bullmq): removeOnFail count 0 apaga o rastro do e-mail que falhou 10 vezes"
+},
+{
+"iid": 43,
+"state": "closed",
+"title": "[P2] chore(obs): nenhuma métrica de negócio e trace quebrado entre os 4 hops"
+},
+{
+"iid": 44,
+"state": "closed",
+"title": "[P2] chore(repo): código morto e artefatos enganosos (k8s.yaml, redisPubSub, channels.ts, REVIEW.md)"
+},
+{
+"iid": 45,
+"state": "closed",
+"title": "[P2] fix(file): metadata do GCS é descartado na escrita e o anexo sai sempre como octet-stream"
+},
+{
+"iid": 46,
+"state": "opened",
+"title": "[P3] chore(env): typo STMP nas variáveis do SMTP da HubSpot"
+},
+{
+"iid": 47,
+"state": "closed",
+"title": "fix(template): variables é gravado como string JSON numa coluna json"
+},
+{
+"iid": 48,
+"state": "closed",
+"title": "[P3] chore(deps): bullmq declarado com link: gera symlink dangling e mascara o grafo"
+},
+{
+"iid": 49,
+"state": "opened",
+"title": "Timeout de conexão com o Postgres em disparo massivo faz e-mails falharem sem retry (INVALID_PAYLOAD e replicação órfã)"
+},
+{
+"iid": 50,
+"state": "opened",
+"title": "Remover alert policy \"envio recusado ou sem registro\" do Cloud Monitoring (manter só o card no Google Chat)"
+}
+]

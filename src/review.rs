@@ -25,6 +25,8 @@ pub enum Redo {
     Patch(PathBuf, String),
     Restore(PathBuf, String),
     Vault(crate::vault::Write),
+    /// "Não é problema" na auditoria: desfazer tira do `audit-ignore.json`
+    Audit(crate::audit::Ignored),
 }
 
 pub enum Event {

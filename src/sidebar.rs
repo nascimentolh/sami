@@ -33,6 +33,7 @@ pub enum SidebarEvent {
     Learn(perms::Suggestion),
     /// o Maestro escreveu no vault (Histórico, daily)
     Vault(Result<crate::vault::Write, String>),
+    Audit,
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -57,6 +58,8 @@ pub struct Sidebar {
     sent: HashMap<PathBuf, HashSet<u64>>,
     /// o pedido de permissão de cada pane bloqueado ("pediu permissão: npm test")
     asks: HashMap<String, String>,
+    /// o card "Auditoria": (rodando, k, m, aberta, pronta e não vista)
+    pub audit: (bool, String, String, bool, bool),
     /// (arquivo do editor, sujo, aba do editor à frente)
     open: Option<(String, bool, bool)>,
     sessions: Arc<Mutex<Sessions>>,
@@ -74,6 +77,7 @@ pub enum Go {
     /// (pane, worktree): a feature e o painel Revisar
     Review(String, PathBuf),
     Compare(String),
+    Audit,
 }
 
 /// Um item do `attention()` do protótipo; `p` é a prioridade (0 = permissão … 4 = daily).
@@ -289,6 +293,7 @@ impl Sidebar {
             learned: HashSet::new(),
             sent: HashMap::new(),
             asks: HashMap::new(),
+            audit: (false, String::new(), "nunca rodou".into(), false, false),
             open: None,
             sessions: Arc::default(),
             anchors,
@@ -492,7 +497,6 @@ impl Sidebar {
 
     /// Próximo da fila: quem precisa de você primeiro, depois quem terminou.
     /// A fila: permissão > CI/Sonar > comentários, prontas e comparar > contexto alto.
-    // ponytail: MR alheio, auditoria e daily entram com as Etapas 8, 9 e 7
     pub fn attention(&self) -> Vec<AttItem> {
         let mut q = Vec::new();
         let mut groups_done: HashSet<String> = HashSet::new();
@@ -602,6 +606,14 @@ impl Sidebar {
                     Go::Pane(pane.clone()),
                 ));
             }
+        }
+        if self.audit.4 {
+            q.push(AttItem {
+                p: 3,
+                tag: "auditoria",
+                text: "Auditoria pronta com achados para revisar".into(),
+                go: Go::Audit,
+            });
         }
         q.sort_by_key(|i| i.p);
         q
@@ -1042,23 +1054,26 @@ impl Render for Sidebar {
         // ordem do protótipo: repo · Auditoria · FEATURES · cards · Nova feature · TERMINAIS · Mudanças
         if let Some(top) = repos.iter().find(|r| Some(&r.path) == top.as_ref()) {
             col = col.child(repo_head(top.name.clone(), &top.path));
-            // ponytail: a Auditoria é a Etapa 9; até lá o card aparece apagado
+            let (run, k, m, on, _) = self.audit.clone();
             col = col.child(feats().child(self.row(
                 Row {
                     id: "auditoria".into(),
-                    glyph: "◇",
-                    glyph_color: t.comment,
+                    glyph: if run { "◐" } else { "◇" },
+                    glyph_color: if run { t.cyan } else { t.comment },
                     b: "Auditoria".into(),
-                    k: String::new(),
-                    m: "nunca rodou".into(),
+                    k,
+                    m,
                     m_color: t.muted,
                     m2: None,
                     mr: None,
-                    on: false,
+                    on,
                     unseen: None,
-                    dim: true,
+                    dim: false,
                 },
-                |_| {},
+                {
+                    let this = this.clone();
+                    move |cx| this.update(cx, |_, cx| cx.emit(SidebarEvent::Audit))
+                },
             )));
         }
         col = col.child(

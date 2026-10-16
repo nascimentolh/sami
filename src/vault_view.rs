@@ -357,8 +357,17 @@ impl VaultView {
                 )
             })
             .collect();
-        // ponytail: a auditoria é a Etapa 9
-        lines.push("- auditoria: não rodou".into());
+        let today = self
+            .sidebar
+            .as_ref()
+            .and_then(|s| s.read(cx).top_repo())
+            .and_then(|r| crate::audit::latest(&r))
+            .filter(|r| r.date == crate::vault::today());
+        lines.push(match today {
+            Some(r) if r.kind == "full" => "- auditoria: completa rodada hoje".into(),
+            Some(_) => "- auditoria: incremental rodada hoje".into(),
+            None => "- auditoria: não rodou".into(),
+        });
         lines.join("\n")
     }
 

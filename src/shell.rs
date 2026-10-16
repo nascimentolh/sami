@@ -3,6 +3,7 @@ use gpui_kit::{prelude::FluentBuilder, *};
 use std::time::Duration;
 
 use crate::{
+    audit_view::{self, AuditView},
     changes,
     cleanup::{self, Cleanup},
     compare::{self, Attempt, Compare},
@@ -54,6 +55,12 @@ pub struct Shell {
     /// o modo MRs (inbox, MR e revisor)
     mrs: Option<Entity<MrsView>>,
     in_mrs: bool,
+    /// o modo Auditoria (dentro de Features, como no protótipo)
+    audit: Option<Entity<AuditView>>,
+    in_audit: bool,
+    want_audit: bool,
+    want_create: Option<(String, String)>,
+    want_fix: Option<(String, String, String, String)>,
     want_publish: Option<(String, String)>,
     mascot: Option<(Note, usize, bool)>,
     mascot_seq: usize,
@@ -81,6 +88,13 @@ const MR_HINTS: &[(&str, &str, bool)] = &[
 ];
 
 /// As dicas do modo Vault (`HINTS.vault` do protótipo).
+/// As dicas da auditoria (`HINTS.audit` do protótipo).
+const AUDIT_HINTS: &[(&str, &str, bool)] = &[
+    ("Nova auditoria…", "incremental ou completa", true),
+    ("espaço", "marcar achado", true),
+    ("?", "atalhos", false),
+];
+
 const VAULT_HINTS: &[(&str, &str, bool)] = &[
     ("clique", "abrir nota", true),
     ("[[link]]", "navegar", true),
@@ -152,6 +166,7 @@ impl Shell {
                         ),
                         Err(e) => this.toast(format!("vault: não deu para escrever ({e})"), cx),
                     },
+                    SidebarEvent::Audit => this.want_audit = true,
                 }
                 cx.notify();
             })
@@ -225,6 +240,11 @@ impl Shell {
             in_vault: false,
             mrs: None,
             in_mrs: false,
+            audit: None,
+            in_audit: false,
+            want_audit: false,
+            want_create: None,
+            want_fix: None,
             want_publish: None,
             mascot: None,
             mascot_seq: 0,
@@ -718,6 +738,85 @@ impl Shell {
         m
     }
 
+    fn audit_view(&mut self, cx: &mut Context<Self>) -> Entity<AuditView> {
+        let repo = self.sidebar.as_ref().and_then(|s| s.read(cx).top_repo());
+        if let Some(a) = &self.audit {
+            a.update(cx, |a, cx| a.set_repo(repo, cx));
+            return a.clone();
+        }
+        let a = cx.new(|cx| {
+            let mut a = AuditView::new(self.theme.clone(), self.anchors.clone(), cx);
+            a.set_repo(repo, cx);
+            a
+        });
+        cx.subscribe(&a, |this, _, e: &audit_view::Event, cx| {
+            match e {
+                audit_view::Event::Toast(t) => this.toast(t.clone(), cx),
+                audit_view::Event::Ignored(ig) => this.toast_undo(
+                    "Ignorado: não volta nas próximas auditorias (.maestro/audit-ignore.json)"
+                        .into(),
+                    Some(Redo::Audit(ig.clone())),
+                    cx,
+                ),
+                audit_view::Event::AskCreate(a, b) => {
+                    this.want_create = Some((a.clone(), b.clone()))
+                }
+                audit_view::Event::AskFix(a, b, c, d) => {
+                    this.want_fix = Some((a.clone(), b.clone(), c.clone(), d.clone()))
+                }
+            }
+            cx.notify();
+        })
+        .detach();
+        cx.observe(&a, |_, _, cx| cx.notify()).detach();
+        self.audit = Some(a.clone());
+        a
+    }
+
+    /// "Corrigir em feature": a worktree `fix/<iid>-slug` com o Claude e o work item como tarefa.
+    fn fix_in_feature(&mut self, branch: String, prompt: String, cx: &mut Context<Self>) {
+        let Some(repo) = self.audit.as_ref().and_then(|a| a.read(cx).repo()) else {
+            return;
+        };
+        let Some(base) = feature::bases(&repo).into_iter().next() else {
+            return self.toast(
+                "O repositório não tem branch para servir de base.".into(),
+                cx,
+            );
+        };
+        let req = feature::Request {
+            repo,
+            branch,
+            base,
+            prompt,
+            copy_env: true,
+            setup: true,
+            claude: true,
+            model: None,
+            group: None,
+        };
+        let used: Vec<u16> = feature::inventories().iter().map(|i| i.port).collect();
+        let port = feature::next_port(&used);
+        let Some(herdr) = self.sidebar.as_ref().map(|s| s.read(cx).herdr()) else {
+            return;
+        };
+        self.in_audit = false;
+        cx.spawn(async move |this, cx| {
+            let r = cx
+                .background_executor()
+                .spawn(async move { feature::create(&herdr, &req, port).map(drop) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(e) = r {
+                    this.toast(format!("Não deu para criar a feature: {e}"), cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn vault_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<VaultView> {
         if let Some(v) = &self.vault {
             return v.clone();
@@ -1040,10 +1139,14 @@ impl Shell {
             }
             Cmd::Go(go) => {
                 let pane = match &go {
-                    Go::Pane(p) | Go::Mr(p, _) | Go::Review(p, _) | Go::Compare(p) => p.clone(),
+                    Go::Pane(p) | Go::Mr(p, _) | Go::Review(p, _) | Go::Compare(p) => {
+                        Some(p.clone())
+                    }
+                    Go::Audit => None,
                 };
-                focus(Some(pane), cx);
+                focus(pane, cx);
                 match go {
+                    Go::Audit => return self.run(Cmd::Audit(false), window, cx),
                     Go::Pane(_) => {}
                     Go::Mr(_, wt) => {
                         self.open_review_at(wt, None, window, cx);
@@ -1077,11 +1180,29 @@ impl Shell {
             Cmd::Features => {
                 self.in_vault = false;
                 self.in_mrs = false;
+                self.in_audit = false;
+            }
+            Cmd::Audit(new) => {
+                let a = self.audit_view(cx);
+                a.update(cx, |a, cx| a.refresh(cx));
+                if new {
+                    a.update(cx, |a, cx| a.new_audit(true, cx));
+                }
+                self.in_audit = true;
+                self.in_vault = false;
+                self.in_mrs = false;
+                let f = a.read(cx).focus_handle();
+                window.focus(&f, cx);
+                if self.tour.is_none() && !tour::seen("audit") {
+                    self.tour = Some((tour::AUDIT, "audit", 0));
+                }
+                return cx.notify();
             }
             Cmd::Mrs | Cmd::MrReview => {
                 let m = self.mrs_view(window, cx);
                 self.in_mrs = true;
                 self.in_vault = false;
+                self.in_audit = false;
                 if cmd == Cmd::MrReview {
                     m.update(cx, |m, cx| m.start_review(cx));
                 }
@@ -1102,6 +1223,7 @@ impl Shell {
                 v.update(cx, |v, cx| v.go(&to, repo, cx));
                 self.in_vault = true;
                 self.in_mrs = false;
+                self.in_audit = false;
                 let f = v.read(cx).focus_handle();
                 window.focus(&f, cx);
                 if self.tour.is_none() && !tour::seen("vault") {
@@ -1361,7 +1483,7 @@ impl Shell {
                     .child(
                         mode(
                             "Features",
-                            !self.in_vault,
+                            !self.in_vault && !self.in_mrs,
                             (blocked > 0).then(|| format!("{blocked} !")),
                         )
                         .id("m-feat")
@@ -1573,7 +1695,9 @@ impl Shell {
             .overflow_hidden()
             .whitespace_nowrap();
         let mr_open = self.mrs.as_ref().is_some_and(|m| m.read(cx).in_mr());
-        let hints = if self.in_vault {
+        let hints = if self.in_audit {
+            AUDIT_HINTS
+        } else if self.in_vault {
             VAULT_HINTS
         } else if self.in_mrs && mr_open {
             MR_HINTS
@@ -1661,6 +1785,16 @@ impl Shell {
                 bar = bar.child(
                     cell().child(format!("hoje: US$ {}", crate::sidebar::brl(s.today_cost()))),
                 );
+                if let Some(a) = self
+                    .audit
+                    .as_ref()
+                    .map(|a| a.read(cx))
+                    .filter(|a| a.running())
+                {
+                    bar = bar.child(
+                        cell().child(format!("auditoria: US$ {}", crate::audit::brl(a.spent()))),
+                    );
+                }
                 let focused = s.agents.iter().find(|a| a.focused);
                 if let Some(b) = focused.and_then(|a| {
                     herdr::repo_root(std::path::Path::new(&a.cwd)).and_then(herdr::branch)
@@ -1775,6 +1909,64 @@ impl Render for Shell {
             let title = format!("!{iid} foi mergeado. Remover a worktree {branch}?");
             self.remove_feature_at(Some(wt), Some(title), window, cx);
         }
+        // o card da lateral lê só o relatório salvo; abrir o projeto nunca roda auditoria
+        if self
+            .sidebar
+            .as_ref()
+            .is_some_and(|s| s.read(cx).top_repo().is_some())
+        {
+            let a = self.audit_view(cx).read(cx);
+            let (run, k, m) = a.card();
+            let v = (run, k, m, self.in_audit, a.ready());
+            if let Some(s) = &self.sidebar {
+                s.update(cx, |s, cx| {
+                    if s.audit != v {
+                        s.audit = v;
+                        cx.notify();
+                    }
+                });
+            }
+        }
+        if std::mem::take(&mut self.want_audit) {
+            self.run(Cmd::Audit(false), window, cx);
+        }
+        if self.confirm.is_none()
+            && let Some((title, text)) = self.want_create.take()
+        {
+            let theme = self.theme.clone();
+            let c = cx
+                .new(|cx| Confirm::new(theme, title, text, "Abrir work items", false, window, cx));
+            cx.subscribe_in(&c, window, |this, _, a: &Answer, window, cx| {
+                this.confirm = None;
+                if let Some(au) = &this.audit {
+                    if matches!(a, Answer::Ok) {
+                        au.update(cx, |au, cx| au.create(cx));
+                    }
+                    let f = au.read(cx).focus_handle();
+                    window.focus(&f, cx);
+                }
+                cx.notify();
+            })
+            .detach();
+            self.confirm = Some(c);
+        }
+        if self.confirm.is_none()
+            && let Some((title, text, branch, prompt)) = self.want_fix.take()
+        {
+            let theme = self.theme.clone();
+            let c =
+                cx.new(|cx| Confirm::new(theme, title, text, "Criar feature", false, window, cx));
+            cx.subscribe_in(&c, window, move |this, _, a: &Answer, window, cx| {
+                this.confirm = None;
+                if matches!(a, Answer::Ok) {
+                    this.fix_in_feature(branch.clone(), prompt.clone(), cx);
+                    window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                }
+                cx.notify();
+            })
+            .detach();
+            self.confirm = Some(c);
+        }
         if let Some(p) = self.want_file.take() {
             self.run(Cmd::OpenFile(p), window, cx);
         }
@@ -1850,7 +2042,10 @@ impl Render for Shell {
                             .clone()
                             .filter(|_| self.left && !self.in_vault && !self.in_mrs),
                     )
-                    .when(!self.in_vault && !self.in_mrs, |d| {
+                    .when_some(self.audit.clone().filter(|_| self.in_audit), |d, a| {
+                        d.child(a)
+                    })
+                    .when(!self.in_vault && !self.in_mrs && !self.in_audit, |d| {
                         d.child(
                             div()
                                 .flex_1()
@@ -1868,7 +2063,7 @@ impl Render for Shell {
                     .children(
                         self.review
                             .clone()
-                            .filter(|_| !self.in_vault && !self.in_mrs)
+                            .filter(|_| !self.in_vault && !self.in_mrs && !self.in_audit)
                             .map(|r| {
                                 div()
                                     .w(relative(0.46))
@@ -2000,6 +2195,12 @@ impl Render for Shell {
                                         }
                                         Redo::Restore(root, sha) => feature::restore(root, sha),
                                         Redo::Vault(w) => crate::vault::undo(w),
+                                        Redo::Audit(ig) => {
+                                            if let Some(a) = &this.audit {
+                                                a.update(cx, |a, cx| a.unignore(ig, cx));
+                                            }
+                                            Ok(())
+                                        }
                                     };
                                     if let Err(e) = r {
                                         this.toast(format!("Não deu para refazer: {e}"), cx);
