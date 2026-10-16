@@ -25,6 +25,19 @@ pub struct Inventory {
     #[serde(default)]
     pub model: Option<String>,
     pub created_at: u64,
+    /// MR empilhado: a feature mãe e o ponto dela de onde esta saiu
+    #[serde(default)]
+    pub parent: Option<Parent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Parent {
+    pub id: String,
+    pub branch: String,
+    /// a ponta da mãe na criação ou no último rebase: o `--onto` corta daqui
+    pub sha: String,
+    /// a base da mãe (`main`): para onde a filha vai quando a mãe mergeia
+    pub base: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,6 +59,10 @@ pub struct Request {
     pub claude: bool,
     pub model: Option<&'static str>,
     pub group: Option<String>,
+    /// "Outros repos": mesma branch numa worktree de cada
+    pub others: Vec<PathBuf>,
+    /// "Em cima de": a mãe; `base` já vem com a branch dela
+    pub parent: Option<Inventory>,
 }
 
 pub fn slug(s: &str) -> String {
@@ -88,8 +105,13 @@ pub fn compose_project(repo: &Path, branch: &str) -> String {
 }
 
 fn data_dir() -> PathBuf {
-    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-        .join(".local/share/maestro/features")
+    std::env::var_os("MAESTRO_FEATURES").map_or_else(
+        || {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".local/share/maestro/features")
+        },
+        PathBuf::from,
+    )
 }
 
 pub fn inventories() -> Vec<Inventory> {
@@ -188,7 +210,9 @@ pub fn sh_quote(s: &str) -> String {
 }
 
 fn git(repo: &Path, args: &[&str]) -> Option<String> {
+    // leitura de fundo não pega o index.lock: um rebase ou commit no terminal ao mesmo tempo não quebra
     let out = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -215,7 +239,13 @@ fn git_err(repo: &Path, args: &[&str]) -> Result<(), String> {
 
 /// O comando que roda no pane da feature: setup e depois o `claude` com o prompt.
 /// `context`: o arquivo com a nota do repo no vault, que vai no `--append-system-prompt`.
-pub fn start_command(req: &Request, setup: Option<&str>, context: Option<&Path>) -> String {
+/// `dirs`: as worktrees dos outros repos, que o Claude passa a enxergar.
+pub fn start_command(
+    req: &Request,
+    setup: Option<&str>,
+    context: Option<&Path>,
+    dirs: &[PathBuf],
+) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(s) = setup.filter(|_| req.setup) {
         parts.push(s.to_string());
@@ -224,6 +254,9 @@ pub fn start_command(req: &Request, setup: Option<&str>, context: Option<&Path>)
         let mut c = String::from("claude");
         if let Some(m) = req.model {
             c.push_str(&format!(" --model {m}"));
+        }
+        for d in dirs {
+            c.push_str(&format!(" --add-dir {}", sh_quote(&d.to_string_lossy())));
         }
         if let Some(f) = context {
             c.push_str(&format!(
@@ -289,9 +322,22 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Inventory, Stri
         group: req.group.clone(),
         model: req.model.map(String::from),
         created_at: now,
+        parent: req.parent.as_ref().map(|m| Parent {
+            id: m.id.clone(),
+            branch: m.branch.clone(),
+            sha: git(&req.repo, &["rev-parse", &m.branch])
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            base: m.parent.as_ref().map_or(m.base.clone(), |p| p.base.clone()),
+        }),
     };
     // grava antes do herdr: se algo falhar daqui em diante, a Limpeza ainda acha a worktree
     save(&inv).map_err(|e| e.to_string())?;
+    for repo in &req.others {
+        add_worktree(&mut inv, repo)?;
+    }
+    let others: Vec<PathBuf> = inv.worktrees[1..].iter().map(|w| w.path.clone()).collect();
 
     let ws = herdr
         .call(
@@ -316,44 +362,104 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Inventory, Stri
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let context = crate::vault::context(&crate::vault::load(&crate::vault::dir()), &repo_name)
-        .and_then(|c| {
-            let f = data_dir().join(format!("{}.context.md", inv.id));
-            std::fs::write(&f, c).ok().map(|_| f)
-        });
-    let cmd = start_command(req, setup_command(&req.repo).as_deref(), context.as_deref());
+    let vault = crate::vault::context(&crate::vault::load(&crate::vault::dir()), &repo_name);
+    let context = match (vault, feature_context(&inv)) {
+        (None, None) => None,
+        (v, e) => Some(
+            [v, e]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        ),
+    }
+    .and_then(|c| {
+        let f = data_dir().join(format!("{}.context.md", inv.id));
+        std::fs::write(&f, c).ok().map(|_| f)
+    });
+    let cmd = start_command(
+        req,
+        setup_command(&req.repo).as_deref(),
+        context.as_deref(),
+        &others,
+    );
     if let (Some(pane), false) = (&pane, cmd.is_empty()) {
         let _ = herdr.call(
             "pane.send_text",
             json!({ "pane_id": pane, "text": format!("{cmd}\r") }),
         );
     }
-    // aba 2 é zsh, como no protótipo
+    // aba 2 é zsh, como no protótipo; cada outro repo ganha a sua aba
     if let Some(ws) = &ws_id {
-        let _ = herdr.call(
-            "tab.create",
-            json!({ "workspace_id": ws, "cwd": path, "focus": false }),
-        );
+        for cwd in std::iter::once(&path).chain(&others) {
+            let _ = herdr.call(
+                "tab.create",
+                json!({ "workspace_id": ws, "cwd": cwd, "focus": false }),
+            );
+        }
     }
     Ok(inv)
+}
+
+fn repo_name(p: &Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// O que o Claude da feature precisa saber além do vault: os outros repos e a mãe da pilha.
+fn feature_context(inv: &Inventory) -> Option<String> {
+    let mut out = Vec::new();
+    if inv.worktrees.len() > 1 {
+        let list: Vec<String> = inv
+            .worktrees
+            .iter()
+            .map(|w| format!("- {}: {}", repo_name(&w.repo), w.path.display()))
+            .collect();
+        out.push(format!(
+            "Esta feature é multi-repo: a branch {} existe numa worktree de cada repo abaixo.\n{}\nAo abrir os MRs, cite os outros no corpo de cada um como \"Relacionados: <repo>!<iid>\".",
+            inv.branch,
+            list.join("\n")
+        ));
+    }
+    if let Some(p) = &inv.parent {
+        out.push(format!(
+            "Esta feature está empilhada em {0}: o MR dela deve apontar (target branch) para {0}, não para {1}.",
+            p.branch, p.base
+        ));
+    }
+    (!out.is_empty()).then(|| out.join("\n\n"))
 }
 
 /// O que a confirmação precisa mostrar antes de concluir.
 pub struct Pending {
     pub uncommitted: usize,
     pub merged: bool,
+    /// (repo, não commitados) das worktrees com mudança, quando a feature é multi-repo
+    pub dirty: Vec<(String, usize)>,
 }
 
 /// Conta o não commitado de todas as worktrees: as extras limpas saem sem perguntar.
 pub fn pending(inv: &Inventory) -> Pending {
-    let uncommitted = inv
+    let dirty: Vec<(String, usize)> = inv
         .worktrees
         .iter()
-        .map(|w| git(&w.path, &["status", "--porcelain"]).map_or(0, |s| s.lines().count()))
-        .sum();
+        .map(|w| {
+            (
+                repo_name(&w.repo),
+                git(&w.path, &["status", "--porcelain"]).map_or(0, |s| s.lines().count()),
+            )
+        })
+        .filter(|(_, n)| *n > 0)
+        .collect();
     Pending {
-        uncommitted,
+        uncommitted: dirty.iter().map(|d| d.1).sum(),
         merged: is_merged(&inv.repo, &inv.branch, &inv.base),
+        dirty: if inv.worktrees.len() > 1 {
+            dirty
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -643,6 +749,21 @@ pub fn sibling_repos(repo: &Path) -> Vec<PathBuf> {
 
 /// "+ repo": worktree na mesma branch em outro repositório, só quando pedido, registrada no inventário.
 pub fn add_repo(herdr: &Herdr, inv: &mut Inventory, repo: &Path) -> Result<PathBuf, String> {
+    let path = add_worktree(inv, repo)?;
+    // o Claude da feature passa a enxergar a pasta nova
+    let agents = herdr.agents().unwrap_or_default();
+    let ws = inv.workspace_id.as_deref();
+    if let Some(a) = agents.iter().find(|a| Some(a.workspace_id.as_str()) == ws) {
+        let _ = herdr.call(
+            "pane.send_text",
+            json!({ "pane_id": a.pane_id, "text": format!("/add-dir {}\r", path.display()) }),
+        );
+    }
+    Ok(path)
+}
+
+/// A worktree da feature em mais um repositório, gravada no inventário (a conclusão apaga junto).
+pub fn add_worktree(inv: &mut Inventory, repo: &Path) -> Result<PathBuf, String> {
     if inv.worktrees.iter().any(|w| w.repo == repo) {
         return Err(format!("{} já faz parte da feature", repo.display()));
     }
@@ -666,16 +787,201 @@ pub fn add_repo(herdr: &Herdr, inv: &mut Inventory, repo: &Path) -> Result<PathB
         created_branch: !exists,
     });
     save(inv).map_err(|e| e.to_string())?;
-    // o Claude da feature passa a enxergar a pasta nova
-    let agents = herdr.agents().unwrap_or_default();
-    let ws = inv.workspace_id.as_deref();
-    if let Some(a) = agents.iter().find(|a| Some(a.workspace_id.as_str()) == ws) {
-        let _ = herdr.call(
-            "pane.send_text",
-            json!({ "pane_id": a.pane_id, "text": format!("/add-dir {p}\r") }),
-        );
-    }
     Ok(path)
+}
+
+/// Os repos do "Outros repos" do formulário: os de GitOps do seu CLAUDE.md que existem ao lado deste.
+pub fn other_repos(repo: &Path) -> Vec<PathBuf> {
+    const GITOPS: [&str; 3] = ["k8s-configmap", "vault-roleset", "pipeline"];
+    let sib = sibling_repos(repo);
+    GITOPS
+        .iter()
+        .filter_map(|n| {
+            sib.iter()
+                .find(|p| p.file_name().is_some_and(|f| f == *n))
+                .cloned()
+        })
+        .collect()
+}
+
+/// Numa filha empilhada, "Mudanças" e "Revisar" comparam com a mãe: os commits dela não são desta feature.
+pub fn stack_base(root: &Path) -> Option<String> {
+    let p = find_by_path(root)?.parent?;
+    git(root, &["rev-parse", "--verify", "--quiet", &p.branch]).map(|_| p.branch)
+}
+
+/// O que a pilha pede para a filha (a pílula da lateral).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Stack {
+    /// "base mudou · Rebase"
+    Rebase,
+    /// "mergeada · Mover p/ main"
+    MoveToBase,
+}
+
+/// Mãe mergeada vence: a filha vai para a base dela. Senão, a mãe andou e a filha não tem a ponta nova.
+pub fn stack(mother_merged: bool, mother_tip_in_child: bool) -> Option<Stack> {
+    if mother_merged {
+        Some(Stack::MoveToBase)
+    } else if !mother_tip_in_child {
+        Some(Stack::Rebase)
+    } else {
+        None
+    }
+}
+
+/// Lê do git o estado da pilha desta filha. Branch da mãe sumida conta como mergeada (a conclusão apaga a mergeada).
+pub fn stack_state(inv: &Inventory, mother_mr_merged: bool) -> Option<Stack> {
+    let p = inv.parent.as_ref()?;
+    let wt = &inv.worktrees.first()?.path;
+    let tip = git(wt, &["rev-parse", "--verify", "-q", &p.branch]).map(|s| s.trim().to_string());
+    let in_child = tip
+        .as_deref()
+        .is_some_and(|t| git(wt, &["merge-base", "--is-ancestor", t, "HEAD"]).is_some());
+    stack(mother_mr_merged || tip.is_none(), in_child)
+}
+
+/// Os arquivos em conflito de um rebase parado, para o toast e o terminal da filha.
+/// Falha sem conflito não deixa a worktree no meio de um rebase: aborta e volta ao que era.
+fn conflict(wt: &Path, e: String) -> String {
+    let files: Vec<String> = git(wt, &["diff", "--name-only", "--diff-filter=U"])
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect();
+    if files.is_empty() {
+        let _ = git(wt, &["rebase", "--abort"]);
+        e
+    } else {
+        format!("conflito em {}", files.join(", "))
+    }
+}
+
+/// "base mudou · Rebase": `git rebase <mãe>` na worktree da filha. Conflito para no meio, para resolver no terminal dela.
+pub fn rebase_on_parent(inv: &mut Inventory) -> Result<(), String> {
+    let p = inv
+        .parent
+        .clone()
+        .ok_or("esta feature não está empilhada")?;
+    let wt = inv.worktrees[0].path.clone();
+    git_err(&wt, &["rebase", "--autostash", &p.branch]).map_err(|e| conflict(&wt, e))?;
+    if let Some(sha) = git(&wt, &["rev-parse", &p.branch]) {
+        inv.parent.as_mut().unwrap().sha = sha.trim().to_string();
+    }
+    save(inv).map_err(|e| e.to_string())
+}
+
+/// "Mover p/ main": a mãe mergeou, então só os commits da filha vão para a base (`rebase --onto <base> <ponta antiga da mãe>`).
+pub fn move_to_base(inv: &mut Inventory) -> Result<String, String> {
+    let p = inv
+        .parent
+        .clone()
+        .ok_or("esta feature não está empilhada")?;
+    let wt = inv.worktrees[0].path.clone();
+    // o merge da mãe está no remoto; a base local pode estar atrás
+    let remote = format!("origin/{}", p.base);
+    let onto = if git_err(&wt, &["fetch", "-q", "origin", &p.base]).is_ok() {
+        remote.as_str()
+    } else {
+        p.base.as_str()
+    };
+    git_err(&wt, &["rebase", "--autostash", "--onto", onto, &p.sha])
+        .map_err(|e| conflict(&wt, e))?;
+    inv.base = p.base.clone();
+    inv.parent = None;
+    save(inv).map_err(|e| e.to_string())?;
+    Ok(p.base)
+}
+
+/// Envs lidas nas linhas adicionadas do diff: (nome, `arquivo:linha`).
+// ponytail: busca textual pelos jeitos comuns de ler env em TS/Go/Rust/Python; parser de verdade se der falso positivo
+pub fn new_envs(files: &[crate::diff::FileDiff]) -> Vec<(String, String)> {
+    const READS: [&str; 9] = [
+        "process.env.",
+        "process.env[",
+        "configService.get(",
+        "configService.get<",
+        "configService.getOrThrow(",
+        "os.Getenv(",
+        "env::var(",
+        "os.environ.get(",
+        "os.getenv(",
+    ];
+    let mut out: Vec<(String, String)> = Vec::new();
+    for f in files {
+        for l in f.hunks.iter().flat_map(|h| &h.lines) {
+            if l.kind != crate::diff::Kind::Add {
+                continue;
+            }
+            for r in READS {
+                for (i, _) in l.text.match_indices(r) {
+                    let rest = &l.text[i + r.len()..];
+                    // `get<number>('X')`: pula o tipo
+                    let rest = rest
+                        .split_once('(')
+                        .filter(|_| r.ends_with('<'))
+                        .map_or(rest, |x| x.1);
+                    let rest = rest.trim_start_matches(['\'', '"', '`']);
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
+                        .collect();
+                    let real = name.len() > 1 && name.chars().any(|c| c.is_ascii_uppercase());
+                    if real && !out.iter().any(|(n, _)| *n == name) {
+                        out.push((name, format!("{}:{}", f.path, l.new.unwrap_or_default())));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// O configmap do serviço: os `<serviço>.yaml` em qualquer `<cluster>/<namespace>/`.
+fn configmap_files(dir: &Path, service: &str, out: &mut Vec<PathBuf>) {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() && e.file_name() != ".git" {
+            configmap_files(&p, service, out);
+        } else if p.file_stem().is_some_and(|s| s == service)
+            && p.extension().is_some_and(|x| x == "yaml" || x == "yml")
+        {
+            out.push(p);
+        }
+    }
+}
+
+/// Das envs novas, as que nenhum configmap do serviço declara. Sem arquivo do serviço não dá para dizer: nada.
+pub fn missing_in_configmap(
+    envs: &[(String, String)],
+    configmap: &Path,
+    service: &str,
+) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    configmap_files(configmap, service, &mut files);
+    let text: String = files
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok())
+        .collect();
+    if files.is_empty() {
+        return Vec::new();
+    }
+    envs.iter()
+        .filter(|(n, _)| !text.contains(&format!("{n}:")))
+        .cloned()
+        .collect()
+}
+
+/// O aviso do Revisar: envs novas da feature que faltam no k8s-configmap dela (só com a worktree do configmap na feature).
+pub fn env_warning(inv: &Inventory, files: &[crate::diff::FileDiff]) -> Vec<(String, String)> {
+    let Some(cm) = inv
+        .worktrees
+        .iter()
+        .find(|w| w.repo.file_name().is_some_and(|n| n == "k8s-configmap"))
+    else {
+        return Vec::new();
+    };
+    missing_in_configmap(&new_envs(files), &cm.path, &repo_name(&inv.repo))
 }
 
 /// Algo no disco que nenhuma feature reconhece.
@@ -891,6 +1197,8 @@ mod tests {
             claude: true,
             model: None,
             group: None,
+            others: Vec::new(),
+            parent: None,
         }
     }
 
@@ -908,18 +1216,18 @@ mod tests {
         assert_eq!(next_port(&[3001, 3003]), 3002);
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
         assert_eq!(
-            start_command(&req("faz X"), Some("npm ci"), None),
+            start_command(&req("faz X"), Some("npm ci"), None, &[]),
             "npm ci && claude 'faz X'"
         );
         let mut r = req("");
         r.setup = false;
         r.model = Some("sonnet");
         assert_eq!(
-            start_command(&r, Some("npm ci"), None),
+            start_command(&r, Some("npm ci"), None, &[]),
             "claude --model sonnet"
         );
         assert_eq!(
-            start_command(&r, None, Some(Path::new("/d/x.context.md"))),
+            start_command(&r, None, Some(Path::new("/d/x.context.md")), &[]),
             "claude --model sonnet --append-system-prompt \"$(cat '/d/x.context.md')\""
         );
     }
@@ -1023,6 +1331,7 @@ mod tests {
             group: None,
             model: None,
             created_at: 0,
+            parent: None,
         };
         assert_eq!(sibling_repos(&app), vec![k8s.clone()]);
         let extra = add_repo(&h, &mut inv, &k8s).unwrap();
@@ -1033,6 +1342,179 @@ mod tests {
         assert_eq!((state(&app), state(&k8s)), before);
         assert!(!root.join("app.wt").exists() && !root.join("k8s-configmap.wt").exists());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn outros_repos_entram_no_claude() {
+        let r = req("");
+        assert_eq!(
+            start_command(
+                &r,
+                None,
+                None,
+                &[PathBuf::from("/r/k8s-configmap.wt/feat-x")]
+            ),
+            "claude --add-dir '/r/k8s-configmap.wt/feat-x'"
+        );
+    }
+
+    /// Mãe ganha commit → Rebase; mãe mergeada e apagada → Mover para a base, só com os commits da filha.
+    #[test]
+    fn pilha_de_ponta_a_ponta() {
+        let root = std::env::temp_dir().join(format!("maestro-pilha-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("app");
+        std::fs::create_dir_all(&repo).unwrap();
+        let run = |dir: &Path, args: &[&str]| {
+            let o = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                o.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        };
+        let commit = |dir: &Path, file: &str| {
+            std::fs::write(dir.join(file), file).unwrap();
+            run(dir, &["add", "."]);
+            run(dir, &["commit", "-qm", file]);
+        };
+        run(&repo, &["init", "-q", "-b", "main"]);
+        commit(&repo, "base.txt");
+        let (mwt, cwt) = (root.join("mae"), root.join("filha"));
+        run(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat/mae",
+                &mwt.to_string_lossy(),
+                "main",
+            ],
+        );
+        commit(&mwt, "mae1.txt");
+        let mother = Inventory {
+            id: format!("teste-mae-{}", std::process::id()),
+            repo: repo.clone(),
+            branch: "feat/mae".into(),
+            base: "main".into(),
+            worktrees: vec![Worktree {
+                repo: repo.clone(),
+                path: mwt.clone(),
+                branch: "feat/mae".into(),
+                created_branch: true,
+            }],
+            port: 3998,
+            compose_project: "x".into(),
+            workspace_id: None,
+            group: None,
+            model: None,
+            created_at: 0,
+            parent: None,
+        };
+        run(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat/filha",
+                &cwt.to_string_lossy(),
+                "feat/mae",
+            ],
+        );
+        commit(&cwt, "filha.txt");
+        let mut child = Inventory {
+            id: format!("teste-filha-{}", std::process::id()),
+            branch: "feat/filha".into(),
+            base: "feat/mae".into(),
+            worktrees: vec![Worktree {
+                repo: repo.clone(),
+                path: cwt.clone(),
+                branch: "feat/filha".into(),
+                created_branch: true,
+            }],
+            parent: Some(Parent {
+                id: mother.id.clone(),
+                branch: "feat/mae".into(),
+                sha: git(&repo, &["rev-parse", "feat/mae"])
+                    .unwrap()
+                    .trim()
+                    .into(),
+                base: "main".into(),
+            }),
+            ..mother.clone()
+        };
+        assert_eq!(stack_state(&child, false), None);
+        commit(&mwt, "mae2.txt");
+        assert_eq!(stack_state(&child, false), Some(Stack::Rebase));
+        rebase_on_parent(&mut child).unwrap();
+        assert!(cwt.join("mae2.txt").exists());
+        assert_eq!(stack_state(&child, false), None);
+        // a mãe mergeia (squash, como no GitLab) e a branch dela some
+        run(&repo, &["merge", "-q", "--squash", "feat/mae"]);
+        run(&repo, &["commit", "-qm", "squash da mae"]);
+        run(
+            &repo,
+            &["worktree", "remove", "--force", &mwt.to_string_lossy()],
+        );
+        run(&repo, &["branch", "-D", "feat/mae"]);
+        assert_eq!(stack_state(&child, false), Some(Stack::MoveToBase));
+        assert_eq!(move_to_base(&mut child).unwrap(), "main");
+        assert_eq!(
+            (child.base.as_str(), child.parent.is_none()),
+            ("main", true)
+        );
+        let log = git(&cwt, &["log", "--format=%s", "main..HEAD"]).unwrap();
+        assert_eq!(
+            log.trim(),
+            "filha.txt",
+            "só o commit da filha fica acima da main"
+        );
+        for id in [&mother.id, &child.id] {
+            let _ = std::fs::remove_file(data_dir().join(format!("{id}.json")));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn decisao_da_pilha() {
+        assert_eq!(stack(true, true), Some(Stack::MoveToBase));
+        assert_eq!(stack(true, false), Some(Stack::MoveToBase));
+        assert_eq!(stack(false, false), Some(Stack::Rebase));
+        assert_eq!(stack(false, true), None);
+    }
+
+    #[test]
+    fn envs_novas_e_o_configmap() {
+        let files = crate::diff::parse(
+            "diff --git a/src/slack.ts b/src/slack.ts\n--- a/src/slack.ts\n+++ b/src/slack.ts\n@@ -1,2 +1,4 @@\n const a = 1\n-const t = process.env.OLD_TIMEOUT\n+const t = Number(process.env.SLACK_TIMEOUT_MS ?? 10000)\n+const k = this.configService.get<number>('RETRY_MAX') + process.env['API_KEY']\n+const x = process.env.node_env\n",
+        );
+        let envs = new_envs(&files);
+        let names: Vec<&str> = envs.iter().map(|e| e.0.as_str()).collect();
+        assert_eq!(names, ["SLACK_TIMEOUT_MS", "API_KEY", "RETRY_MAX"]);
+        assert_eq!(envs[0].1, "src/slack.ts:2");
+        let dir = std::env::temp_dir().join(format!("maestro-cm-{}", std::process::id()));
+        let ns = dir.join("cluster/ns-prd");
+        std::fs::create_dir_all(&ns).unwrap();
+        std::fs::write(
+            ns.join("bots-api.yaml"),
+            "data:\n  API_KEY: x\n  RETRY_MAX: \"3\"\n",
+        )
+        .unwrap();
+        let missing = missing_in_configmap(&envs, &dir, "bots-api");
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].0, "SLACK_TIMEOUT_MS");
+        assert!(missing_in_configmap(&envs, &dir, "outro-servico").is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

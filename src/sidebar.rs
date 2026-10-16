@@ -9,7 +9,7 @@ use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
     changes::{self, Changes},
-    feature::{self, Inventory},
+    feature::{self, Inventory, Stack},
     herdr::{self, Agent, Herdr, Status, Tab, Workspace},
     mascot::{Kind, Note},
     mr::{self, Fetch, Mr},
@@ -35,6 +35,10 @@ pub enum SidebarEvent {
     Vault(Result<crate::vault::Write, String>),
     Audit,
     Picked,
+    /// "⎇ repo · N" de uma feature multi-repo: a revisão daquela worktree
+    OpenReviewAt(PathBuf),
+    /// a pílula da pilha: (worktree da filha, o que fazer)
+    Stack(PathBuf, Stack),
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -65,6 +69,10 @@ pub struct Sidebar {
     focused_cwd: Option<String>,
     /// aba Arquivos: as pastas abertas da árvore
     expanded: HashSet<String>,
+    /// por worktree principal: os outros repos da feature (nome, worktree, arquivos mudados)
+    extra: HashMap<PathBuf, Vec<(String, PathBuf, usize)>>,
+    /// por worktree principal da filha: o que a pilha pede
+    stacks: HashMap<PathBuf, Stack>,
     /// (arquivo do editor, sujo, aba do editor à frente)
     open: Option<(String, bool, bool)>,
     sessions: Arc<Mutex<Sessions>>,
@@ -113,6 +121,10 @@ struct Row {
     on: bool,
     unseen: Option<Hsla>,
     dim: bool,
+    /// filha numa pilha: indentada sob a mãe
+    child: bool,
+    /// linhas embaixo do card: os outros repos e a pílula da pilha
+    extra: Vec<AnyElement>,
 }
 
 impl Sidebar {
@@ -160,17 +172,23 @@ impl Sidebar {
                 }
                 // custo/contexto e Mudanças são mais caros (JSONL e git): a cada 3 s
                 if tick % 6 == 0 {
-                    let Ok((jobs, root, sessions)) = this.read_with(cx, |this, _| {
+                    let Ok((jobs, root, sessions, merged)) = this.read_with(cx, |this, _| {
                         let jobs: Vec<_> = this
                             .agents
                             .iter()
                             .map(|a| (a.pane_id.clone(), a.cwd.clone(), title(a)))
                             .collect();
-                        (jobs, this.top_worktree(), this.sessions.clone())
+                        let merged: HashSet<PathBuf> = this
+                            .mrs
+                            .iter()
+                            .filter(|(_, m)| m.merged)
+                            .map(|(w, _)| w.clone())
+                            .collect();
+                        (jobs, this.top_worktree(), this.sessions.clone(), merged)
                     }) else {
                         break;
                     };
-                    let (usage, changes, inventories, learn) = cx
+                    let (usage, changes, inventories, learn, extra, stacks) = cx
                         .background_executor()
                         .spawn(async move {
                             let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
@@ -181,11 +199,15 @@ impl Sidebar {
                                     Some((pane.clone(), s.usage(&home, &pane, &cwd, &title)?))
                                 })
                                 .collect();
+                            let invs = feature::inventories();
+                            let (extra, stacks) = stack_and_repos(&invs, &merged);
                             (
                                 usage,
                                 root.and_then(|r| changes::changes(&r)),
-                                feature::inventories(),
+                                invs,
                                 perms::pending(),
+                                extra,
+                                stacks,
                             )
                         })
                         .await;
@@ -219,10 +241,14 @@ impl Sidebar {
                         if this.usage != usage
                             || this.changes != changes
                             || this.inventories != inventories
+                            || this.extra != extra
+                            || this.stacks != stacks
                         {
                             this.usage = usage;
                             this.changes = changes;
                             this.inventories = inventories;
+                            this.extra = extra;
+                            this.stacks = stacks;
                             cx.notify();
                         }
                     });
@@ -319,6 +345,8 @@ impl Sidebar {
             audit: (false, String::new(), "nunca rodou".into(), false, false),
             focused_cwd: None,
             expanded: HashSet::new(),
+            extra: HashMap::new(),
+            stacks: HashMap::new(),
             open: None,
             sessions: Arc::default(),
             anchors,
@@ -410,7 +438,51 @@ impl Sidebar {
             }
         }
         repos.sort_by(|a, b| a.name.cmp(&b.name));
+        for r in &mut repos {
+            r.agents = self.stack_order(std::mem::take(&mut r.agents));
+        }
         (repos, loose)
+    }
+
+    /// A feature (inventário) do agente, pela worktree em que ele roda.
+    fn inv_of(&self, a: &Agent) -> Option<&Inventory> {
+        let wt = herdr::repo_root(Path::new(&a.cwd))?;
+        self.inventories
+            .iter()
+            .find(|i| i.worktrees.iter().any(|w| w.path == wt))
+    }
+
+    /// Filha logo abaixo da mãe (e as netas abaixo dela), na ordem do herdr para o resto.
+    fn stack_order(&self, agents: Vec<Agent>) -> Vec<Agent> {
+        let id = |a: &Agent| self.inv_of(a).map(|i| i.id.clone());
+        let mother = |a: &Agent| {
+            self.inv_of(a)
+                .and_then(|i| i.parent.as_ref())
+                .map(|p| p.id.clone())
+                .filter(|m| agents.iter().any(|x| id(x).as_ref() == Some(m)))
+        };
+        fn place<'a>(
+            a: &'a Agent,
+            all: &'a [Agent],
+            id: &dyn Fn(&Agent) -> Option<String>,
+            mother: &dyn Fn(&Agent) -> Option<String>,
+            out: &mut Vec<Agent>,
+        ) {
+            if out.iter().any(|x| x.pane_id == a.pane_id) {
+                return;
+            }
+            out.push(a.clone());
+            if let Some(me) = id(a) {
+                for c in all.iter().filter(|c| mother(c).as_ref() == Some(&me)) {
+                    place(c, all, id, mother, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for a in agents.iter().filter(|a| mother(a).is_none()) {
+            place(a, &agents, &id, &mother, &mut out);
+        }
+        out
     }
 
     /// Worktree do agente em foco (ou do primeiro em git): a de "Mudanças".
@@ -515,6 +587,10 @@ impl Sidebar {
             .into_iter()
             .map(|r| PathBuf::from(r.path))
             .collect()
+    }
+
+    pub fn mr_of(&self, wt: &Path) -> Option<Mr> {
+        self.mrs.get(wt).cloned()
     }
 
     pub fn herdr(&self) -> Arc<Herdr> {
@@ -719,6 +795,8 @@ impl Sidebar {
             on: a.focused,
             unseen: attention.then_some(color),
             dim: false,
+            child: false,
+            extra: Vec::new(),
         }
     }
 
@@ -736,6 +814,18 @@ impl Sidebar {
             .when(r.dim, |d| d.opacity(0.45))
             .when(!r.dim, |d| d.cursor_pointer().hover(|d| d.bg(t.raise)))
             .when(r.on, |d| d.bg(t.accent_soft))
+            .when(r.child, |d| {
+                d.ml(px(16.)).child(
+                    div()
+                        .absolute()
+                        .left(px(-12.))
+                        .top(px(6.))
+                        .font_family(t.mono.clone())
+                        .text_size(px(12.))
+                        .text_color(t.comment)
+                        .child("↳"),
+                )
+            })
             .on_click(move |_, _, cx| on_click(cx))
             .when_some(r.unseen, |d, c| {
                 d.child(
@@ -802,6 +892,82 @@ impl Sidebar {
                         .when_some(r.mr, |d, m| d.children(mr_sum(t, &m))),
                 )
             })
+            .children(r.extra)
+    }
+
+    /// Embaixo do card: "⎇ repo · N" de cada outro repo e a pílula da pilha.
+    fn feature_extra(&self, a: &Agent, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let t = &self.theme;
+        let Some(wt) = herdr::repo_root(Path::new(&a.cwd)).map(Path::to_path_buf) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(repos) = self.extra.get(&wt) {
+            let mut line = div()
+                .pl(px(24.))
+                .flex()
+                .flex_wrap()
+                .gap_x(px(8.))
+                .gap_y(px(2.))
+                .font_family(t.mono.clone())
+                .text_size(px(12.))
+                .text_color(t.muted);
+            for (i, (name, path, n)) in repos.iter().enumerate() {
+                let path = path.clone();
+                line = line.child(
+                    div()
+                        .id(SharedString::from(format!("sub:{}:{i}", wt.display())))
+                        .flex()
+                        .cursor_pointer()
+                        .hover(|d| d.text_color(t.fg))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(SidebarEvent::OpenReviewAt(path.clone()));
+                        }))
+                        .child(div().text_color(t.comment).child("⎇ "))
+                        .child(if *n > 0 {
+                            format!("{name} · {n}")
+                        } else {
+                            name.clone()
+                        }),
+                );
+            }
+            out.push(line.into_any_element());
+        }
+        if let Some(&st) = self.stacks.get(&wt) {
+            let (label, color) = match st {
+                Stack::Rebase => ("base mudou · Rebase", t.orange),
+                Stack::MoveToBase => ("mergeada · Mover p/ main", t.ok),
+            };
+            let label = match (st, self.inv_of(a).and_then(|i| i.parent.as_ref())) {
+                (Stack::MoveToBase, Some(p)) => format!("mergeada · Mover p/ {}", p.base),
+                _ => label.to_string(),
+            };
+            out.push(
+                div()
+                    .pl(px(24.))
+                    .flex()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("stk:{}", wt.display())))
+                            .cursor_pointer()
+                            .px(px(6.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(color)
+                            .text_color(color)
+                            .font_family(t.mono.clone())
+                            .text_size(px(12.))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.stop_propagation();
+                                cx.emit(SidebarEvent::Stack(wt.clone(), st));
+                            }))
+                            .child(label),
+                    )
+                    .into_any_element(),
+            );
+        }
+        out
     }
 
     fn changes_panel(&self, cx: &mut Context<Self>) -> Div {
@@ -1062,6 +1228,46 @@ pub fn glyph(s: Status) -> (&'static str, &'static str) {
     }
 }
 
+type Extra = HashMap<PathBuf, Vec<(String, PathBuf, usize)>>;
+
+/// Os outros repos de cada feature multi-repo e o que a pilha pede para cada filha (git: fora da UI).
+fn stack_and_repos(
+    invs: &[Inventory],
+    merged: &HashSet<PathBuf>,
+) -> (Extra, HashMap<PathBuf, Stack>) {
+    let mut extra = HashMap::new();
+    let mut stacks = HashMap::new();
+    for inv in invs {
+        let main = inv.worktrees[0].path.clone();
+        if inv.worktrees.len() > 1 {
+            let list = inv.worktrees[1..]
+                .iter()
+                .map(|w| {
+                    (
+                        w.repo
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                        w.path.clone(),
+                        changes::changes(&w.path).map_or(0, |c| c.files.len()),
+                    )
+                })
+                .collect();
+            extra.insert(main.clone(), list);
+        }
+        if let Some(p) = &inv.parent {
+            let mother_merged = invs
+                .iter()
+                .find(|m| m.id == p.id)
+                .is_some_and(|m| merged.contains(&m.worktrees[0].path));
+            if let Some(st) = feature::stack_state(inv, mother_merged) {
+                stacks.insert(main, st);
+            }
+        }
+    }
+    (extra, stacks)
+}
+
 fn branch_of(a: &Agent) -> Option<String> {
     herdr::repo_root(Path::new(&a.cwd)).and_then(herdr::branch)
 }
@@ -1161,6 +1367,8 @@ impl Render for Sidebar {
                     on,
                     unseen: None,
                     dim: false,
+                    child: false,
+                    extra: Vec::new(),
                 },
                 {
                     let this = this.clone();
@@ -1191,7 +1399,16 @@ impl Render for Sidebar {
             for a in &repo.agents {
                 let pane = a.pane_id.clone();
                 let this = this.clone();
-                let row = self.agent_row(a, branch_of(a).as_deref());
+                let mut row = self.agent_row(a, branch_of(a).as_deref());
+                row.child = self
+                    .inv_of(a)
+                    .and_then(|i| i.parent.as_ref())
+                    .is_some_and(|p| {
+                        repo.agents
+                            .iter()
+                            .any(|x| self.inv_of(x).is_some_and(|i| i.id == p.id))
+                    });
+                row.extra = self.feature_extra(a, cx);
                 list = list.child(self.row(row, move |cx| {
                     this.update(cx, |s, cx| s.pick(|s| s.focus(pane.clone()), cx))
                 }));
@@ -1265,6 +1482,8 @@ impl Render for Sidebar {
                 on: false,
                 unseen: None,
                 dim: false,
+                child: false,
+                extra: Vec::new(),
             };
             terms = terms.child(self.row(row, move |cx| {
                 this.update(cx, |s, cx| s.pick(|s| s.focus_workspace(id.clone()), cx))

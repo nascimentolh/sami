@@ -76,7 +76,9 @@ pub fn tree(
 }
 
 fn git(root: &Path, args: &[&str]) -> Option<String> {
+    // leitura de fundo não pega o index.lock: um rebase ou commit no terminal ao mesmo tempo não quebra
     let out = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(root)
         .args(args)
@@ -88,10 +90,13 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
 }
 
 pub fn changes(root: &Path) -> Option<Changes> {
-    let base = ["main", "master"]
-        .into_iter()
-        .find(|b| git(root, &["rev-parse", "--verify", "--quiet", b]).is_some())?;
-    let fork = git(root, &["merge-base", "HEAD", base])?;
+    let base = crate::feature::stack_base(root).or_else(|| {
+        ["main", "master"]
+            .into_iter()
+            .find(|b| git(root, &["rev-parse", "--verify", "--quiet", b]).is_some())
+            .map(String::from)
+    })?;
+    let fork = git(root, &["merge-base", "HEAD", &base])?;
     let mut files = parse_numstat(&git(root, &["diff", "--numstat", fork.trim()])?);
     let created = git(
         root,
@@ -111,7 +116,7 @@ pub fn changes(root: &Path) -> Option<Changes> {
     }
     let uncommitted = git(root, &["status", "--porcelain"])?.lines().count();
     Some(Changes {
-        base: base.into(),
+        base,
         files,
         uncommitted,
     })

@@ -70,6 +70,8 @@ pub struct Review {
     edited: Vec<String>,
     scroll: ScrollHandle,
     feature_id: Option<String>,
+    /// envs novas que faltam no k8s-configmap da feature: (nome, `arquivo:linha`)
+    env_warn: Vec<(String, String)>,
     turns: Vec<feature::Turn>,
     turn: Option<usize>,
     turn_open: bool,
@@ -107,7 +109,7 @@ impl Review {
                 else {
                     break;
                 };
-                let (d, turns) = cx
+                let (d, turns, warn) = cx
                     .background_executor()
                     .spawn(async move {
                         let turns = id.as_deref().map(feature::turns).unwrap_or_default();
@@ -124,13 +126,20 @@ impl Review {
                             }
                             None => diff::worktree(&r),
                         };
-                        (files, turns)
+                        let warn = id
+                            .as_deref()
+                            .and_then(|id| feature::inventories().into_iter().find(|i| i.id == id))
+                            .zip(files.as_ref())
+                            .map(|(inv, (_, f))| feature::env_warning(&inv, f))
+                            .unwrap_or_default();
+                        (files, turns, warn)
                     })
                     .await;
                 if this
                     .update(cx, |this, cx| {
-                        if this.turns != turns {
+                        if this.turns != turns || this.env_warn != warn {
                             this.turns = turns;
+                            this.env_warn = warn;
                             cx.notify();
                         }
                         let (base, files) = d.unwrap_or_default();
@@ -149,6 +158,7 @@ impl Review {
         });
         Self {
             feature_id: feature::find_by_path(&root).map(|i| i.id),
+            env_warn: Vec::new(),
             root,
             branch,
             base: "main".into(),
@@ -332,6 +342,63 @@ impl Review {
             Some(cmd) => cx.emit(Event::RunTests(cmd)),
             None => cx.emit(Event::Toast("Nenhum teste afetado para rodar".into(), None)),
         }
+    }
+
+    /// O `warnbox` do protótipo: env nova que o k8s-configmap desta feature ainda não tem.
+    fn env_box(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let (name, at) = self.env_warn.first()?.clone();
+        let t = &self.theme;
+        let service = feature::find_by_path(&self.root)
+            .and_then(|i| i.repo.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let more = self.env_warn.len() - 1;
+        let mono = |s: String| div().font_family(t.mono.clone()).text_color(t.fg).child(s);
+        let names: Vec<String> = self.env_warn.iter().map(|e| e.0.clone()).collect();
+        let prompt = format!(
+            "adiciona {} no k8s-configmap/{service} (worktree k8s-configmap desta feature), em todos os ambientes onde o serviço roda",
+            names.join(", ")
+        );
+        Some(
+            div()
+                .mx(px(12.))
+                .my(px(8.))
+                .px(px(10.))
+                .py(px(8.))
+                .flex()
+                .flex_wrap()
+                .gap(px(10.))
+                .items_center()
+                .flex_none()
+                .border_1()
+                .border_color(t.orange)
+                .rounded(px(6.))
+                .text_color(t.orange)
+                .text_size(px(13.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .child(mono(name))
+                        .when(more > 0, |d| d.child(format!("e mais {more}")))
+                        .child("é lida em")
+                        .child(mono(at))
+                        .child("mas não está no")
+                        .child(mono(format!("k8s-configmap/{service}.")))
+                        .child("Esta feature já tem a worktree do k8s-configmap."),
+                )
+                .child(div().flex_1())
+                .child(
+                    button(t, "env-ask", "Pedir ao Claude para adicionar", false).on_click(
+                        cx.listener(move |_, _, _, cx| {
+                            cx.emit(Event::Ask(
+                                prompt.clone(),
+                                "Pedido enviado ao Claude da feature".into(),
+                            ))
+                        }),
+                    ),
+                ),
+        )
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -1167,6 +1234,7 @@ impl Render for Review {
                         })))
                     }),
             )
+            .children(self.env_box(cx))
             .child(body)
             .child(
                 div()

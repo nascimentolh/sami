@@ -45,6 +45,10 @@ pub struct Shell {
     want_review: Option<Option<String>>,
     want_file: Option<String>,
     want_merged: Option<(std::path::PathBuf, u64, String)>,
+    /// "⎇ repo · N" da lateral: a revisão daquela worktree
+    want_review_at: Option<std::path::PathBuf>,
+    /// a pílula da pilha na lateral: o diálogo abre no próximo render
+    want_stack: Option<(std::path::PathBuf, feature::Stack)>,
     /// a fila do mascote e o que está na tela: (pedido, sequência, saindo)
     mq: Vec<Note>,
     /// as permissões que aprendem: sugestões esperando o diálogo
@@ -254,6 +258,8 @@ impl Shell {
                     },
                     SidebarEvent::Audit => this.want_audit = true,
                     SidebarEvent::Picked => this.leave_modes(),
+                    SidebarEvent::OpenReviewAt(p) => this.want_review_at = Some(p.clone()),
+                    SidebarEvent::Stack(wt, st) => this.want_stack = Some((wt.clone(), *st)),
                 }
                 cx.notify();
             })
@@ -320,6 +326,8 @@ impl Shell {
             want_review: None,
             want_file: None,
             want_merged: None,
+            want_review_at: None,
+            want_stack: None,
             mq: Vec::new(),
             learn: Vec::new(),
             choice: None,
@@ -560,6 +568,112 @@ impl Shell {
     }
 
     /// `root`: a worktree de uma feature de fundo (o MR dela mergeou); `None`, a feature em foco.
+    /// A pílula da pilha: "base mudou · Rebase" ou "mergeada · Mover p/ main", sempre com confirmação.
+    fn stack_dialog(
+        &mut self,
+        wt: std::path::PathBuf,
+        st: feature::Stack,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(inv) = feature::find_by_path(&wt) else {
+            return;
+        };
+        let Some(p) = inv.parent.clone() else {
+            return;
+        };
+        let Some(sidebar) = self.sidebar.clone() else {
+            return;
+        };
+        let s = sidebar.read(cx);
+        let mr = s.mr_of(&wt).filter(|m| !m.merged && !m.closed);
+        let mother_mr = feature::inventories()
+            .into_iter()
+            .find(|m| m.id == p.id)
+            .and_then(|m| s.mr_of(&m.worktrees[0].path));
+        let pane = s
+            .agents
+            .iter()
+            .find(|a| std::path::Path::new(&a.cwd).starts_with(&wt))
+            .map(|a| a.pane_id.clone());
+        let (title, text, ok) = match st {
+            feature::Stack::Rebase => (
+                format!("Rebase de {} em {}?", inv.branch, p.branch),
+                format!(
+                    "{0} ganhou commits depois que esta foi criada. Roda git rebase {0} na worktree desta feature; se der conflito, para e abre o terminal dela com a lista.",
+                    p.branch
+                ),
+                "Rebase".to_string(),
+            ),
+            feature::Stack::MoveToBase => (
+                format!("Mover {} para {}?", inv.branch, p.base),
+                format!(
+                    "{}{} foi mergeado. Roda git rebase --onto {} {} nesta worktree{}.",
+                    p.branch,
+                    mother_mr.map_or(String::new(), |m| format!(" (!{})", m.iid)),
+                    p.base,
+                    p.branch,
+                    mr.as_ref().map_or(String::new(), |m| format!(
+                        " e muda o alvo do MR !{} para {} no GitLab",
+                        m.iid, p.base
+                    )),
+                ),
+                format!("Mover para {}", p.base),
+            ),
+        };
+        let theme = self.theme.clone();
+        let c = cx.new(|cx| Confirm::new(theme, title, text, &ok, false, window, cx));
+        cx.subscribe_in(&c, window, move |this, _, a: &Answer, window, cx| {
+            this.confirm = None;
+            window.focus(&this.terminal.read(cx).focus_handle(), cx);
+            if matches!(a, Answer::Ok) {
+                let (mut inv, mr, pane) = (inv.clone(), mr.clone(), pane.clone());
+                let mother = p.branch.clone();
+                cx.spawn(async move |this, cx| {
+                    let branch = inv.branch.clone();
+                    let r = cx
+                        .background_executor()
+                        .spawn(async move {
+                            match st {
+                                feature::Stack::Rebase => feature::rebase_on_parent(&mut inv)
+                                    .map(|_| format!("{branch} rebaseada em {mother}")),
+                                feature::Stack::MoveToBase => {
+                                    let base = feature::move_to_base(&mut inv)?;
+                                    let mut msg = format!("{branch} agora sai de {base}");
+                                    if let Some(m) = &mr {
+                                        crate::mr::retarget(m, &base)
+                                            .map_err(|e| format!("rebase ok, mas o GitLab recusou o alvo novo: {e}"))?;
+                                        msg.push_str(&format!("; MR !{} → {base}", m.iid));
+                                    }
+                                    Ok(msg)
+                                }
+                            }
+                        })
+                        .await;
+                    let _ = this.update(cx, |this, cx| match r {
+                        Ok(msg) => this.toast(msg, cx),
+                        Err(e) => {
+                            // conflito: o rebase fica parado e o terminal da filha vem para a frente
+                            if let (Some(pane), Some(s)) = (&pane, &this.sidebar) {
+                                s.read(cx).focus(pane.clone());
+                            }
+                            this.leave_modes();
+                            this.toast(
+                                format!("Rebase parou: {e}. Resolva no terminal da feature e rode git rebase --continue."),
+                                cx,
+                            );
+                        }
+                    });
+                })
+                .detach();
+            }
+            cx.notify();
+        })
+        .detach();
+        self.confirm = Some(c);
+        cx.notify();
+    }
+
     fn remove_feature_at(
         &mut self,
         root: Option<std::path::PathBuf>,
@@ -594,17 +708,26 @@ impl Shell {
         };
         let p = feature::pending(&inv);
         let working = focused.is_some_and(|a| a.agent_status == Status::Working);
+        let multi = inv.worktrees.len() > 1;
         let warn = if p.uncommitted > 0 {
             format!(
-                "{} arquivo{} não commitado{} {} junto com a worktree.",
+                "{} arquivo{} não commitado{}{} {} junto com {}.",
                 p.uncommitted,
                 if p.uncommitted > 1 { "s" } else { "" },
                 if p.uncommitted > 1 { "s" } else { "" },
+                if p.dirty.is_empty() {
+                    String::new()
+                } else {
+                    let list: Vec<String> =
+                        p.dirty.iter().map(|(r, n)| format!("{r}: {n}")).collect();
+                    format!(" ({})", list.join(", "))
+                },
                 if p.uncommitted > 1 {
                     "vão ser apagados"
                 } else {
                     "vai ser apagado"
-                }
+                },
+                if multi { "as worktrees" } else { "a worktree" }
             )
         } else if working {
             "O Claude ainda está trabalhando nela e vai ser encerrado.".into()
@@ -616,15 +739,25 @@ impl Shell {
         } else {
             "Nada pendente. A branch local continua existindo; só a pasta da worktree sai.".into()
         };
+        let dirs: Vec<String> = inv
+            .worktrees
+            .iter()
+            .map(|w| crate::sidebar::tilde(&w.path.to_string_lossy()))
+            .collect();
         let text = format!(
-            "{warn} Pasta: {}",
-            crate::sidebar::tilde(&inv.worktrees[0].path.to_string_lossy())
+            "{warn} {}: {}",
+            if multi { "Pastas" } else { "Pasta" },
+            dirs.join(", ")
         );
         let theme = self.theme.clone();
         let title = title.unwrap_or_else(|| format!("Remover a feature {}?", inv.branch));
         let danger = p.uncommitted > 0 || working;
-        let c =
-            cx.new(|cx| Confirm::new(theme, title, text, "Remover worktree", danger, window, cx));
+        let ok = if multi {
+            "Remover worktrees"
+        } else {
+            "Remover worktree"
+        };
+        let c = cx.new(|cx| Confirm::new(theme, title, text, ok, danger, window, cx));
         cx.subscribe_in(&c, window, move |this, _, a: &Answer, window, cx| {
             this.confirm = None;
             window.focus(&this.terminal.read(cx).focus_handle(), cx);
@@ -962,6 +1095,8 @@ impl Shell {
             claude: true,
             model: None,
             group: None,
+            others: Vec::new(),
+            parent: None,
         };
         let used: Vec<u16> = feature::inventories().iter().map(|i| i.port).collect();
         let port = feature::next_port(&used);
@@ -2361,6 +2496,15 @@ impl Render for Shell {
         }
         if let Some(p) = self.want_review.take() {
             self.toggle_review(p, window, cx);
+        }
+        if let Some(p) = self.want_review_at.take() {
+            self.leave_modes();
+            self.open_review_at(p, None, window, cx);
+        }
+        if self.confirm.is_none()
+            && let Some((wt, st)) = self.want_stack.take()
+        {
+            self.stack_dialog(wt, st, window, cx);
         }
         let overlay = self.tour.and_then(|(steps, _, i)| {
             let root = self.anchors.borrow().get("root").copied()?;

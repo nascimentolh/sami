@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
-    feature::{self, Request},
+    feature::{self, Inventory, Request},
     form::{FieldEvent, TextField, button, checkbox},
     herdr::Herdr,
     jira,
@@ -29,6 +29,11 @@ pub struct NewFeature {
     prompt: Entity<TextField>,
     bases: Vec<String>,
     base: usize,
+    /// "Em cima de": as features deste repo (0 = nenhuma)
+    parents: Vec<Inventory>,
+    parent: usize,
+    /// "Outros repos": (repo, marcado)
+    others: Vec<(PathBuf, bool)>,
     attempts: usize,
     model: usize,
     open: Option<&'static str>,
@@ -77,7 +82,17 @@ impl NewFeature {
         cx.on_blur(&jf, window, |this, _, cx| this.lookup_jira(cx))
             .detach();
         window.focus(&jf, cx);
+        let parents = feature::inventories()
+            .into_iter()
+            .filter(|i| i.repo == repo && i.group.is_none() && i.worktrees[0].path.exists())
+            .collect();
         Self {
+            parents,
+            parent: 0,
+            others: feature::other_repos(&repo)
+                .into_iter()
+                .map(|r| (r, false))
+                .collect(),
             bases: feature::bases(&repo),
             env_files: feature::env_files(&repo),
             setup_cmd: feature::setup_command(&repo),
@@ -119,20 +134,55 @@ impl NewFeature {
             .collect()
     }
 
+    /// A mãe escolhida em "Em cima de".
+    fn mother(&self) -> Option<&Inventory> {
+        self.parent.checked_sub(1).and_then(|i| self.parents.get(i))
+    }
+
+    fn base_name(&self) -> Option<String> {
+        self.mother()
+            .map(|m| m.branch.clone())
+            .or_else(|| self.bases.get(self.base).cloned())
+    }
+
+    fn checked_others(&self) -> Vec<PathBuf> {
+        self.others
+            .iter()
+            .filter(|o| o.1)
+            .map(|o| o.0.clone())
+            .collect()
+    }
+
     fn preview(&self, cx: &App) -> String {
         let b = self.branch.read(cx).value.clone();
+        let names: Vec<String> = self
+            .checked_others()
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
         let n = self.attempts + 1;
         let ports = self.ports(n);
         let path = feature::worktree_path(&self.repo, if b.is_empty() { "…" } else { &b });
+        let base = self.base_name().unwrap_or_else(|| "…".into());
         format!(
-            "worktree {}{} --base {} · PORT={}{} · docker compose -p {}",
+            "worktree {}{} --base {}{}{} · PORT={}{} · docker compose -p {}",
             tilde(&path.to_string_lossy()),
             if n > 1 {
                 format!(" (×{n}: -a, -b{})", if n > 2 { ", -c" } else { "" })
             } else {
                 String::new()
             },
-            self.bases.get(self.base).map_or("…", |s| s),
+            base,
+            if names.is_empty() || n > 1 {
+                String::new()
+            } else {
+                format!(" + {}", names.join(", "))
+            },
+            if self.mother().is_some() && n == 1 {
+                format!(" · MR → {base}")
+            } else {
+                String::new()
+            },
             ports[0],
             if n > 1 {
                 format!("…{}", ports[n - 1])
@@ -196,7 +246,7 @@ impl NewFeature {
             self.err = "Dê um nome à branch, ex.: feat/paginacao-bots".into();
             return cx.notify();
         }
-        let Some(base) = self.bases.get(self.base).cloned() else {
+        let Some(base) = self.base_name() else {
             self.err = "O repositório não tem branch para servir de base.".into();
             return cx.notify();
         };
@@ -222,6 +272,13 @@ impl NewFeature {
                 claude: self.claude,
                 model: models[i],
                 group: (n > 1).then(|| br.clone()),
+                // empilhar e multi-repo valem para uma tentativa, como no protótipo
+                others: if n == 1 {
+                    self.checked_others()
+                } else {
+                    Vec::new()
+                },
+                parent: self.mother().filter(|_| n == 1).cloned(),
             })
             .collect();
         let ports = self.ports(n);
@@ -335,6 +392,7 @@ impl NewFeature {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 match id {
                                     "base" => this.base = i,
+                                    "parent" => this.parent = i,
                                     "attempts" => this.attempts = i,
                                     _ => this.model = i,
                                 }
@@ -387,8 +445,8 @@ impl Render for NewFeature {
             div()
                 .flex()
                 .gap(px(10.))
-                .child(a.flex_basis(relative(0.66)))
-                .child(b.flex_basis(relative(0.34)))
+                .child(a.flex_basis(relative(0.66)).min_w_0())
+                .child(b.flex_basis(relative(0.34)).min_w_0())
         };
         let fld = |label: Div, input: AnyElement| {
             div()
@@ -435,7 +493,45 @@ impl Render for NewFeature {
                     .child("(sem lockfile nem .maestro.toml)"),
             ),
         };
-        let bases = self.bases.clone();
+        let bases = match self.mother() {
+            Some(m) => vec![m.branch.clone()],
+            None => self.bases.clone(),
+        };
+        let base_sel = if self.mother().is_some() {
+            0
+        } else {
+            self.base
+        };
+        let parents: Vec<String> = std::iter::once("nenhuma: direto na base acima".to_string())
+            .chain(self.parents.iter().map(|i| i.branch.clone()))
+            .collect();
+        let mut chips = div().flex().flex_wrap().gap_x(px(14.)).gap_y(px(6.));
+        for (i, (repo, on)) in self.others.iter().enumerate() {
+            let name = repo
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            chips = chips.child(
+                div()
+                    .id(("other", i))
+                    .flex()
+                    .gap(px(6.))
+                    .items_center()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.others[i].1 = !this.others[i].1;
+                        cx.notify();
+                    }))
+                    .child(checkbox(&t, *on))
+                    .child(mono(name)),
+            );
+        }
+        if self.others.is_empty() {
+            chips =
+                chips.child(div().text_size(px(13.)).text_color(t.muted).child(
+                    "nenhum de k8s-configmap, vault-roleset ou pipeline ao lado deste repo",
+                ));
+        }
         div()
             .track_focus(&self.focus)
             .key_context("NewFeature")
@@ -489,8 +585,26 @@ impl Render for NewFeature {
                 fld(self.label("Branch"), self.branch.clone().into_any_element()),
                 fld(
                     self.label("A partir de"),
-                    self.select("base", bases, self.base, cx).into_any_element(),
+                    div()
+                        .when(self.mother().is_some(), |d| d.opacity(0.45))
+                        .child(self.select("base", bases, base_sel, cx))
+                        .into_any_element(),
                 ),
+            ))
+            .child(fld(
+                self.label(
+                    "Em cima de (MRs empilhados: a base e o alvo do MR viram a branch da mãe)",
+                ),
+                div()
+                    .when(self.parents.is_empty(), |d| d.opacity(0.45))
+                    .child(self.select("parent", parents, self.parent, cx))
+                    .into_any_element(),
+            ))
+            .child(fld(
+                self.label(
+                    "Outros repos (mesma branch numa worktree de cada, o Claude enxerga todas)",
+                ),
+                chips.into_any_element(),
             ))
             .child(fld(
                 self.label("O que o Claude deve fazer (opcional)"),
