@@ -175,6 +175,10 @@ impl Herdr {
         Ok(serde_json::from_value(result["workspaces"].take())?)
     }
 
+    pub fn session(&self) -> &str {
+        &self.session
+    }
+
     pub fn close_workspace(&self, id: &str) -> io::Result<()> {
         self.call("workspace.close", json!({ "workspace_id": id }))
             .map(drop)

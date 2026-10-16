@@ -1806,13 +1806,14 @@ impl Shell {
             }
             Cmd::RepoMenu => {
                 let top = self.sidebar.as_ref().and_then(|s| s.read(cx).top_repo());
-                let mut repos: Vec<std::path::PathBuf> = std::fs::read_dir(crate::mrs::repos_root())
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .map(|e| e.path())
-                    .filter(|p| p.join(".git").is_dir())
-                    .collect();
+                let mut repos: Vec<std::path::PathBuf> =
+                    std::fs::read_dir(crate::mrs::repos_root())
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.join(".git").is_dir())
+                        .collect();
                 if let Some(t) = &top {
                     repos.extend(feature::sibling_repos(t));
                 }
@@ -1859,7 +1860,9 @@ impl Shell {
                 );
             }
             Cmd::OpenWork(dir) => {
-                let Some(s) = self.sidebar.clone() else { return };
+                let Some(s) = self.sidebar.clone() else {
+                    return;
+                };
                 let herdr = s.update(cx, |s, _| {
                     s.fresh = true;
                     s.herdr()

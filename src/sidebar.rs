@@ -54,6 +54,8 @@ pub struct Sidebar {
     pub works: Vec<Work>,
     pub cur: usize,
     next_work: u64,
+    /// as abas em disco, por sessão do herdr (os ids `w1`… são dela)
+    works_file: PathBuf,
     /// "Nova aba" pediu: o próximo workspace novo em foco abre um trabalho, não entra no atual
     pub fresh: bool,
     inited: bool,
@@ -114,7 +116,7 @@ pub struct AttItem {
 type HerdrState = (Vec<Agent>, Vec<Workspace>, HashMap<String, String>);
 
 /// Uma aba de trabalho: os workspaces do herdr dela e o último em foco.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Work {
     id: u64,
     pub ws: Vec<String>,
@@ -351,16 +353,19 @@ impl Sidebar {
                     .await;
             }
         });
+        let works_file = works_file(herdr.session());
+        let works = load_works(&works_file);
         Self {
+            next_work: works.iter().map(|w| w.id).max().unwrap_or(0),
+            inited: !works.is_empty(),
+            works,
+            works_file,
             herdr,
             agents: Vec::new(),
             workspaces: Vec::new(),
             ws_cwd: HashMap::new(),
-            works: Vec::new(),
             cur: 0,
-            next_work: 0,
             fresh: false,
-            inited: false,
             offline: false,
             since: HashMap::new(),
             usage: HashMap::new(),
@@ -385,10 +390,7 @@ impl Sidebar {
     }
 
     /// Aplica o estado do herdr; devolve se mudou e os agentes que acabaram de pedir atenção.
-    fn apply(
-        &mut self,
-        state: std::io::Result<HerdrState>,
-    ) -> (bool, Vec<Note>) {
+    fn apply(&mut self, state: std::io::Result<HerdrState>) -> (bool, Vec<Note>) {
         let offline = state.is_err();
         let (agents, workspaces, ws_cwd) = state.unwrap_or_default();
         let now = Instant::now();
@@ -441,8 +443,9 @@ impl Sidebar {
         self.workspaces = workspaces;
         self.ws_cwd = ws_cwd;
         self.offline = offline;
-        if !offline {
-            changed |= self.sync_works();
+        if !offline && self.sync_works() {
+            save_works(&self.works_file, &self.works);
+            changed = true;
         }
         (changed, notes)
     }
@@ -455,7 +458,6 @@ impl Sidebar {
 
     /// Distribui os workspaces do herdr nas abas de trabalho e segue o em foco.
     /// Na abertura agrupa por repo; depois, workspace novo em foco entra no trabalho atual (ou abre um, se `fresh`).
-    // ponytail: abas só em memória; reabrir o app reagrupa por repo. Persistir se isso incomodar.
     fn sync_works(&mut self) -> bool {
         let before = self.works.clone();
         let cur_id = self.works.get(self.cur).map(|w| w.id);
@@ -518,7 +520,9 @@ impl Sidebar {
     }
 
     fn here(&self, ws: &str) -> bool {
-        self.works.get(self.cur).is_none_or(|w| w.ws.iter().any(|x| x == ws))
+        self.works
+            .get(self.cur)
+            .is_none_or(|w| w.ws.iter().any(|x| x == ws))
     }
 
     /// (repo ou rótulo, branch) da aba: o que estava em foco nela.
@@ -575,7 +579,9 @@ impl Sidebar {
             return Ok(());
         };
         if self.work_status(i).is_some() {
-            return Err("Tem Claude trabalhando ou esperando você nesta aba. Resolva antes de fechar.");
+            return Err(
+                "Tem Claude trabalhando ou esperando você nesta aba. Resolva antes de fechar.",
+            );
         }
         if self.works.len() < 2 {
             return Err("É a única aba. Abra outra (Alt+T) antes de fechar esta.");
@@ -602,7 +608,11 @@ impl Sidebar {
     fn repos_in(&self, here: bool) -> (Vec<Repo>, Vec<&Agent>) {
         let mut repos: Vec<Repo> = Vec::new();
         let mut loose = Vec::new();
-        for a in self.agents.iter().filter(|a| !here || self.here(&a.workspace_id)) {
+        for a in self
+            .agents
+            .iter()
+            .filter(|a| !here || self.here(&a.workspace_id))
+        {
             let Some(root) = herdr::repo_root(Path::new(&a.cwd)).map(herdr::main_repo) else {
                 loose.push(a);
                 continue;
@@ -1410,6 +1420,33 @@ pub fn glyph(s: Status) -> (&'static str, &'static str) {
     }
 }
 
+fn works_file(session: &str) -> PathBuf {
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+        .join(".local/share/maestro")
+        .join(format!("works-{session}.json"))
+}
+
+fn load_works(f: &Path) -> Vec<Work> {
+    std::fs::read_to_string(f)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Escrita atômica: um arquivo pela metade viraria "nenhuma aba" na próxima abertura.
+fn save_works(f: &Path, works: &[Work]) {
+    let Ok(json) = serde_json::to_string(works) else {
+        return;
+    };
+    let tmp = f.with_extension("json.tmp");
+    let _ = f
+        .parent()
+        .map(std::fs::create_dir_all)
+        .unwrap_or(Ok(()))
+        .and_then(|_| std::fs::write(&tmp, json))
+        .and_then(|_| std::fs::rename(&tmp, f));
+}
+
 type Extra = HashMap<PathBuf, Vec<(String, PathBuf, usize)>>;
 
 /// Os outros repos de cada feature multi-repo e o que a pilha pede para cada filha (git: fora da UI).
@@ -1644,7 +1681,11 @@ impl Render for Sidebar {
                 .child("TERMINAIS"),
         );
         let mut terms = feats();
-        for w in self.workspaces.iter().filter(|w| self.here(&w.workspace_id)) {
+        for w in self
+            .workspaces
+            .iter()
+            .filter(|w| self.here(&w.workspace_id))
+        {
             let id = w.workspace_id.clone();
             let this = this.clone();
             let row = Row {
@@ -1702,9 +1743,33 @@ impl Render for Sidebar {
 
 #[cfg(test)]
 mod tests {
-    use super::{ago, title};
+    use super::{Work, ago, load_works, save_works, title};
     use crate::herdr::{Agent, Status};
     use std::time::Duration;
+
+    #[test]
+    fn abas_de_trabalho_voltam_do_disco() {
+        let dir = std::env::temp_dir().join(format!("maestro-works-{}", std::process::id()));
+        let f = dir.join("works-test.json");
+        assert!(load_works(&f).is_empty());
+        let works = vec![
+            Work {
+                id: 1,
+                ws: vec!["w1".into(), "w3".into()],
+                last: "w3".into(),
+            },
+            Work {
+                id: 4,
+                ws: vec!["w2".into()],
+                last: "w2".into(),
+            },
+        ];
+        save_works(&f, &works);
+        assert_eq!(load_works(&f), works);
+        std::fs::write(&f, "{corrompido").unwrap();
+        assert!(load_works(&f).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn titulo_e_tempo() {
