@@ -85,6 +85,7 @@ pub struct MrsView {
     undo: Vec<(String, Vec<(usize, Draft)>)>,
     posting: bool,
     scroll: ScrollHandle,
+    list_scroll: ScrollHandle,
     focus: FocusHandle,
     files_w: f32,
     drawer_w: f32,
@@ -204,6 +205,7 @@ impl MrsView {
             undo: Vec::new(),
             posting: false,
             scroll: ScrollHandle::new(),
+            list_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             files_w: 270.,
             drawer_w: 440.,
@@ -1051,6 +1053,13 @@ impl MrsView {
         cx.notify();
     }
 
+    /// `set_offset` não limita: o offset vai de 0 a `-max_offset`.
+    fn scroll_by(&self, dy: Pixels) {
+        let o = self.scroll.offset();
+        let y = (o.y - dy).min(px(0.)).max(-self.scroll.max_offset().y);
+        self.scroll.set_offset(point(o.x, y));
+    }
+
     fn on_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // tecla vinda de um campo (filtro, rascunho, resposta) é texto, não atalho
         if self.editing.is_some() || !self.focus.is_focused(window) {
@@ -1076,10 +1085,25 @@ impl MrsView {
                 }
             }
             ("escape", Some(_)) => self.back(cx),
-            ("j" | "down", None) => {
-                self.sel = (self.sel + 1).min(self.rows(cx).len().saturating_sub(1))
+            ("j" | "down", Some(_)) if !k.modifiers.modified() => self.scroll_by(px(66.)),
+            ("k" | "up", Some(_)) if !k.modifiers.modified() => self.scroll_by(px(-66.)),
+            ("pagedown" | "space", Some(_)) if !k.modifiers.modified() => {
+                self.scroll_by(self.scroll.bounds().size.height - px(44.))
             }
-            ("k" | "up", None) => self.sel = self.sel.saturating_sub(1),
+            ("pageup", Some(_)) if !k.modifiers.modified() => {
+                self.scroll_by(px(44.) - self.scroll.bounds().size.height)
+            }
+            ("home", Some(_)) => self.scroll_by(self.scroll.offset().y),
+            ("end", Some(_)) => self.scroll_by(self.scroll.max_offset().y),
+            ("j" | "down", None) => {
+                self.sel = (self.sel + 1).min(self.rows(cx).len().saturating_sub(1));
+                // o filho 0 da lista é a âncora do tour
+                self.list_scroll.scroll_to_item(self.sel + 1);
+            }
+            ("k" | "up", None) => {
+                self.sel = self.sel.saturating_sub(1);
+                self.list_scroll.scroll_to_item(self.sel + 1);
+            }
             ("enter", None) => {
                 if let Some(r) = self.rows(cx).get(self.sel).cloned() {
                     self.open_row(r, cx);
@@ -1178,6 +1202,7 @@ impl MrsView {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.list_scroll)
             .relative()
             .child(tour::anchor(&self.anchors, "ilist"));
         match &self.tab_rows(self.tab) {
