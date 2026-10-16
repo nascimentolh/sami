@@ -52,6 +52,8 @@ pub struct TerminalView {
     font: Font,
     font_size: Pixels,
     padding: Point<Pixels>,
+    /// canto da grade na janela: os eventos do mouse vêm em coordenadas da janela
+    origin: Point<Pixels>,
     opacity: f32,
     grid: GridSize,
     cell: Size<Pixels>,
@@ -159,6 +161,7 @@ impl TerminalView {
             // ponytail: 96 DPI fixo (conferido com o Ghostty); ler o DPI do monitor quando houver tela HiDPI
             font_size: px(config.font_size_pt * 96. / 72.),
             padding: point(px(config.padding_x), px(config.padding_y)),
+            origin: point(px(config.padding_x), px(config.padding_y)),
             opacity: config.background_opacity,
             grid,
             cell: size(px(10.), px(20.)),
@@ -290,8 +293,8 @@ impl TerminalView {
     }
 
     fn grid_point(&self, position: Point<Pixels>) -> (GridPoint, Side) {
-        let x = (f32::from(position.x - self.padding.x)).max(0.) / f32::from(self.cell.width);
-        let y = (f32::from(position.y - self.padding.y)).max(0.) / f32::from(self.cell.height);
+        let x = (f32::from(position.x - self.origin.x)).max(0.) / f32::from(self.cell.width);
+        let y = (f32::from(position.y - self.origin.y)).max(0.) / f32::from(self.cell.height);
         let col = (x as usize).min(self.grid.cols - 1);
         let line = (y as usize + self.hidden_top).min(self.grid.lines - 1);
         let side = if x.fract() < 0.5 {
@@ -696,7 +699,10 @@ impl Render for TerminalView {
                     |_, _, _| {},
                     move |bounds, _, window, cx| {
                         // a grade segue o espaço real do terminal (a lateral ocupa parte da janela)
-                        entity.update(cx, |this, cx| this.fit(bounds.size, cell, cx));
+                        entity.update(cx, |this, cx| {
+                            this.origin = bounds.origin;
+                            this.fit(bounds.size, cell, cx)
+                        });
                         window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
                         let origin = bounds.origin;
                         for (row, col, width, color) in frame.backgrounds {
