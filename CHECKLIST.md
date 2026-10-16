@@ -193,7 +193,7 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] modo News e Resumo do dia
 - [x] abas de arquivo do editor com × (● quando há alteração; o segundo × descarta) e divisas arrastáveis entre colunas e na gaveta, que já existiam no app
 - [x] screenshots conferidos e artifact republicado
-- [ ] aprovado por você
+- [x] aprovado por você (2026-10-15)
 
 **B. Foco por setas e colunas**
 - [x] Ctrl+Shift+→ no pane mais à direita foca o editor (com vizinho, troca de pane no herdr); Ctrl+Shift+← no editor ou na aba Revisar volta ao terminal

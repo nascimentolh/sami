@@ -23,6 +23,9 @@ pub struct Row {
     pub web_url: String,
     /// pipeline, lido do detalhe do MR (a lista não traz)
     pub ci: Option<Status>,
+    /// `user_notes_count` e `updated_at`: mudou um dos dois, vale reler as discussões
+    pub notes: u64,
+    pub updated: String,
 }
 
 impl Row {
@@ -54,6 +57,8 @@ pub fn rows(list: &Value) -> Vec<Row> {
             target: m["target_branch"].as_str().unwrap_or_default().into(),
             web_url: m["web_url"].as_str().unwrap_or_default().into(),
             ci: None,
+            notes: m["user_notes_count"].as_u64().unwrap_or_default(),
+            updated: m["updated_at"].as_str().unwrap_or_default().into(),
         })
         .collect()
 }
@@ -456,8 +461,8 @@ pub fn write(method: &str, endpoint: &str, body: &Value) -> Result<Value, String
             Err(String::from_utf8_lossy(&out.stderr).into())
         };
     }
-    if endpoint.ends_with("/bulk_publish") {
-        // responde 204 sem corpo
+    if endpoint.ends_with("/bulk_publish") || endpoint.ends_with("/unapprove") {
+        // respondem sem corpo
         return if out.status.success() {
             Ok(Value::Null)
         } else {
@@ -531,6 +536,10 @@ pub struct Opened {
     pub raw: Vec<(String, String, String)>,
     pub files: Vec<crate::diff::FileDiff>,
     pub discussions: Value,
+    /// `/approvals`: `user_has_approved`, `user_can_approve`, `approved_by`
+    pub approvals: Value,
+    /// arquivos que o GitLab marca como `generated_file`
+    pub generated: Vec<String>,
 }
 
 pub fn open(path: &str, iid: u64) -> Result<Opened, String> {
@@ -538,6 +547,8 @@ pub fn open(path: &str, iid: u64) -> Result<Opened, String> {
     let detail = read(&base, false)?;
     let diffs = read(&format!("{base}/diffs?per_page=100"), true)?;
     let discussions = read(&format!("{base}/discussions?per_page=100"), true)?;
+    let approvals = read(&format!("{base}/approvals"), false).unwrap_or_default();
+    let mut generated = Vec::new();
     let mut raw = Vec::new();
     let mut patch = String::new();
     for d in diffs.as_array().into_iter().flatten() {
@@ -546,6 +557,9 @@ pub fn open(path: &str, iid: u64) -> Result<Opened, String> {
             d["old_path"].as_str().unwrap_or_default(),
         );
         let body = d["diff"].as_str().unwrap_or_default();
+        if d["generated_file"] == true {
+            generated.push(np.to_string());
+        }
         raw.push((np.to_string(), op.to_string(), body.to_string()));
         let new = if d["new_file"] == true {
             "new file mode 100644\n"
@@ -564,7 +578,71 @@ pub fn open(path: &str, iid: u64) -> Result<Opened, String> {
         detail,
         raw,
         discussions,
+        approvals,
+        generated,
     })
+}
+
+pub fn approve(path: &str, iid: u64, sha: &str) -> Result<(), String> {
+    let base = format!("projects/{}/merge_requests/{iid}", enc(path));
+    write("POST", &format!("{base}/approve"), &json!({ "sha": sha })).map(drop)
+}
+
+pub fn unapprove(path: &str, iid: u64) -> Result<(), String> {
+    let base = format!("projects/{}/merge_requests/{iid}", enc(path));
+    write("POST", &format!("{base}/unapprove"), &json!({})).map(drop)
+}
+
+/// As opções do diálogo de merge; os valores iniciais vêm do MR.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MergeOpts {
+    pub squash: bool,
+    pub remove_branch: bool,
+    pub when_pipeline_succeeds: bool,
+}
+
+impl MergeOpts {
+    pub fn from_detail(d: &Value) -> Self {
+        Self {
+            squash: d["squash"] == true || d["squash_on_merge"] == true,
+            remove_branch: d["force_remove_source_branch"] == true,
+            when_pipeline_succeeds: false,
+        }
+    }
+}
+
+/// `sha` trava o merge no commit que você revisou: se entrou outro, o GitLab recusa.
+pub fn merge(path: &str, iid: u64, sha: &str, o: &MergeOpts) -> Result<(), String> {
+    let base = format!("projects/{}/merge_requests/{iid}", enc(path));
+    let body = json!({
+        "sha": sha,
+        "squash": o.squash,
+        "should_remove_source_branch": o.remove_branch,
+        "merge_when_pipeline_succeeds": o.when_pipeline_succeeds,
+    });
+    write("PUT", &format!("{base}/merge"), &body).map(drop)
+}
+
+/// Por que o Merge está apagado (`detailed_merge_status` do GitLab); `None` quando dá para mergear.
+pub fn merge_blocker(detail: &Value) -> Option<&'static str> {
+    if detail["state"] != "opened" {
+        return Some("o MR não está aberto");
+    }
+    Some(
+        match detail["detailed_merge_status"].as_str().unwrap_or_default() {
+            "mergeable" | "" => return None,
+            "not_approved" => "precisa de aprovação",
+            "draft_status" => "o MR é rascunho",
+            "discussions_not_resolved" => "há discussões não resolvidas",
+            "ci_must_pass" | "ci_still_running" => "o pipeline precisa passar",
+            "conflict" | "need_rebase" => "conflito com a branch de destino",
+            "blocked_status" => "bloqueado por outro MR",
+            "checking" | "unchecked" | "preparing" | "approvals_syncing" => {
+                "o GitLab ainda está checando"
+            }
+            _ => "o GitLab não permite o merge agora",
+        },
+    )
 }
 
 /// A worktree persistente do MR (`~/.cache/maestro/wt/<path>/<iid>`), no sha da cabeça.
@@ -642,6 +720,8 @@ pub struct Draft {
     pub gitlab_id: Option<u64>,
     pub error: Option<String>,
     pub general: bool,
+    /// resposta a esta discussão: sai na review como resposta na thread
+    pub reply_to: Option<String>,
 }
 
 /// Publica como uma review só: cada rascunho vira draft note e um `bulk_publish` solta tudo junto.
@@ -659,13 +739,15 @@ pub fn publish(path: &str, iid: u64, opened: &Opened, drafts: &mut [Draft]) -> R
             (Some(l), Some(s)) if !l.is_empty() => format!("**{l}** ({s}): {}", d.body),
             _ => d.body.clone(),
         };
-        let inline = !d.general && d.line.is_some();
+        let inline = !d.general && d.line.is_some() && d.reply_to.is_none();
         if inline && d.head != head_now {
             d.error = Some("O MR recebeu um commit novo depois deste rascunho; a linha pode ter mudado de lugar.".into());
             failed += 1;
             continue;
         }
-        let note = if inline {
+        let note = if let Some(id) = &d.reply_to {
+            json!({"note": body, "in_reply_to_discussion_id": id})
+        } else if inline {
             let raw = opened.raw.iter().find(|r| r.0 == d.file);
             let (old, diff) = raw.map_or((d.file.as_str(), ""), |r| (r.1.as_str(), r.2.as_str()));
             json!({"note": body, "position": position(refs, &d.file, old, d.line.unwrap(), diff)})
@@ -960,6 +1042,8 @@ mod tests {
             raw: vec![("a.ts".into(), "a.ts".into(), DIFF.into())],
             files: Vec::new(),
             discussions: Value::Null,
+            approvals: Value::Null,
+            generated: Vec::new(),
         };
         let d = |id, line, body: &str| Draft {
             id,
@@ -973,6 +1057,7 @@ mod tests {
             gitlab_id: None,
             error: None,
             general: false,
+            reply_to: None,
         };
         let mut drafts = vec![d(1, Some(13), "contexto"), d(2, Some(40), "FALHA")];
         assert!(publish("g/p", 3, &opened, &mut drafts).is_err());
@@ -997,7 +1082,55 @@ mod tests {
         }];
         assert!(publish("g/p", 3, &opened, &mut stale).is_err());
         assert!(stale[0].error.as_deref().unwrap().contains("commit novo"));
+        // resposta numa thread: vai como draft note da discussão, mesmo com commit novo
+        std::fs::remove_file(&log).unwrap();
+        let mut reply = vec![Draft {
+            head: "velho".into(),
+            reply_to: Some("abc123".into()),
+            ..d(4, Some(13), "valeu, ajustei")
+        }];
+        assert!(publish("g/p", 3, &opened, &mut reply).is_ok());
+        let third = std::fs::read_to_string(&log).unwrap();
+        assert!(third.contains("\"in_reply_to_discussion_id\":\"abc123\""));
+        assert!(!third.contains("position"));
+        // aprovar e mergear, travados no sha revisado
+        std::fs::remove_file(&log).unwrap();
+        approve("g/p", 3, "h").unwrap();
+        unapprove("g/p", 3).unwrap();
+        let o =
+            MergeOpts::from_detail(&json!({"squash": true, "force_remove_source_branch": true}));
+        merge("g/p", 3, "h", &o).unwrap();
+        let fourth = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            fourth.contains("-X POST")
+                && fourth.contains("merge_requests/3/approve")
+                && fourth.contains("\"sha\":\"h\"")
+        );
+        assert!(fourth.contains("merge_requests/3/unapprove"));
+        assert!(fourth.contains("-X PUT") && fourth.contains("merge_requests/3/merge"));
+        assert!(
+            fourth.contains("\"squash\":true")
+                && fourth.contains("\"should_remove_source_branch\":true")
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn motivo_do_merge_apagado() {
+        let st = |s: &str| json!({"state": "opened", "detailed_merge_status": s});
+        assert_eq!(merge_blocker(&st("mergeable")), None);
+        assert_eq!(
+            merge_blocker(&st("not_approved")),
+            Some("precisa de aprovação")
+        );
+        assert_eq!(
+            merge_blocker(&st("ci_still_running")),
+            Some("o pipeline precisa passar")
+        );
+        assert_eq!(
+            merge_blocker(&json!({"state": "merged"})),
+            Some("o MR não está aberto")
+        );
     }
 
     #[test]

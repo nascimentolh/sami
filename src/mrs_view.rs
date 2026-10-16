@@ -327,6 +327,7 @@ impl MrsView {
                 gitlab_id: None,
                 error: None,
                 general: false,
+                reply_to: None,
             });
         }
         self.edit(id, String::new(), window, cx);
@@ -668,6 +669,7 @@ impl MrsView {
                 gitlab_id: None,
                 error: None,
                 general: x.outside,
+                reply_to: None,
             });
         }
         cx.emit(Event::Toast(

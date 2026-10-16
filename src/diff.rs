@@ -34,6 +34,59 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
 }
 
+/// Linhas do lado a lado como (velha, nova): cada sequência de `-` casa com a de `+` logo depois.
+pub fn side_by_side(lines: &[Line]) -> Vec<(Option<&Line>, Option<&Line>)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].kind == Kind::Context {
+            out.push((Some(&lines[i]), Some(&lines[i])));
+            i += 1;
+            continue;
+        }
+        let dels = lines[i..]
+            .iter()
+            .take_while(|l| l.kind == Kind::Del)
+            .count();
+        let adds = lines[i + dels..]
+            .iter()
+            .take_while(|l| l.kind == Kind::Add)
+            .count();
+        for k in 0..dels.max(adds) {
+            out.push((
+                (k < dels).then(|| &lines[i + k]),
+                (k < adds).then(|| &lines[i + dels + k]),
+            ));
+        }
+        i += dels + adds;
+    }
+    out
+}
+
+/// Lockfile, snapshot, minificado ou gerado: some com "Ocultar gerados". `generated` é o `generated_file` do GitLab.
+pub fn boilerplate(path: &str, generated: bool) -> bool {
+    const LOCKS: &[&str] = &[
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "bun.lock",
+        "bun.lockb",
+        "Cargo.lock",
+        "go.sum",
+        "poetry.lock",
+        "composer.lock",
+        "Gemfile.lock",
+    ];
+    let mut parts = path.rsplit('/');
+    let name = parts.next().unwrap_or(path);
+    generated
+        || LOCKS.contains(&name)
+        || name.ends_with(".snap")
+        || name.contains(".min.")
+        || name.contains(".generated.")
+        || parts.any(|d| matches!(d, "dist" | "build" | "__generated__"))
+}
+
 impl FileDiff {
     pub fn counts(&self) -> (usize, usize) {
         let all = self.hunks.iter().flat_map(|h| &h.lines);
@@ -325,6 +378,52 @@ new file mode 100644
 +// ok
 \\ No newline at end of file
 ";
+
+    #[test]
+    fn lado_a_lado() {
+        let l = |kind, text: &str| Line {
+            kind,
+            old: None,
+            new: None,
+            text: text.into(),
+        };
+        let lines = [
+            l(Kind::Context, "a"),
+            l(Kind::Del, "b"),
+            l(Kind::Del, "c"),
+            l(Kind::Add, "B"),
+            l(Kind::Context, "d"),
+            l(Kind::Add, "e"),
+            l(Kind::Del, "f"),
+        ];
+        let got: Vec<_> = side_by_side(&lines)
+            .into_iter()
+            .map(|(a, b)| (a.map(|l| l.text.as_str()), b.map(|l| l.text.as_str())))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (Some("a"), Some("a")),
+                (Some("b"), Some("B")),
+                (Some("c"), None),
+                (Some("d"), Some("d")),
+                (None, Some("e")),
+                (Some("f"), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn gerados() {
+        assert!(boilerplate("package-lock.json", false));
+        assert!(boilerplate("apps/web/pnpm-lock.yaml", false));
+        assert!(boilerplate("src/__snapshots__/a.test.ts.snap", false));
+        assert!(boilerplate("dist/index.js", false));
+        assert!(boilerplate("src/api.generated.ts", false));
+        assert!(boilerplate("src/qualquer.ts", true));
+        assert!(!boilerplate("src/build.ts", false));
+        assert!(!boilerplate("src/handler.ts", false));
+    }
 
     #[test]
     fn le_o_diff() {
