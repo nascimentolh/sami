@@ -233,6 +233,7 @@ pub fn button(t: &Theme, id: impl Into<ElementId>, label: &str, primary: bool) -
         .rounded(px(5.))
         .border_1()
         .cursor_pointer()
+        .flex_none()
         .whitespace_nowrap()
         .when(primary, |d| {
             d.bg(t.accent)

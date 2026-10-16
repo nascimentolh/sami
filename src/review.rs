@@ -208,6 +208,14 @@ impl Review {
         cx.notify();
     }
 
+    pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
+            || self
+                .editors
+                .iter()
+                .any(|e| e.read(cx).focus_handle(cx).is_focused(window))
+    }
+
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
         match (self.editor(), self.tab == Tab::File) {
             (Some(e), true) => e.read(cx).focus_handle(cx),

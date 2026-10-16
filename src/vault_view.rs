@@ -11,7 +11,7 @@ use crate::{
     graph::{self, Graph},
     review::Redo,
     sidebar::Sidebar,
-    theme::Theme,
+    theme::{self, Theme},
     tour::{self, Anchors},
     vault::{self, Note},
 };
@@ -43,6 +43,9 @@ pub struct FeatureRef {
 }
 
 /// O modo Vault do protótipo (`renderVaultTree` + `renderVaultMain`).
+#[derive(Clone, Copy)]
+struct LeftDrag;
+
 pub struct VaultView {
     notes: Vec<Note>,
     view: View,
@@ -52,6 +55,7 @@ pub struct VaultView {
     graph: Entity<Graph>,
     sidebar: Option<Entity<Sidebar>>,
     focus: FocusHandle,
+    left_w: f32,
     theme: Theme,
     anchors: Anchors,
     _poll: Task<()>,
@@ -199,6 +203,7 @@ impl VaultView {
             graph,
             sidebar,
             focus: cx.focus_handle(),
+            left_w: 270.,
             theme,
             anchors,
             _poll: poll,
@@ -728,7 +733,7 @@ impl VaultView {
         }
         div()
             .id("vault-left")
-            .w(px(270.))
+            .w(px(self.left_w))
             .flex_none()
             .h_full()
             .overflow_y_scroll()
@@ -1148,12 +1153,20 @@ impl Render for VaultView {
             .track_focus(&self.focus)
             .flex_1()
             .min_h_0()
+            .min_w_0()
             .flex()
             .bg(t.win)
             .text_color(t.fg)
             .font_family(t.sans)
             .text_size(px(14.))
+            .on_drag_move(cx.listener(|this, e: &DragMoveEvent<LeftDrag>, _, cx| {
+                let (b, x) = (e.bounds, e.event.position.x);
+                let max = (f32::from(b.size.width) - 300.).max(180.);
+                this.left_w = f32::from(x - b.left()).clamp(180., max);
+                cx.notify();
+            }))
             .child(self.left(cx))
+            .child(theme::resize_handle("rz-vault", LeftDrag, &t))
             .child(
                 div()
                     .flex_1()

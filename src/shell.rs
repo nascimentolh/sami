@@ -8,7 +8,7 @@ use crate::{
     cleanup::{self, Cleanup},
     compare::{self, Attempt, Compare},
     confirm::{self, Answer, Choice, Chose, Confirm},
-    feature,
+    editor, feature,
     form::button,
     herdr::{self, Status},
     keys,
@@ -406,20 +406,38 @@ impl Shell {
         cx.notify();
     }
 
-    /// A faixa de 4 px entre colunas que se arrasta para mudar a largura.
+    /// Ctrl+Shift+→ na borda direita do terminal entra no painel de revisão; Ctrl+Shift+← nele volta.
+    fn focus_arrow(&mut self, k: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let m = &k.modifiers;
+        if !(m.control && m.shift && !m.alt) {
+            return false;
+        }
+        let Some(review) = self.review.clone() else {
+            return false;
+        };
+        let terminal = self.terminal.read(cx).focus_handle();
+        match k.key.as_str() {
+            "right" if terminal.is_focused(window) => {
+                let herdr = self.sidebar.as_ref().map(|s| s.read(cx).herdr());
+                if herdr.is_some_and(|h| h.has_neighbor("right").unwrap_or(true)) {
+                    return false;
+                }
+                let f = review.read(cx).focus_handle(cx);
+                window.focus(&f, cx);
+            }
+            "left" if review.read(cx).contains_focus(window, cx) => window.focus(&terminal, cx),
+            _ => return false,
+        }
+        cx.notify();
+        true
+    }
+
     fn resize_handle(&self, side: Resize) -> impl IntoElement {
-        let t = &self.theme;
-        div()
-            .id(match side {
-                Resize::Left => "rz-left",
-                Resize::Right => "rz-right",
-            })
-            .w(px(4.))
-            .h_full()
-            .flex_none()
-            .cursor_col_resize()
-            .hover(|d| d.bg(t.accent_soft))
-            .on_drag(side, |_, _, _, cx| cx.new(|_| EmptyView))
+        let id = match side {
+            Resize::Left => "rz-left",
+            Resize::Right => "rz-right",
+        };
+        crate::theme::resize_handle(id, side, &self.theme)
     }
 
     /// Volta para o terminal de Features (feature escolhida pela lateral ou por Ctrl+Shift+1…9).
@@ -2366,7 +2384,14 @@ impl Render for Shell {
         div()
             .relative()
             .child(tour::anchor(&self.anchors, "root"))
-            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+            .on_action(cx.listener(|this, _: &editor::LeaveEditor, window, cx| {
+                window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                cx.notify();
+            }))
+            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if this.focus_arrow(&e.keystroke, window, cx) {
+                    return cx.stop_propagation();
+                }
                 if e.keystroke.key != "escape" {
                     return;
                 }

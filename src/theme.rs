@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui_kit::{App, Hsla, rgb, rgba};
+use gpui_kit::{App, Div, EmptyView, Hsla, Stateful, div, prelude::*, px, rgb, rgba};
 
 use crate::{palette::Palette, terminal::hsla};
 
@@ -65,4 +65,16 @@ impl Theme {
         hl.style.editor_active_line = None;
         th.highlight_theme = Arc::new(hl);
     }
+}
+
+/// A faixa de 4 px entre colunas que se arrasta para mudar a largura.
+pub fn resize_handle<T: Clone + 'static>(id: &'static str, drag: T, t: &Theme) -> Stateful<Div> {
+    div()
+        .id(id)
+        .w(px(4.))
+        .h_full()
+        .flex_none()
+        .cursor_col_resize()
+        .hover(|d| d.bg(t.accent_soft))
+        .on_drag(drag, |_, _, _, cx| cx.new(|_| EmptyView))
 }

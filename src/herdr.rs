@@ -207,6 +207,12 @@ impl Herdr {
             .map(drop)
     }
 
+    /// Se o pane em foco tem vizinho nessa direção (`left`, `right`, `up`, `down`).
+    pub fn has_neighbor(&self, direction: &str) -> io::Result<bool> {
+        let r = self.call("pane.neighbor", json!({ "direction": direction }))?;
+        Ok(r["neighbor"]["neighbor_pane_id"].is_string())
+    }
+
     pub fn focus(&self, pane_id: &str) -> io::Result<()> {
         self.call("agent.focus", json!({ "target": pane_id }))
             .map(drop)

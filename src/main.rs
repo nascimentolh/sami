@@ -84,6 +84,12 @@ fn main() {
             KeyBinding::new("shift-tab", terminal::SendBackTab, Some("Terminal")),
             KeyBinding::new("tab", new_feature::NextField, Some("NewFeature")),
             KeyBinding::new("shift-tab", new_feature::PrevField, Some("NewFeature")),
+            // Ctrl+Shift+setas trocam o foco como no Ghostty; seleção por palavra fica no Shift+Alt
+            KeyBinding::new(
+                "ctrl-shift-left",
+                editor::LeaveEditor,
+                Some("MaestroEditor > Input"),
+            ),
         ]);
         // a sans do chrome do protótipo vai embutida: não depende de a máquina ter a fonte
         let _ = cx.text_system().add_fonts(vec![

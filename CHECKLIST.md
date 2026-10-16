@@ -174,10 +174,77 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 
 ---
 
+## Rodada 3: LSP, revisão de MR completa, foco, colunas e extras
+
+**0. Preparação**
+- [x] checklist criado
+- [x] instalar `typescript-language-server`/`typescript` (npm -g) e `rust-analyzer` (rustup)
+
+**A. Protótipo (portão: só implemento a UI nova depois da sua aprovação)**
+- [ ] MR: Aprovar/Remover aprovação, Merge (apagado com motivo) e diálogo de merge
+- [ ] MR: Lado a lado | Unificado, Ocultar boilerplate (N), Expandir/Colapsar todos
+- [ ] MR: arquivo colapsável na lista e no cabeçalho, pílula "gerado"
+- [ ] MR: Responder → rascunho dentro da thread; seção Discussões; threads em linha removida
+- [ ] inbox com ponto de novo/nova resposta; toast de notificação
+- [ ] editor: diagnóstico, hover, completar, faixa "sem servidor", problemas na status bar
+- [ ] nova feature: Outros repos e Em cima de; lateral com grupo multi-repo e pilha
+- [ ] blame na linha, aba Histórico, paleta de tarefas, painel Problemas
+- [ ] painel Perguntar ao Claude; Ctrl+Shift+K comando por descrição
+- [ ] modo News e Resumo do dia
+- [ ] screenshots conferidos e artifact republicado
+- [ ] aprovado por você
+
+**B. Foco por setas e colunas**
+- [x] Ctrl+Shift+→ no pane mais à direita foca o editor (com vizinho, troca de pane no herdr); Ctrl+Shift+← no editor ou na aba Revisar volta ao terminal
+- [x] seleção por palavra no editor em Shift+Alt+←/→ (o GNOME usa Ctrl+Shift+Alt+←/→ para mover a janela de workspace, então esse nunca chegaria ao app)
+- [x] lista de arquivos do MR redimensionável (o centro do MR não estoura mais a janela quando fica estreito)
+- [x] lateral do Vault redimensionável
+- [x] gaveta do MR redimensionável
+- [x] conferido no app de teste
+
+**C. Revisão de MR**
+- [ ] `diff::side_by_side` + teste
+- [ ] `diff::boilerplate` + teste
+- [ ] `mrs::approve`/`unapprove`/`merge` + rascunho de resposta (`in_reply_to_discussion_id`), cobertos no teste do glab falso
+- [ ] lado a lado (padrão, salvo) e unificado
+- [ ] colapsar/expandir por arquivo e todos
+- [ ] filtro de boilerplate com seção "Gerados (N)"
+- [ ] Discussões gerais, threads em linha removida, Responder
+- [ ] Resolver fora da thread de UI
+- [ ] Aprovar e Merge no cabeçalho, com confirmação
+- [ ] conferido no app de teste (MR real só leitura; escrita no glab falso)
+
+**D. Notificações de MR**
+- [ ] polling desde a abertura do app
+- [ ] `mr_notify` (MR novo, resposta a nota minha, sem renotificar) + teste
+- [ ] toast com Abrir + ponto na inbox
+- [ ] `notify-send` com ação Abrir quando a janela está fora de foco
+- [ ] conferido no app de teste
+
+**E. LSP**
+- [ ] `lsp.rs`: processo, JSON-RPC, initialize, diagnósticos + teste do enquadramento
+- [ ] didOpen/didChange/didSave/didClose no editor
+- [ ] completar, hover, ir para definição (inclusive outro arquivo), code actions
+- [ ] diagnósticos no editor e contagem na status bar
+- [ ] faixa com o comando de instalação quando falta o servidor
+- [ ] conferido num clone TS (erro proposital, hover, completar, definição) e num `.py`
+
+**F. Extras**
+- [ ] F1 feature multi-repo (worktrees, lateral, revisão por repo, aviso de env fora do configmap, MRs relacionados, remoção)
+- [ ] F2 blame na linha (com MR de origem) e aba Histórico
+- [ ] F3 tarefas por repo num split + painel Problemas (matcher com teste)
+- [ ] F4 Perguntar ao Claude sobre um trecho (só leitura, com continuação)
+- [ ] F5 MRs empilhados (rebase, Mover para main) + teste da decisão
+- [ ] F6 Ctrl+Shift+K: comando por descrição, digitado sem executar
+- [ ] F7 News do daily.dev (perfil local, pontuação com teste, reordenação diária, modo News, Resumo do dia)
+
+**Pendente com você:** aprovar e dar merge de verdade num MR de teste seu.
+
+---
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
 - Do merge à produção (rollout + Cloud Logging)
 - Resumo de ausência
 - Notificação no celular quando você está fora
-- LSP no editor

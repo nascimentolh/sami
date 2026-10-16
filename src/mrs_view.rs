@@ -10,7 +10,7 @@ use crate::{
     form::{FieldEvent, TextField, button, checkbox},
     mr::Status,
     mrs::{self, Draft, Finding, Opened, Row, Run},
-    theme::Theme,
+    theme::{self, Theme},
     tour::{self, Anchors},
 };
 
@@ -20,6 +20,12 @@ pub enum Event {
     AskPublish(String, String),
     /// descarte com "Desfazer" no toast
     Discarded(String),
+}
+
+#[derive(Clone, Copy)]
+enum Drag {
+    Files,
+    Drawer,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -69,6 +75,8 @@ pub struct MrsView {
     posting: bool,
     scroll: ScrollHandle,
     focus: FocusHandle,
+    files_w: f32,
+    drawer_w: f32,
     theme: Theme,
     anchors: Anchors,
     _poll: Task<()>,
@@ -124,6 +132,8 @@ impl MrsView {
             posting: false,
             scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
+            files_w: 270.,
+            drawer_w: 440.,
             theme,
             anchors,
             _poll: poll,
@@ -1303,7 +1313,7 @@ impl MrsView {
         let drafts = self.drafts.get(&row.key()).cloned().unwrap_or_default();
         let mut col = div()
             .id("mr-files")
-            .w(px(270.))
+            .w(px(self.files_w))
             .flex_none()
             .h_full()
             .overflow_y_scroll()
@@ -1480,6 +1490,8 @@ impl MrsView {
             .when(pend == 0, |d| {
                 d.child(
                     div()
+                        .min_w_0()
+                        .truncate()
                         .text_color(t.muted)
                         .child("C numa linha comenta; ⇧R pede revisão ao Claude."),
                 )
@@ -1499,6 +1511,7 @@ impl MrsView {
         div()
             .flex_1()
             .min_h_0()
+            .min_w_0()
             .flex()
             .flex_col()
             .child(header)
@@ -1763,7 +1776,13 @@ impl MrsView {
                 .top_0()
                 .right_0()
                 .bottom_0()
-                .w(px(440.))
+                .w(px(self.drawer_w))
+                .child(
+                    theme::resize_handle("rz-drawer", Drag::Drawer, &t)
+                        .absolute()
+                        .left_0()
+                        .top_0(),
+                )
                 .bg(t.raise)
                 .border_l_1()
                 .border_color(t.line)
@@ -1843,12 +1862,30 @@ impl Render for MrsView {
             .relative()
             .flex_1()
             .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
             .flex()
             .bg(t.win)
             .text_color(t.fg)
             .font_family(t.sans)
             .text_size(px(14.))
-            .children(self.files_panel(cx))
+            .on_drag_move(cx.listener(|this, e: &DragMoveEvent<Drag>, _, cx| {
+                let (b, x) = (e.bounds, e.event.position.x);
+                let w = f32::from(b.size.width);
+                match e.drag(cx) {
+                    Drag::Files => {
+                        this.files_w = f32::from(x - b.left()).clamp(180., (w - 300.).max(180.))
+                    }
+                    Drag::Drawer => {
+                        this.drawer_w = f32::from(b.right() - x).clamp(320., (w - 200.).max(320.))
+                    }
+                }
+                cx.notify();
+            }))
+            .when_some(self.files_panel(cx), |d, files| {
+                d.child(files)
+                    .child(theme::resize_handle("rz-files", Drag::Files, &t))
+            })
             .child(
                 div()
                     .flex_1()

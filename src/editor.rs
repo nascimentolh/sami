@@ -13,6 +13,8 @@ use crate::{
     theme::Theme,
 };
 
+actions!(editor, [LeaveEditor]);
+
 pub enum Event {
     Changed,
     Toast(String),
@@ -288,6 +290,7 @@ impl Render for FileEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme.clone();
         div()
+            .key_context("MaestroEditor")
             .size_full()
             .flex()
             .flex_col()
