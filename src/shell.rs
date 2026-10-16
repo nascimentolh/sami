@@ -23,6 +23,7 @@ use crate::{
     terminal::TerminalView,
     theme::Theme,
     tour::{self, Anchors},
+    tunnels_view::{self, TunnelsView},
     vault_view::{self, VaultView},
 };
 
@@ -72,6 +73,9 @@ pub struct Shell {
     /// o modo News (daily.dev); nasce com o app para a contagem e o Resumo do dia
     news: Entity<NewsView>,
     in_news: bool,
+    /// o modo Bancos; nasce com o app para a contagem do título e da barra de status
+    tunnels: Entity<TunnelsView>,
+    in_db: bool,
     /// o Resumo do dia na tela (não bloqueia nada)
     brief: bool,
     /// o modo Auditoria (dentro de Features, como no protótipo)
@@ -119,6 +123,14 @@ const AUDIT_HINTS: &[(&str, &str, bool)] = &[
     ("Nova auditoria…", "incremental ou completa", true),
     ("espaço", "marcar achado", true),
     ("?", "atalhos", true),
+];
+
+const DB_HINTS: &[(&str, &str, bool)] = &[
+    ("Alt+6", "Bancos", true),
+    ("j k", "navegar", true),
+    ("Enter", "liga/desliga", true),
+    ("/", "filtrar", true),
+    ("Ctrl+Shift+D", "ligar de qualquer tela", true),
 ];
 
 const NEWS_HINTS: &[(&str, &str, bool)] = &[
@@ -244,6 +256,14 @@ impl Shell {
     ) -> Self {
         let sidebar_present = sidebar.is_some();
         let news = cx.new(|cx| NewsView::new(theme.clone(), anchors.clone(), cx));
+        let tunnels = cx.new(|cx| TunnelsView::new(theme.clone(), cx));
+        cx.subscribe(
+            &tunnels,
+            |this: &mut Self, _, e: &tunnels_view::Event, cx| match e {
+                tunnels_view::Event::Toast(t) => this.toast(t.clone(), cx),
+            },
+        )
+        .detach();
         cx.subscribe(
             &news,
             |this: &mut Self, _, e: &news_view::Event, cx| match e {
@@ -395,6 +415,8 @@ impl Shell {
             in_vault: false,
             news,
             in_news: false,
+            tunnels,
+            in_db: false,
             brief: false,
             mrs: None,
             in_mrs: false,
@@ -434,6 +456,7 @@ impl Shell {
                 "3" => Cmd::Vault(crate::palette_cmd::VaultGo::Open),
                 "4" => Cmd::Audit(false),
                 "5" => Cmd::News,
+                "6" => Cmd::Db,
                 _ => return,
             };
             cx.stop_propagation();
@@ -448,6 +471,7 @@ impl Shell {
                 "b" => return self.run(Cmd::ToggleLeft, window, cx),
                 "f" => return self.run(Cmd::Files, window, cx),
                 "k" => return self.run(Cmd::Kcmd, window, cx),
+                "d" => return self.run(Cmd::DbMenu, window, cx),
                 _ => {}
             }
         }
@@ -520,6 +544,7 @@ impl Shell {
     /// Volta para o terminal de Features (feature escolhida pela lateral ou por Ctrl+Shift+1…9).
     fn leave_modes(&mut self) {
         self.in_news = false;
+        self.in_db = false;
         self.in_vault = false;
         self.in_mrs = false;
         self.in_audit = false;
@@ -1293,6 +1318,7 @@ impl Shell {
                 vault_view::Event::Focus(p) => {
                     this.in_vault = false;
                     this.in_news = false;
+                    this.in_db = false;
                     if let Some(s) = &this.sidebar {
                         s.read(cx).focus(p.clone());
                     }
@@ -1798,6 +1824,7 @@ impl Shell {
                 self.left = true;
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 if let Some(s) = &self.sidebar {
@@ -1934,6 +1961,7 @@ impl Shell {
                 }
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 window.focus(&self.terminal.read(cx).focus_handle(), cx);
@@ -1961,6 +1989,7 @@ impl Shell {
             Cmd::Features => {
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 self.in_audit = false;
             }
@@ -1973,6 +2002,7 @@ impl Shell {
                 self.in_audit = true;
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 let f = a.read(cx).focus_handle();
                 window.focus(&f, cx);
@@ -1986,6 +2016,7 @@ impl Shell {
                 self.in_mrs = true;
                 self.in_vault = false;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_audit = false;
                 if cmd == Cmd::MrReview {
                     m.update(cx, |m, cx| m.start_review(cx));
@@ -2007,6 +2038,7 @@ impl Shell {
                 v.update(cx, |v, cx| v.go(&to, repo, cx));
                 self.in_vault = true;
                 self.in_news = false;
+                self.in_db = false;
                 self.in_mrs = false;
                 self.in_audit = false;
                 let f = v.read(cx).focus_handle();
@@ -2016,9 +2048,54 @@ impl Shell {
                 }
                 return cx.notify();
             }
+            Cmd::Db => {
+                self.in_db = true;
+                self.in_news = false;
+                self.in_vault = false;
+                self.in_mrs = false;
+                self.in_audit = false;
+                let f = self.tunnels.read(cx).focus_handle();
+                window.focus(&f, cx);
+                return cx.notify();
+            }
+            Cmd::DbMenu => {
+                let red: Hsla = rgb(0xff5555).into();
+                let items = self
+                    .tunnels
+                    .read(cx)
+                    .items()
+                    .into_iter()
+                    .map(|(name, port, up, prd)| palette_cmd::Item {
+                        title: format!(
+                            "{} {name}{}",
+                            if up { "●" } else { "○" },
+                            if up { " · desligar" } else { "" }
+                        ),
+                        key: format!(":{port}"),
+                        cmd: Some(Cmd::Tunnel(name)),
+                        tag: prd.then(|| ("prd".to_string(), red)),
+                    })
+                    .collect();
+                return self.open_palette(
+                    items,
+                    "Banco… (Enter liga ou desliga · os aliases do zsh)",
+                    "Nenhum alias de túnel no zsh",
+                    window,
+                    cx,
+                );
+            }
+            Cmd::Tunnel(name) => {
+                self.tunnels.update(cx, |t, cx| t.toggle(&name, cx));
+                return cx.notify();
+            }
+            Cmd::TunnelsOff => {
+                self.tunnels.update(cx, |t, cx| t.stop_all(cx));
+                return cx.notify();
+            }
             Cmd::News => {
                 self.brief = false;
                 self.in_news = true;
+                self.in_db = false;
                 self.in_vault = false;
                 self.in_mrs = false;
                 self.in_audit = false;
@@ -2326,7 +2403,7 @@ impl Shell {
                     .child(
                         mode(
                             "Features",
-                            !self.in_vault && !self.in_mrs && !self.in_news,
+                            !self.in_vault && !self.in_mrs && !self.in_news && !self.in_db,
                             (blocked > 0).then(|| format!("{blocked} !")),
                         )
                         .id("m-feat")
@@ -2385,6 +2462,32 @@ impl Shell {
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::News, w, cx)))
+                    })
+                    .child({
+                        let n = self.tunnels.read(cx).up();
+                        div()
+                            .id("m-db")
+                            .flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .px(px(10.))
+                            .py(px(3.))
+                            .rounded(px(5.))
+                            .text_color(if self.in_db { t.fg } else { t.muted })
+                            .when(self.in_db, |d| d.bg(t.raise))
+                            .child("Bancos")
+                            .when(n > 0, |d| {
+                                d.child(
+                                    div()
+                                        .font_family(t.mono.clone())
+                                        .text_size(px(12.))
+                                        .text_color(t.ok)
+                                        .child(n.to_string()),
+                                )
+                            })
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Db, w, cx)))
                     }),
             )
             .child(
@@ -2570,7 +2673,12 @@ impl Shell {
                     .font_weight(FontWeight::BOLD)
                     .child("PREFIX: v divide · - empilha · c aba · x fecha · z zoom"),
             );
-        } else if s.top_worktree().is_some() && !self.in_mrs && !self.in_vault && !self.in_news {
+        } else if s.top_worktree().is_some()
+            && !self.in_mrs
+            && !self.in_vault
+            && !self.in_news
+            && !self.in_db
+        {
             bar = bar.child(
                 side.id("run-task")
                     .cursor_pointer()
@@ -2718,7 +2826,9 @@ impl Shell {
     /// As dicas da tela atual (o `HINTS[S.mode]` do protótipo).
     fn screen_hints(&self, cx: &App) -> &'static [(&'static str, &'static str, bool)] {
         let mr_open = self.mrs.as_ref().is_some_and(|m| m.read(cx).in_mr());
-        if self.in_news {
+        if self.in_db {
+            DB_HINTS
+        } else if self.in_news {
             NEWS_HINTS
         } else if self.in_audit {
             AUDIT_HINTS
@@ -2935,6 +3045,32 @@ impl Shell {
                     );
                 }
                 bar = bar.child(cell().child(format!("{working} trabalhando")));
+                let (up, down) = {
+                    let d = self.tunnels.read(cx);
+                    (d.up(), d.down())
+                };
+                if up + down > 0 {
+                    bar = bar.child(
+                        cell()
+                            .id("st-db")
+                            .cursor_pointer()
+                            .child(
+                                div()
+                                    .text_color(if down > 0 { rgb(0xff5555).into() } else { t.ok })
+                                    .child("●"),
+                            )
+                            .child(format!(
+                                "{up} banco{}{}",
+                                if up == 1 { "" } else { "s" },
+                                if down > 0 {
+                                    format!(" · {down} caiu")
+                                } else {
+                                    String::new()
+                                }
+                            ))
+                            .on_click(cx.listener(|this, _, w, cx| this.run(Cmd::Db, w, cx))),
+                    );
+                }
                 bar = bar.child(
                     cell().child(format!("hoje: US$ {}", crate::sidebar::brl(s.today_cost()))),
                 );
@@ -3285,7 +3421,11 @@ impl Render for Shell {
                         self.sidebar
                             .clone()
                             .filter(|_| {
-                                self.left && !self.in_vault && !self.in_mrs && !self.in_news
+                                self.left
+                                    && !self.in_vault
+                                    && !self.in_mrs
+                                    && !self.in_news
+                                    && !self.in_db
                             })
                             .map(|s| {
                                 div()
@@ -3300,8 +3440,13 @@ impl Render for Shell {
                         d.child(a)
                     })
                     .when_some(self.in_news.then(|| self.news.clone()), |d, n| d.child(n))
+                    .when_some(self.in_db.then(|| self.tunnels.clone()), |d, n| d.child(n))
                     .when(
-                        !self.in_vault && !self.in_mrs && !self.in_audit && !self.in_news,
+                        !self.in_vault
+                            && !self.in_mrs
+                            && !self.in_audit
+                            && !self.in_news
+                            && !self.in_db,
                         |d| {
                             d.child(
                                 div()
@@ -3321,7 +3466,11 @@ impl Render for Shell {
                         self.review
                             .clone()
                             .filter(|_| {
-                                !self.in_vault && !self.in_mrs && !self.in_audit && !self.in_news
+                                !self.in_vault
+                                    && !self.in_mrs
+                                    && !self.in_audit
+                                    && !self.in_news
+                                    && !self.in_db
                             })
                             .map(|r| {
                                 div()

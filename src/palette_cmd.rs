@@ -57,6 +57,12 @@ pub enum Cmd {
     Kcmd,
     News,
     NewsBrief,
+    /// o modo Bancos (túneis dos aliases do zsh)
+    Db,
+    /// Ctrl+Shift+D: o seletor de bancos, de qualquer tela
+    DbMenu,
+    Tunnel(String),
+    TunnelsOff,
     /// "+" / Alt+T: a lista de repos para a aba nova
     RepoMenu,
     /// abre uma aba de trabalho nesta pasta
@@ -168,6 +174,9 @@ pub fn commands() -> Vec<Item> {
         c("MR: Revisar com Claude", "⇧R", Some(MrReview)),
         c("Ir para: News", "Alt+5", Some(News)),
         c("News: Resumo do dia", "", Some(NewsBrief)),
+        c("Ir para: Bancos", "Alt+6", Some(Db)),
+        c("Banco: ligar ou desligar…", "Ctrl+Shift+D", Some(DbMenu)),
+        c("Banco: desligar todos", "", Some(TunnelsOff)),
         c("Ajuda: Atalhos e decisões de UX", "?", Some(Help)),
         c("Terminal: Rodar tarefa…", "", Some(TaskMenu)),
         c("Editor: Problemas", "", Some(Problems)),

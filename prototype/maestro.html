@@ -162,6 +162,8 @@ body.resizing{cursor:col-resize;user-select:none}
 .tin span{color:var(--fg)}
 .tin input{flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--fg);font:inherit;caret-color:var(--fg);caret-shape:block}
 .fsep{padding:8px 14px 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.feat.db{padding:4px 8px}.feat.db .g.up{color:var(--ok)}.feat.db .g.off{color:var(--comment)}.feat.db .g.down{color:var(--bad)}.feat.db .g.start{color:var(--yellow)}
+.feat.db .k{font:11px var(--mono);color:var(--comment)}.feat.db .prd{font-size:10px;color:var(--bad);border:1px solid var(--bad);border-radius:3px;padding:0 4px;margin-left:6px}
 .tfoot{display:flex;justify-content:space-between;gap:12px;padding:0 10px 6px;color:var(--comment);font-size:11.5px;flex:none;white-space:nowrap;overflow:hidden}
 
 /* painel direito: revisão / editor */
@@ -504,6 +506,7 @@ legend{color:var(--muted);font-size:12px;padding:0 4px}
       <button id="mMrs" aria-pressed="false">MRs<span class="count" id="mrCount" style="color:var(--accent)"></span></button>
       <button id="mVault" aria-pressed="false">Vault</button>
       <button id="mNews" aria-pressed="false" title="Alt+5">News<span class="count" id="newsCount" style="color:var(--cyan)"></span></button>
+      <button id="mDb" aria-pressed="false" title="Alt+6 · túneis cloud-sql-proxy dos aliases sql_* do zsh">Bancos<span class="count" id="dbCount" style="color:var(--ok)"></span></button>
     </nav>
     <button class="qbtn" id="qBtn" title="Fila de atenção (Ctrl+Shift+Espaço = próximo)">Fila <b id="qCount"></b></button>
     <span class="sp"></span>
@@ -827,6 +830,7 @@ function renderFrame(){
   if(S.rw) m.style.setProperty('--rw',m.dataset.right==='on'?S.rw+'px':'0px');
   $('#mFeat').setAttribute('aria-pressed',S.mode==='feat'||S.mode==='audit'); $('#mMrs').setAttribute('aria-pressed',S.mode==='mrs'||S.mode==='mr'); $('#mVault').setAttribute('aria-pressed',S.mode==='vault');
   $('#mNews').setAttribute('aria-pressed',S.mode==='news'); $('#mNews').classList.toggle('dim',!S.newsToken);
+  $('#mDb').setAttribute('aria-pressed',S.mode==='db'); $('#dbCount').textContent=DBS.filter(d=>d.st==='up').length||'';
   $('#newsCount').textContent=S.newsToken?newsShown().filter(n=>n.aff.length&&!n.read).length||'':'';
   const att=FEATS.filter(f=>f.st==='blocked').length; $('#attCount').textContent=att?`${att} !`:'';
   $('#qCount').textContent=attention().length||'';
@@ -841,6 +845,7 @@ function renderLeft(){
   if (S.mode==='mr') return renderMRFiles(el);
   if (S.mode==='vault') return renderVaultTree(el);
   if (S.mode==='news') return renderNewsLeft(el);
+  if (S.mode==='db') return renderDbLeft(el);
   if (S.mode!=='feat'&&S.mode!=='audit'){ el.innerHTML=''; return; }
   const f=feat();
   let h=`<div class="repo">${REPO} <span class="mono">${ROOT}</span></div><div class="feats"><button class="feat ${S.mode==='audit'?'on':''}" id="audBtn"><span class="g ${AU.phase==='run'?'st-working spin':'cm'}">${AU.phase==='run'?'◐':'◇'}</span><span class="b">Auditoria</span><span class="k">${AU.phase==='run'?'rodando':AU.last.when}</span><span class="m">${AU.phase==='run'?'US$ '+AU.spent.toFixed(2).replace('.',','):AU.last.commits?AU.last.commits+' commits desde a última':'em dia'}</span></button></div><div class="phead">Features<span class="sp"></span><span class="mono" style="text-transform:none;letter-spacing:0">${FEATS.length}</span></div><div class="feats" role="listbox" aria-label="Features">`;
@@ -858,6 +863,50 @@ function renderLeft(){
   el.innerHTML=h+'</div>';
   bindLeft(el);
 }
+/* ---------- bancos: os aliases sql_* do zsh (cloud-sql-proxy) ---------- */
+const DBS=[
+  {n:'sql_app_dev',port:5433,st:'up'},
+  {n:'sql_app_prd',port:5434,st:'off'},
+  {n:'sql_billing_dev',port:5435,st:'off'},
+  {n:'sql_billing_prd',port:5436,st:'off',fail:'could not find default credentials (rode gcloud auth application-default login)'},
+  {n:'sql_crm_dev',port:5437,st:'off'},
+  {n:'sql_crm_prd',port:5438,st:'up'},
+  {n:'sql_tax_dev',port:5439,st:'off'},
+  {n:'sql_tax_prd',port:5440,st:'off'},
+  {n:'sql_issue_dev',port:5441,st:'off'},
+  {n:'sql_signup_func',port:5442,st:'off'},
+];
+const DBG={up:'●',off:'○',down:'●',start:'◐'};
+DBS.forEach((d,i)=>{ d.env=/pro?d/.test(d.n)?'prd':/func/.test(d.n)?'func':'dev'; d.inst=`${d.n.replace(/^sql_/,'').replace(/_(dev|prd|prod|func)$/,'')}-${d.env}:us-central1:${d.n.replace(/^sql_/,'').split('_')[0]}`; if(d.st==='up') d.since='há '+(12+i*7)+' min'; });
+const dbVis=()=>{ const q=(S.dbq||'').toLowerCase(), f=S.dbf||'all'; return DBS.map((d,i)=>({d,i})).filter(({d})=>(f==='all'||(f==='up'?d.st!=='off':d.env===f))&&(!q||d.n.includes(q))); };
+function renderDbLeft(el){
+  const n=k=>DBS.filter(d=>k==='all'||(k==='up'?d.st!=='off':d.env===k)).length;
+  el.innerHTML=`<div class="repo">Bancos <span class="mono">aliases sql_* do zsh</span></div><div class="feats">${[['all','Todos'],['up','De pé'],['dev','dev'],['prd','prd'],['func','func']].map(([k,l])=>`<button class="feat ${(S.dbf||'all')===k?'on':''}" data-dbf="${k}"><span class="g cm">${k==='up'?'●':k==='prd'?'!':'·'}</span><span class="b">${l}</span><span class="k">${n(k)}</span></button>`).join('')}</div>
+    <div class="flist"><div class="none">Lidos de <span class="mono">~/.zshrc-ctbz</span>: todo alias que roda <span class="mono">cloud-sql-proxy</span> ou <span class="mono">kubectl port-forward</span>. Editar ou criar túnel é no zsh; aqui só liga e desliga.</div>
+    <div class="none">De pé vale para o PC inteiro: qualquer repo, cliente SQL ou feature conecta em <span class="mono">localhost:porta</span>. Fechar o Maestro não derruba os túneis.</div></div>`;
+  el.querySelectorAll('[data-dbf]').forEach(b=>b.onclick=()=>{ S.dbf=b.dataset.dbf; S.dbsel=0; render(); });
+}
+function renderDb(el){
+  const xs=dbVis(); S.dbsel=Math.min(S.dbsel||0,Math.max(xs.length-1,0)); const up=DBS.filter(d=>d.st==='up').length;
+  el.innerHTML=`<div class="ibar"><input id="dbq" placeholder="filtrar  ( / )" value="${esc(S.dbq||'')}" aria-label="Filtrar bancos"><span class="sp"></span><span class="muted" style="font-size:12px">${up} de pé · log em <span class="mono">~/.cache/sql-proxy/</span></span>${up?'<button class="btn danger" id="dbOff">Desligar todos</button>':''}</div>
+    <div class="list">${xs.length?xs.map(({d,i},k)=>`<div class="row ${k===S.dbsel?'on':''}" data-dk="${k}" style="grid-template-columns:14px minmax(160px,220px) minmax(0,1fr) 60px 90px 200px">
+      <span class="g ${d.st} ${d.st==='start'?'spin':''}" style="font:12px var(--mono);color:${d.st==='up'?'var(--ok)':d.st==='down'?'var(--bad)':d.st==='start'?'var(--yellow)':'var(--comment)'}">${DBG[d.st]}</span>
+      <span class="proj">${d.n}${d.env==='prd'?' <span class="pill bad">prd</span>':''}</span>
+      <span class="t ${d.st==='down'?'':'muted'}" style="${d.st==='down'?'color:var(--bad)':''}">${d.st==='down'?esc(d.fail):d.st==='start'?'subindo…':`<span class="mono">${d.inst}</span>`}</span>
+      <span class="ci mono">:${d.port}</span><span class="who">${d.st==='up'?d.since:''}</span>
+      <span class="acts" style="justify-content:flex-end;flex-wrap:nowrap">${d.st==='up'?`<button class="btn" data-dcp="${i}">Copiar host</button>`:''}${d.st==='down'?`<button class="btn" data-dlog="${i}">Ver log</button>`:''}<button class="btn ${d.st==='up'?'danger':'pri'}" data-dt="${i}" ${d.st==='start'?'disabled':''}>${d.st==='up'?'Desligar':'Ligar'}</button></span></div>`).join('')
+      :'<div class="empty"><h3>Nenhum banco bate com o filtro</h3><p><kbd>Esc</kbd> limpa.</p></div>'}</div>`;
+  el.querySelectorAll('[data-dt]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); toggleDb(+b.dataset.dt); });
+  el.querySelectorAll('[data-dcp]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); toast(`Copiado: localhost:${DBS[+b.dataset.dcp].port}`); });
+  el.querySelectorAll('[data-dlog]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); toast(`Abriria ~/.cache/sql-proxy/${DBS[+b.dataset.dlog].n}.log`); });
+  el.querySelectorAll('[data-dk]').forEach(r=>r.onclick=()=>{ S.dbsel=+r.dataset.dk; renderDb(el); });
+  const off=$('#dbOff'); if(off) off.onclick=()=>{ DBS.forEach(d=>{ if(d.st==='up') d.st='off'; }); toast('Bancos desligados'); render(); };
+  $('#dbq').oninput=e=>{ S.dbq=e.target.value; S.dbsel=0; const p=e.target.selectionStart; renderDb(el); const i=$('#dbq'); i.focus(); i.setSelectionRange(p,p); };
+}
+function toggleDb(i){ const d=DBS[i];
+  if(d.st==='up'){ d.st='off'; toast(`${d.n} desligado`); render(); return; }
+  d.st='start'; render();
+  setTimeout(()=>{ if(d.fail){ d.st='down'; toast(`${d.n} caiu: ${d.fail}`); } else { d.st='up'; d.since='agora'; toast(`${d.n} de pé em :${d.port}`); } render(); },900); }
 function featBtn(x){ const s=ST[x.st], i=FEATS.indexOf(x), ws=x.kind==='ws';
   const sub=(x.repos?`<span class="sub" title="feature multi-repo: mesma branch em cada repo">${x.repos.map(r=>`<span>${r.name}${r.files?` · ${r.files}`:''}</span>`).join('')}</span>`:'')
     +(x.stack==='rebase'?`<span class="stk" data-stk="${x.id}" role="button" title="feat/healthcheck ganhou 2 commits depois que esta foi criada">base mudou · Rebase</span>`:x.stack==='merged'?`<span class="stk mv" data-stk="${x.id}" role="button" title="A mãe (!146) foi mergeada em main: rebase --onto main e o MR passa a apontar para main">mergeada · Mover p/ main</span>`:'');
@@ -891,6 +940,7 @@ function renderCenter(){
   if (S.mode==='audit') return renderAudit(el);
   if (S.mode==='vault') return renderVaultMain(el);
   if (S.mode==='news') return renderNews(el);
+  if (S.mode==='db') return renderDb(el);
   const f=feat();
   const keep={}; let foc=null; el.querySelectorAll('.tin-in').forEach(i=>{ keep[i.dataset.t]=i.value; if(i===document.activeElement) foc=i.dataset.t; });
   const shown = f.split && f.tabs.length>1 && f.tab<2 ? [0,1] : [f.tab];
@@ -2092,6 +2142,7 @@ const HINTS={
   vault:[['clique','abrir nota'],['[[link]]','navegar'],['◎ Grafo','visão geral'],['Hoje','daily'],['?','atalhos']],
   audit:[['Nova auditoria…','incremental ou completa'],['espaço','marcar achado'],['?','atalhos']],
   mr:[['C','comentar linha'],['?','perguntar sobre o bloco'],['S','lado a lado/unificado'],['⇧R','revisar com Claude'],['Ctrl+⏎','publicar'],['Ctrl+Z','desfazer descarte'],['Esc','voltar']],
+  db:[['Alt+6','Bancos'],['j k','navegar'],['Enter','liga/desliga'],['/','filtrar'],['Ctrl+Shift+D','ligar de qualquer tela']],
   news:[['Alt+5','News'],['título','abrir'],['Não relevante','oculta só aqui'],['?','atalhos']],
 };
 function renderHints(){ $('#hints').innerHTML=HINTS[S.mode].map(([k,v])=>`<span><kbd>${k}</kbd> ${v}</span>`).join(''); }
@@ -2101,10 +2152,11 @@ function lspStatus(){ if(/\.py$/.test(S.file)) return '<span class="muted" title
 function renderStatus(){
   const f=feat(); const att=FEATS.filter(x=>x.st==='blocked'), work=FEATS.filter(x=>x.st==='working').length;
   const dr=S.drafts.filter(d=>d.state==='draft').length;
-  $('#status').innerHTML=`<span>herdr: conectado</span>${att.length?`<button class="att" id="stAtt">! ${att.length} precisa${att.length>1?'m':''} de você</button>`:''}<span>${work} trabalhando</span><span title="soma das features">hoje: US$ ${FEATS.reduce((a,x)=>a+(x.cost||0),0).toFixed(2).replace('.',',')}</span>
+  $('#status').innerHTML=`<span>herdr: conectado</span>${att.length?`<button class="att" id="stAtt">! ${att.length} precisa${att.length>1?'m':''} de você</button>`:''}<span>${work} trabalhando</span>${DBS.some(d=>d.st!=='off')?`<button id="stDb" title="Bancos (Alt+6)"><span style="color:${DBS.some(d=>d.st==='down')?'var(--bad)':'var(--ok)'}">●</span> ${DBS.filter(d=>d.st==='up').length} banco${DBS.filter(d=>d.st==='up').length!==1?'s':''}${DBS.some(d=>d.st==='down')?' · 1 caiu':''}</button>`:''}<span title="soma das features">hoje: US$ ${FEATS.reduce((a,x)=>a+(x.cost||0),0).toFixed(2).replace('.',',')}</span>
     ${S.mode==='feat'&&f?`<span>⎇ ${f.branch}</span>`:''}${dr?`<span class="drafts">${dr} comentário${dr>1?'s':''} pendente${dr>1?'s':''}</span>`:''}${RV&&RV.phase==='run'?'<span>Claude: revisando MR</span>':''}${AU.phase==='run'?`<span>auditoria: US$ ${AU.spent.toFixed(2).replace('.',',')}</span>`:''}
     <span class="sp"></span>${S.mode==='feat'&&S.right&&S.rtab==='file'&&S.file?lspStatus():''}${S.mode==='feat'&&S.right&&S.rtab==='file'?`<span>Ln ${S.ln}, Col ${S.col}</span>`:''}<span title="lido de ~/.config/ghostty/config">ghostty: Dracula · JetBrains Mono 13</span>`;
   const a=$('#stAtt'); if(a) a.onclick=()=>selectFeat(att[0].id);
+  const sd=$('#stDb'); if(sd) sd.onclick=()=>setMode('db');
   const pb=$('#stProb'); if(pb) pb.onclick=()=>{ S.rtab='prob'; renderRight(); };
 }
 
@@ -2165,6 +2217,7 @@ const CMDS=[
   ['MR: Abrir bots-api !124','',()=>openMR(MRS[0])],
   ['Simular: notificação de MR (resposta à sua thread)','',()=>simNotify(true)],
   ['Ir para: News','Alt+5',openNews],
+  ['Ir para: Bancos','Alt+6',()=>setMode('db')],
   ['News: Resumo do dia','',openBrief],
   ['News: Simular sem token / com token','',()=>{ S.newsToken=!S.newsToken; if(!S.newsToken) closeBrief(); render(); toast(S.newsToken?'Token do daily.dev encontrado':'Sem ~/.config/maestro/dailydev.token'); }],
   ['Simular: feature de fundo pede permissão','',()=>{ const f=FEATS.find(x=>x.id!==S.fid&&x.id!=='main'&&x.kind!=='ws'&&x.st!=='blocked'&&x.st!=='working')||FEATS.find(x=>x.id!==S.fid&&x.kind!=='ws'&&x.st!=='blocked'); if(!f){ toast('Todas as outras já estão esperando você'); return; } f.ask='npm run migrate'; f.tab=0; f.term.push({c:'dotw',t:'⏺ Preciso rodar a migration.'}); setSt(f,'blocked','pediu permissão: npm run migrate'); }],
@@ -2175,12 +2228,15 @@ function palItems(){ const q=PAL.q.trim();
   if(PAL.mode==='att') return attention().filter(x=>!q||fuzzy(q,x.t+' '+x.tag)>=0).map(x=>({t:x.t,tag:x.tag,p:x.p,run:x.run}));
   if(PAL.mode==='repo'){ const cur=REPOS.filter(r=>r[0]===REPO), rest=REPOS.filter(r=>r[0]!==REPO);
     return [...cur,...rest,['~','só terminal']].map(([n,b])=>({t:n==='~'?'~ (só terminal, sem repo)':n+(n===REPO?' · outro trabalho no mesmo repo':''),g:n==='~'?'':b,run:()=>openWork(n,b),s:q?fuzzy(q,n+' '+b):0})).filter(x=>x.s>=0).sort((a,b)=>q?b.s-a.s:0); }
+  if(PAL.mode==='db') return DBS.map((d,i)=>({t:`${d.st==='up'?'● ':'○ '}${d.n}${d.st==='up'?' · desligar':''}`,tag:/pro?d/.test(d.n)?'prd':'',p:1,g:':'+d.port,run:()=>toggleDb(i),s:q?fuzzy(q,d.n):0})).filter(x=>x.s>=0).sort((a,b)=>q?b.s-a.s:0);
   if(PAL.mode==='file') return Object.keys(F).map(p=>({t:p,g:'',run:()=>{ if(S.mode!=='feat'){ S.mode='feat'; render(); } openFile(p); },s:q?fuzzy(q,p):0})).filter(x=>x.s>=0).sort((a,b)=>b.s-a.s);
+  const dbs=DBS.map((d,i)=>({t:`Banco: ${d.st==='up'?'desligar':'ligar'} ${d.n} :${d.port}`,g:'',run:()=>toggleDb(i),s:q?fuzzy(q,'banco '+d.n):-1})).filter(x=>x.s>=0)
+    .concat(DBS.some(d=>d.st==='up')?[{t:'Banco: desligar todos',g:'',run:()=>{ DBS.forEach(d=>{ if(d.st==='up') d.st='off'; }); toast('Bancos desligados'); render(); },s:q?fuzzy(q,'banco desligar todos'):-1}]:[]).filter(x=>x.s>=0);
   const feats=FEATS.map((f,i)=>({t:`Feature: ${f.branch}`,g:`Ctrl+Shift+${i+1}`,run:()=>selectFeat(f.id),s:q?fuzzy(q,'feature '+f.branch):-1})).filter(x=>x.s>=0);
-  return CMDS.map(([t,k,run])=>({t,g:k,run,s:q?fuzzy(q,t):0})).filter(x=>x.s>=0).concat(feats).sort((a,b)=>b.s-a.s); }
+  return CMDS.map(([t,k,run])=>({t,g:k,run,s:q?fuzzy(q,t):0})).filter(x=>x.s>=0).concat(feats,dbs).sort((a,b)=>b.s-a.s); }
 function openPal(mode,q0){
   OV={type:'pal'}; PAL={mode,q:q0||'',i:0};
-  const ph=mode==='repo'?'Nova aba em… (Enter = mesmo repo, ou digite outro)':mode==='file'?'Nome do arquivo…':mode==='att'?'Fila de atenção: filtrar…':'Comando ou nome da feature…';
+  const ph=mode==='db'?'Banco… (Enter liga ou desliga · os aliases sql_* do zsh)':mode==='repo'?'Nova aba em… (Enter = mesmo repo, ou digite outro)':mode==='file'?'Nome do arquivo…':mode==='att'?'Fila de atenção: filtrar…':'Comando ou nome da feature…';
   $('#overlay').innerHTML=`<div class="scrim" id="pS"><div class="pal" role="dialog" aria-label="Paleta"><input id="pIn" placeholder="${ph}" autocomplete="off" aria-label="${ph}"><ul id="pL" role="listbox"></ul></div></div>`;
   $('#pS').onclick=e=>{ if(e.target.id==='pS') closeOverlay(); };
   const i=$('#pIn'); i.value=PAL.q; i.oninput=()=>{ PAL.q=i.value; PAL.i=0; paintPal(); }; i.focus(); paintPal();
@@ -2260,7 +2316,7 @@ document.addEventListener('keydown',e=>{
   if(OV&&OV.type==='dlg'){ if(ctrl&&k==='Enter'){ e.preventDefault(); OV.ok(); } return; }
   if(OV) return;
   if(ctrl&&e.shiftKey&&e.altKey&&(k==='ArrowLeft'||k==='ArrowRight')&&e.target.id==='code'){ e.preventDefault(); wordSel(e.target,k==='ArrowRight'); return; }
-  if(e.altKey&&!ctrl&&/^Digit[1-5]$/.test(e.code)){ e.preventDefault(); [()=>setMode('feat'),()=>setMode('mrs'),()=>openVault(),()=>setMode('audit'),openNews][+e.code.slice(5)-1](); return; }
+  if(e.altKey&&!ctrl&&/^Digit[1-6]$/.test(e.code)){ e.preventDefault(); [()=>setMode('feat'),()=>setMode('mrs'),()=>openVault(),()=>setMode('audit'),openNews,()=>setMode('db')][+e.code.slice(5)-1](); return; }
   if(!ctrl&&!e.altKey&&!e.shiftKey&&!inField&&e.key==='s'&&S.mode==='mr'){ e.preventDefault(); S.layout=S.layout==='split'?'unified':'split'; rerender(); return; }
   if(ctrl&&e.shiftKey){
     const c=e.code, f=feat(), act={
@@ -2269,7 +2325,7 @@ document.addEventListener('keydown',e=>{
       Enter:()=>S.mode==='feat'&&herdr(f,'-'), Backslash:()=>S.mode==='feat'&&herdr(f,'v'), KeyZ:()=>S.mode==='feat'&&herdr(f,'z'), KeyT:()=>S.mode==='feat'&&herdr(f,'c'),
       ArrowLeft:()=>{ if(S.mode!=='feat') return; if(e.target.closest&&e.target.closest('#right')){ focusTerm(); return; } herdr(f,'ArrowLeft'); },
       ArrowRight:()=>{ if(S.mode!=='feat') return; if(e.target.closest&&e.target.closest('#right')) return; if(f.split&&f.tab===0){ herdr(f,'ArrowRight'); return; } if(S.right) focusEditor(); else toast('Não há pane à direita. Ctrl+Shift+E abre o editor.'); },
-      ArrowUp:()=>herdr(f,'ArrowUp'), ArrowDown:()=>herdr(f,'ArrowDown'), KeyK:openKcmd,
+      ArrowUp:()=>herdr(f,'ArrowUp'), ArrowDown:()=>herdr(f,'ArrowDown'), KeyK:openKcmd, KeyD:()=>openPal('db'),
     }[c];
     if(c.startsWith('Arrow')&&inField&&!inTerm&&!(e.target.closest&&e.target.closest('#right')&&(c==='ArrowLeft'||c==='ArrowRight'))) return;
     const dg=/^Digit([1-9])$/.exec(c);
@@ -2296,6 +2352,12 @@ document.addEventListener('keydown',e=>{
   if(k==='?'){ if(S.sel&&(S.mode==='mr'||(S.mode==='feat'&&S.right&&S.rtab==='review'))){ askFromSel(); return; } openHelp(); return; }
   if(RV&&RV.phase==='setup'&&k==='Enter'){ e.preventDefault(); runReview(); return; }
   if(k==='R'&&e.shiftKey&&S.mode!=='feat'){ startReview(); return; }
+  if(S.mode==='db'){ const xs=dbVis();
+    if(k==='j'||k==='ArrowDown'){ e.preventDefault(); S.dbsel=Math.min((S.dbsel||0)+1,xs.length-1); renderCenter(); }
+    else if(k==='k'||k==='ArrowUp'){ e.preventDefault(); S.dbsel=Math.max((S.dbsel||0)-1,0); renderCenter(); }
+    else if(k==='Enter'&&xs[S.dbsel||0]) toggleDb(xs[S.dbsel||0].i);
+    else if(k==='/'){ e.preventDefault(); $('#dbq').focus(); }
+    return; }
   if(S.mode==='mrs'){ const rows=inboxRows();
     if(k==='j'||k==='ArrowDown'){ e.preventDefault(); S.isel=Math.min(S.isel+1,rows.length-1); renderCenter(); }
     else if(k==='k'||k==='ArrowUp'){ e.preventDefault(); S.isel=Math.max(S.isel-1,0); renderCenter(); }
@@ -2305,7 +2367,7 @@ document.addEventListener('keydown',e=>{
   if((k==='c'||k==='C')&&(S.mode==='mr'||(S.mode==='feat'&&S.right&&S.rtab==='review'))){ e.preventDefault(); newDraft(); return; }
   if(S.mode==='feat'&&k.length===1&&!(e.target.closest&&e.target.closest('#right'))){ focusTerm(); }
 });
-$('#mVault').onclick=()=>openVault(); $('#mFeat').onclick=()=>setMode('feat'); $('#mMrs').onclick=()=>setMode('mrs'); $('#mNews').onclick=openNews;
+$('#mVault').onclick=()=>openVault(); $('#mFeat').onclick=()=>setMode('feat'); $('#mMrs').onclick=()=>setMode('mrs'); $('#mNews').onclick=openNews; $('#mDb').onclick=()=>setMode('db');
 $('#qBtn').onclick=()=>openPal('att'); $('#hFile').onclick=()=>openPal('file'); $('#hCmd').onclick=()=>openPal('cmd'); $('#hHelp').onclick=()=>openHelp();
 if(innerWidth<760){ S.left=false; }
 render();
