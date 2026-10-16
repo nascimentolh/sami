@@ -472,7 +472,7 @@ pub fn prompt(
         .collect::<Vec<_>>()
         .join("\n");
     let prod = if o.prod {
-        "\nPara validar achados de custo e infra, pode consultar produção só com leitura: `gcloud logging read`, `gcloud sql|run|pubsub|container … describe/list`, `gcloud monitoring policies list` e `kubectl get|describe|top|logs` (use `--project`/`--context` de prd; descubra-os em k8s/, .gitlab-ci.yml e na nota do vault abaixo). Achado de custo/infra sem esse dado vira confiança baixa."
+        "\nPara validar achados de custo e infra, pode consultar produção só com leitura: `gcloud logging read`, `gcloud sql|run|pubsub|container … describe/list`, `gcloud monitoring policies list` e `kubectl describe|top|logs` (sem `kubectl get`: ele lê Secrets) (use `--project`/`--context` de prd; descubra-os em k8s/, .gitlab-ci.yml e na nota do vault abaixo). Achado de custo/infra sem esse dado vira confiança baixa."
     } else {
         ""
     };
@@ -557,14 +557,8 @@ pub fn claude_args(schema: &str, budget: f64, prod: bool) -> Vec<String> {
     .to_vec();
     if prod {
         a.extend(PROD_READ.iter().map(|c| format!("Bash({c}:*)")));
-        a.extend(
-            [
-                "--disallowedTools",
-                "Bash(kubectl get secret:*)",
-                "Bash(kubectl get secrets:*)",
-            ]
-            .map(String::from),
-        );
+        // `kubectl get pods,secrets -o yaml` passa por qualquer prefixo `kubectl get <recurso>`; `describe` não mostra valores
+        a.extend(["--disallowedTools", "Bash(kubectl get:*)"].map(String::from));
     }
     a
 }
@@ -583,13 +577,6 @@ pub const PROD_READ: &[&str] = &[
     "gcloud pubsub subscriptions list",
     "gcloud container clusters describe",
     "gcloud monitoring policies list",
-    "kubectl get pods",
-    "kubectl get deployments",
-    "kubectl get replicasets",
-    "kubectl get hpa",
-    "kubectl get events",
-    "kubectl get services",
-    "kubectl get nodes",
     "kubectl describe",
     "kubectl top",
     "kubectl logs",
@@ -1035,8 +1022,14 @@ mod tests {
         let Some(Ok((v, _))) = ok else { panic!() };
         let a = claude_args("{}", 1., true);
         assert!(a.contains(&"Bash(gcloud logging read:*)".to_string()));
-        assert!(!a.contains(&"Bash(kubectl get:*)".to_string()));
-        assert!(a.contains(&"Bash(kubectl get secret:*)".to_string()));
+        assert!(
+            !a.iter()
+                .any(|x| x.starts_with("Bash(kubectl get") && x != "Bash(kubectl get:*)")
+        );
+        assert!(
+            a.windows(2)
+                .any(|w| w == ["--disallowedTools", "Bash(kubectl get:*)"])
+        );
         assert!(!a.iter().any(|x| x.contains("gcloud")
             && !x.contains(" list")
             && !x.contains(" describe")
