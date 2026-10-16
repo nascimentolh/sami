@@ -105,10 +105,15 @@ pub struct Shell {
 const MRS_HINTS: &[(&str, &str, bool)] = &[
     ("j k", "navegar", true),
     ("Enter", "abrir", true),
+    ("O", "abrir no GitLab", true),
     ("⇧R", "revisar com Claude", true),
     ("/", "filtrar", true),
 ];
 const MR_HINTS: &[(&str, &str, bool)] = &[
+    ("n p", "próximo/anterior arquivo", true),
+    ("V", "visto e próximo", true),
+    ("O", "abrir no GitLab", true),
+    ("R", "atualizar", true),
     ("C", "comentar linha", true),
     ("?", "perguntar sobre o bloco", true),
     ("⇧R", "revisar com Claude", true),
