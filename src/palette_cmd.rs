@@ -140,7 +140,11 @@ pub fn commands() -> Vec<Item> {
             Some(Herdr("zoom")),
         ),
         c("Terminal: Abrir terminal da home", "", Some(Home)),
-        c("Trabalho: Nova aba (este repo ou outro)…", "Alt+T", Some(RepoMenu)),
+        c(
+            "Trabalho: Nova aba (este repo ou outro)…",
+            "Alt+T",
+            Some(RepoMenu),
+        ),
         c("Trabalho: Fechar aba", "Alt+W", Some(CloseWork(None))),
         c("Trabalho: Próxima aba", "Alt+]", Some(NextWork(1))),
         c("Trabalho: Aba anterior", "Alt+[", Some(NextWork(-1))),
