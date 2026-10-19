@@ -311,6 +311,13 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] Pré-voo: "Pedir ao Claude para corrigir" com o fim da saída; `/mr` de outro repo leva o caminho; gate aceita carimbo por repo + teste
 - [x] Teste no app com dois repos descartáveis (o gate do `/mr` por repo só nos testes: o teste não tinha feature do Maestro)
 
+## Card do Jira e planejamento (extensão: o protótipo não cobre)
+
+- [x] Protótipo: Nova feature sempre em modo plano ("Ready to code?" antes de implementar)
+- [x] Protótipo: aba Card (editar título e descrição, vincular ou criar card, sub-tasks existentes, propostas do plano com caixa, tipo, título e SP, "Abrir N no Jira")
+- [ ] App: Claude da feature em `--permission-mode plan` (espera o aceite do protótipo)
+- [ ] App: aba Card lendo e editando pelo MCP do Atlassian, propostas lidas do plano, `/subtasks` com a lista marcada (espera o aceite do protótipo)
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
