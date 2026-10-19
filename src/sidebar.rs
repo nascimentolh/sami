@@ -141,6 +141,8 @@ pub struct Sidebar {
     pub offline: bool,
     since: HashMap<String, (Status, Instant)>,
     pub usage: HashMap<String, Usage>,
+    /// por pane: os repos em que o Claude dele editou arquivo
+    touched: HashMap<String, Vec<PathBuf>>,
     pub inventories: Vec<Inventory>,
     changes: Option<Changes>,
     /// aba Arquivos à frente e a lista dela (lida no clique da aba)
@@ -312,21 +314,26 @@ impl Sidebar {
                     }) else {
                         break;
                     };
-                    let (usage, changes, inventories, learn, extra, stacks) = cx
+                    let (usage, touched, changes, inventories, learn, extra, stacks) = cx
                         .background_executor()
                         .spawn(async move {
                             let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
                             let mut s = sessions.lock().unwrap();
                             let usage: HashMap<_, _> = jobs
-                                .into_iter()
+                                .iter()
                                 .filter_map(|(pane, cwd, title)| {
-                                    Some((pane.clone(), s.usage(&home, &pane, &cwd, &title)?))
+                                    Some((pane.clone(), s.usage(&home, pane, cwd, title)?))
                                 })
+                                .collect();
+                            let touched: HashMap<_, _> = jobs
+                                .iter()
+                                .map(|(pane, ..)| (pane.clone(), s.repos(pane)))
                                 .collect();
                             let invs = feature::inventories();
                             let (extra, stacks) = stack_and_repos(&invs, &merged);
                             (
                                 usage,
+                                touched,
                                 root.and_then(|r| changes::changes(&r)),
                                 invs,
                                 perms::pending(),
@@ -363,12 +370,14 @@ impl Sidebar {
                             cx.notify();
                         }
                         if this.usage != usage
+                            || this.touched != touched
                             || this.changes != changes
                             || this.inventories != inventories
                             || this.extra != extra
                             || this.stacks != stacks
                         {
                             this.usage = usage;
+                            this.touched = touched;
                             this.changes = changes;
                             this.inventories = inventories;
                             this.extra = extra;
@@ -471,6 +480,7 @@ impl Sidebar {
             offline: false,
             since: HashMap::new(),
             usage: HashMap::new(),
+            touched: HashMap::new(),
             inventories: Vec::new(),
             changes: None,
             files: None,
@@ -812,6 +822,40 @@ impl Sidebar {
             .filter(|a| self.here(&a.workspace_id))
             .map(|a| a.cwd.as_str());
         pick_worktree(focused.or(self.focused_cwd.as_deref()), here)
+    }
+
+    /// Os repos da sessão em foco para o painel da direita: o da feature primeiro, depois os outros
+    /// repos da feature multi-repo e os que o Claude dela editou.
+    pub fn session_repos(&self) -> Vec<PathBuf> {
+        let Some(top) = self.top_worktree() else {
+            return Vec::new();
+        };
+        let mut out = vec![top.clone()];
+        let mut add = |p: &Path| {
+            if !out.iter().any(|o| o == p) {
+                out.push(p.to_path_buf());
+            }
+        };
+        if let Some(inv) = self
+            .inventories
+            .iter()
+            .find(|i| i.worktrees.iter().any(|w| w.path == top))
+        {
+            inv.worktrees.iter().for_each(|w| add(&w.path));
+        }
+        let pane = self
+            .agents
+            .iter()
+            .find(|a| a.focused && Path::new(&a.cwd).starts_with(&top))
+            .or_else(|| {
+                self.agents
+                    .iter()
+                    .find(|a| Path::new(&a.cwd).starts_with(&top))
+            });
+        if let Some(repos) = pane.and_then(|a| self.touched.get(&a.pane_id)) {
+            repos.iter().for_each(|r| add(r));
+        }
+        out
     }
 
     /// Clique numa feature ou terminal: foca e avisa o Shell para sair de MRs, Vault ou Auditoria.

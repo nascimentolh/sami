@@ -1,4 +1,4 @@
-use std::{path::Path, process::Command};
+use std::{path::Path, process::Command, sync::OnceLock};
 
 use serde_json::Value;
 
@@ -20,6 +20,8 @@ pub enum State {
 pub struct Check {
     pub state: State,
     pub detail: String,
+    /// o fim da saída do comando que falhou: vai para o Claude no "Pedir ao Claude para corrigir"
+    pub log: String,
 }
 
 /// Os itens do pré-voo (DESIGN §7.1), na ordem em que aparecem.
@@ -36,7 +38,28 @@ fn check(state: State, detail: impl Into<String>) -> Check {
     Check {
         state,
         detail: detail.into(),
+        log: String::new(),
     }
+}
+
+/// O PATH do zsh do usuário (nvm, asdf…): o app aberto pelo atalho do sistema não tem o node.
+fn user_path() -> &'static str {
+    static PATH: OnceLock<String> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".into());
+        path_from(&shell).unwrap_or_else(|| std::env::var("PATH").unwrap_or_default())
+    })
+}
+
+fn path_from(shell: &str) -> Option<String> {
+    let o = Command::new("timeout")
+        .args(["10", shell, "-lic", "printf '\\n%s' \"$PATH\""])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let out = String::from_utf8_lossy(&o.stdout);
+    let last = out.lines().last()?.trim();
+    (o.status.success() && last.contains('/')).then(|| last.to_string())
 }
 
 /// Com teto de tempo: o que travar vira "não deu para checar" em vez de prender o pré-voo.
@@ -44,6 +67,7 @@ fn sh(root: &Path, cmd: &str) -> Check {
     let secs = 600;
     let out = Command::new("timeout")
         .args([&secs.to_string(), "sh", "-c", cmd])
+        .env("PATH", user_path())
         .current_dir(root)
         .output();
     match out {
@@ -63,10 +87,30 @@ fn sh(root: &Path, cmd: &str) -> Check {
                 .rev()
                 .find(|l| !l.trim().is_empty())
                 .unwrap_or("");
-            check(State::Fail, format!("{cmd}: {}", last.trim()))
+            let mut c = check(State::Fail, format!("{cmd}: {}", last.trim()));
+            c.log = tail(&out, 40);
+            c
         }
         Err(e) => check(State::Fail, format!("{cmd}: {e}")),
     }
+}
+
+fn tail(out: &str, n: usize) -> String {
+    let lines: Vec<&str> = out.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// O pedido ao Claude com o que falhou no pré-voo: o item, o comando e o fim da saída.
+pub fn fix_prompt(failed: &[(&str, &Check)]) -> String {
+    let mut s = String::from("O pré-voo do MR no Maestro falhou:\n");
+    for (name, c) in failed {
+        s.push_str(&format!("\n## {name}\n{}\n", c.detail));
+        if !c.log.trim().is_empty() {
+            s.push_str(&format!("```\n{}\n```\n", c.log.trim_end()));
+        }
+    }
+    s.push_str("\nCorrija e rode o comando de novo para confirmar. Não abra o MR: eu rodo o pré-voo de novo.");
+    s
 }
 
 fn behind(root: &Path, base: &str) -> Check {
@@ -179,6 +223,7 @@ fn sonar(root: &Path, files: &[String]) -> Check {
         .args(["--model", "haiku", "--output-format", "json"])
         .arg("--allowedTools=Read,mcp__sonarqube__analyze_code_snippet")
         .args(["--setting-sources", "user", "--no-session-persistence"])
+        .env("PATH", user_path())
         .current_dir(root)
         .output();
     let Ok(out) = out else {
@@ -371,11 +416,25 @@ fn tree(root: &Path, commit: &str) -> Option<String> {
         .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
-/// Pré-voo aprovado (verde ou com override) para os arquivos como estão agora.
+/// Pré-voo aprovado (verde ou com override) para os arquivos de `root` como estão agora.
+/// Uma linha `raiz\ttree` por repo: a sessão pode abrir MR em mais de um.
 pub fn stamp(id: &str, root: &Path) -> Result<(), String> {
     let sha = feature::snapshot(root)?;
     let t = tree(root, &sha).ok_or("git rev-parse falhou")?;
-    std::fs::write(feature::preflight_file(id), t).map_err(|e| e.to_string())
+    let file = feature::preflight_file(id);
+    let old = std::fs::read_to_string(&file).unwrap_or_default();
+    std::fs::write(file, restamp(&old, root, &t)).map_err(|e| e.to_string())
+}
+
+fn restamp(old: &str, root: &Path, tree: &str) -> String {
+    let me = root.to_string_lossy();
+    let mut lines: Vec<String> = old
+        .lines()
+        .filter(|l| l.contains('\t') && l.split('\t').next() != Some(&me))
+        .map(String::from)
+        .collect();
+    lines.push(format!("{me}\t{tree}"));
+    lines.join("\n") + "\n"
 }
 
 pub fn is_mr(prompt: &str) -> bool {
@@ -384,23 +443,107 @@ pub fn is_mr(prompt: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
 }
 
+/// Qual repo o `/mr` quer e o tree carimbado dele. `/mr no repositório <raiz>` é de outro repo da sessão;
+/// carimbo antigo (só o tree) vale para a raiz da feature.
+fn stamped_for(stamps: &str, root: &Path, prompt: &str) -> Option<(std::path::PathBuf, String)> {
+    let mut mine = None;
+    for l in stamps.lines().filter(|l| !l.trim().is_empty()) {
+        match l.split_once('\t') {
+            Some((r, t)) if r != root.to_string_lossy() && prompt.contains(r) => {
+                return Some((r.into(), t.trim().into()));
+            }
+            Some((r, t)) if r == root.to_string_lossy() => mine = Some(t.trim().to_string()),
+            None => mine = mine.or(Some(l.trim().to_string())),
+            _ => {}
+        }
+    }
+    Some((root.to_path_buf(), mine?))
+}
+
 /// O hook do `/mr` digitado no terminal: sem pré-voo para estes arquivos, bloqueia.
 /// Qualquer erro deixa passar: o hook nunca trava o Claude.
 pub fn gate(id: &str, root: &Path, snapshot: &str, prompt: &str) -> Option<String> {
+    const PENDING: &str = "Pré-voo pendente para estes arquivos. Abra a aba MR da feature no Maestro (Ctrl+Shift+E → MR) e rode o pré-voo; ele manda o /mr quando passar.";
     if !is_mr(prompt) {
         return None;
     }
-    let now = tree(root, snapshot)?;
-    let stamped = std::fs::read_to_string(feature::preflight_file(id)).unwrap_or_default();
-    (stamped.trim() != now).then(|| {
-        "Pré-voo pendente para estes arquivos. Abra a aba MR da feature no Maestro (Ctrl+Shift+E → MR) e rode o pré-voo; ele manda o /mr quando passar.".to_string()
-    })
+    let stamps = std::fs::read_to_string(feature::preflight_file(id)).unwrap_or_default();
+    let Some((repo, stamped)) = stamped_for(&stamps, root, prompt) else {
+        return Some(PENDING.into());
+    };
+    let now = if repo == root {
+        tree(root, snapshot)?
+    } else {
+        tree(&repo, &feature::snapshot(&repo).ok()?)?
+    };
+    (stamped != now).then(|| PENDING.into())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{forbidden, is_mr, is_secret, secrets, sonar_reply};
+    use super::{
+        forbidden, is_mr, is_secret, path_from, restamp, secrets, sonar_reply, stamped_for,
+    };
     use crate::diff::parse;
+    use std::path::Path;
+    use std::process::Command;
+
+    #[test]
+    fn path_do_shell_do_usuario() {
+        let dir = std::env::temp_dir().join(format!("maestro-sh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("zsh");
+        // um shell que imprime lixo do .zshrc antes, como o p10k
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\necho bem-vindo\nPATH=/opt/nvm/bin:/usr/bin sh -c \"$2\"\n",
+        )
+        .unwrap();
+        Command::new("chmod").arg("+x").arg(&fake).status().unwrap();
+        assert_eq!(
+            path_from(fake.to_str().unwrap()).as_deref(),
+            Some("/opt/nvm/bin:/usr/bin")
+        );
+        assert_eq!(path_from("/nao/existe"), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pedido_de_correcao_leva_o_log() {
+        let mut lint = super::check(super::State::Fail, "npm run -s lint: 1 erro");
+        lint.log = (1..=50)
+            .map(|i| format!("l{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        lint.log = super::tail(&lint.log, 40);
+        let skip = super::check(super::State::Fail, "nada");
+        let p = super::fix_prompt(&[
+            ("Lint e typecheck", &lint),
+            ("Nenhum segredo no diff", &skip),
+        ]);
+        assert!(p.contains("## Lint e typecheck\nnpm run -s lint: 1 erro\n```\nl11\n"));
+        assert!(p.contains("l50\n```") && !p.contains("l10\n"));
+        assert!(p.contains("## Nenhum segredo no diff\nnada\n\nCorrija"));
+    }
+
+    #[test]
+    fn carimbo_por_repo() {
+        let (a, b) = (Path::new("/w/nfs"), Path::new("/w/atlantis"));
+        let s = restamp("", a, "t1");
+        let s = restamp(&s, b, "t2");
+        let s = restamp(&s, a, "t3");
+        assert_eq!(s, "/w/atlantis\tt2\n/w/nfs\tt3\n");
+        assert_eq!(stamped_for(&s, a, "/mr"), Some((a.into(), "t3".into())));
+        assert_eq!(
+            stamped_for(&s, a, "/mr no repositório /w/atlantis"),
+            Some((b.into(), "t2".into()))
+        );
+        assert_eq!(
+            stamped_for("velho\n", a, "/mr"),
+            Some((a.into(), "velho".into()))
+        );
+        assert_eq!(stamped_for("/w/atlantis\tt2\n", a, "/mr"), None);
+    }
 
     #[test]
     fn segredo_no_diff_barra() {

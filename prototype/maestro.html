@@ -115,6 +115,11 @@ body.resizing{cursor:col-resize;user-select:none}
 .flist .st{font:11px var(--mono);color:var(--muted)}
 .flist .st.d{color:var(--draft)}
 .flist .none{padding:6px 12px;color:var(--muted);font-size:12px}
+.rrepos{display:flex;gap:2px;padding:4px 6px 0;background:#191a21;border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;flex:none}
+.rrepos::-webkit-scrollbar{display:none}
+.rrepos{scrollbar-width:none}
+.rrepos button{padding:4px 10px;border-radius:5px 5px 0 0;font:12px var(--mono);color:var(--muted)}
+.rrepos button[aria-selected="true"]{background:var(--panel);color:var(--fg)}
 .flist .fname{padding:2px 8px}
 .flist .fname input{width:100%;background:var(--win);border:1px solid var(--accent);border-radius:4px;color:var(--fg);font:12px var(--mono);padding:2px 6px;outline:none}
 .fmenu{position:fixed;z-index:60;min-width:160px;background:var(--raise);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);padding:4px;display:grid}
@@ -1265,7 +1270,16 @@ function startResize(e,kind,box){
 function armDrawer(box){ if(!box||box.querySelector(':scope>.rz')) return; if(S.dw) box.style.width=S.dw+'px'; const h=document.createElement('div'); h.className='rz'; h.title='Arraste para mudar a largura'; h.onmousedown=e=>startResize(e,'D',box); box.prepend(h); }
 function openFile(p){ S.open=S.open||[]; if(!S.open.includes(p)) S.open.push(p); S.armed=null; S.right=true; S.rtab='file'; S.file=p; renderFrame(); renderRight(); renderLeft(); setTimeout(()=>$('#code')&&$('#code').focus()); }
 function toggleRight(){ if(S.mode!=='feat') return; S.right=!S.right; renderFrame(); renderRight(); }
-function renderRight(){
+function renderRight(){ renderRight0(); repoStrip(); }
+function repoStrip(){ const el=$('#right'), f=feat(); if(S.mode!=='feat'||!S.right||!f.repos||!el.firstChild) return;
+  const all=[{name:REPO,files:f.changes.length,mr:f.mr}].concat(f.repos.map(r=>({name:r.name,files:r.files}))); const cur=(S.rrepo||{})[f.id]||0;
+  el.insertAdjacentHTML('afterbegin',`<div class="rrepos" role="tablist" aria-label="Repositórios da sessão">${all.map((r,i)=>`<button role="tab" aria-selected="${i===cur}" data-rr="${i}"><span class="cm">⎇</span> ${r.name} <span class="muted">· ${r.files} arq · ${r.mr?`!${r.mr.iid} ${r.mr.pipe==='success'?'<span style="color:var(--ok)">✓</span>':r.mr.pipe==='failed'?'<span style="color:var(--bad)">✗</span>':'⟳'}`:'sem MR'}</span></button>`).join('')}</div>`);
+  el.querySelectorAll('[data-rr]').forEach(b=>b.onclick=()=>{ S.rrepo=S.rrepo||{}; S.rrepo[f.id]=+b.dataset.rr; renderRight(); });
+  if(cur===0) return; const r=all[cur], tabs=el.querySelector('.rtabs'); while(tabs.nextSibling) tabs.nextSibling.remove();
+  if(S.rtab==='mr') tabs.insertAdjacentHTML('afterend',`<div class="empty"><h3>${esc(f.branch)} em ${r.name} ainda não tem MR</h3><p>Vai ao mesmo Claude: <span class="mono">/mr no repositório ~/repos-ctbz/${r.name}</span>.</p>${r.files?'<div><button class="btn pri" id="rrMr">Abrir MR draft com /mr</button></div>':'<p class="muted">Nada mudou neste repositório.</p>'}</div>`);
+  else tabs.insertAdjacentHTML('afterend',r.files?`<div class="diff"><div class="fh"><span class="p">.gitlab-ci.yml</span><span class="sp"></span><span class="plus">+1</span><span class="minus">−0</span></div><div class="hh">@@ -12,3 +12,4 @@</div><div class="dl"><span class="o">12</span><span class="nn">12</span><span class="sg"> </span><span class="cd">variables:</span></div><div class="dl add"><span class="o"></span><span class="nn">13</span><span class="sg">+</span><span class="cd">  SLACK_TIMEOUT_MS: "10000"</span></div></div>`:`<div class="empty"><h3>Nada mudou em ${r.name}</h3><p>A sessão leu este repositório, mas ainda não editou nada nele.</p></div>`);
+  const m=$('#rrMr'); if(m) m.onclick=()=>{ f.tab=0; push(f,'u',`> /mr no repositório ~/repos-ctbz/${r.name}`); toast(`/mr de ${r.name} enviado ao Claude de ${f.branch}`); }; }
+function renderRight0(){
   const el=$('#right'); if(S.mode!=='feat'||!S.right){ el.innerHTML=''; return; }
   const f=feat(), ws=f.kind==='ws';
   if(S.rtab==='vault') S.rtab='review';
@@ -1286,7 +1300,7 @@ function renderRight(){
     else setTimeout(paintBlame);
   } else if(S.rtab==='hist' && S.file){ el.innerHTML=tabs+renderHist(); bindHist(el); }
   else if(S.rtab==='prob'){ el.innerHTML=tabs+renderProb(); el.querySelectorAll('[data-pb]').forEach(b=>b.onclick=()=>{ const p=problems()[+b.dataset.pb]; S.gotoLn=p.ln; openFile(p.file); }); }
-  else if(S.rtab==='mr'){ el.innerHTML=tabs+renderMRTab(f); bindMRTab(el,f); }
+  else if(S.rtab==='mr'){ el.innerHTML=tabs+renderMRTab(f); bindMRTab(el,f); bindMRTab2(el,f); }
   else if(ws){ el.innerHTML=tabs+'<div class="empty"><h3>Terminal fora de repositório</h3><p>Aqui não há mudanças nem MR para revisar.</p></div>'; }
   else {
     const turns=f.turns||[], tsel=S.turn&&S.turn!=='all'?+S.turn:null;
@@ -1982,7 +1996,7 @@ function bindGraph(root){
 const mrSum=m=>m?` · !${m.iid} ${m.merged?'<span class="ok">mergeado</span>':`<span class="${m.pipe==='success'?'ok':m.pipe==='failed'?'bad':'run'}">CI${m.pipe==='success'?'✓':m.pipe==='failed'?'✗':'⟳'}</span> <span class="${m.sonar==='ok'?'ok':m.sonar==='fail'?'bad':'run'}">Sonar${m.sonar==='ok'?'✓':m.sonar==='fail'?'✗':'⟳'}</span>${m.comments.filter(c=>!c.sent).length?` <span class="w8">${m.comments.filter(c=>!c.sent).length} coment.</span>`:''}`}`:'';
 function renderMRTab(f){
   const m=f.mr;
-  if(!m) return `<div class="empty"><h3>${f.branch} ainda não tem MR</h3><p>O <span class="mono">/mr</span> commita, faz push e abre o MR em draft. Depois disso o pipeline, o Sonar e os comentários aparecem aqui.</p><div><button class="btn pri" id="mrOpen">Abrir MR draft com /mr</button></div></div>`;
+  if(!m) return `<div class="empty"><h3>${f.branch} ainda não tem MR</h3><p>O <span class="mono">/mr</span> commita, faz push e abre o MR em draft. Depois disso o pipeline, o Sonar e os comentários aparecem aqui.</p>${pfCard(f)}${S.pf&&S.pf[f.id]?'':'<div><button class="btn pri" id="mrOpen">Abrir MR draft com /mr</button></div>'}</div>`;
   const pend=m.comments.filter(c=>!c.sent);
   return `<div class="diff" style="font-family:var(--sans);padding:12px;display:grid;gap:12px;align-content:start">
     <div class="card2"><h4>!${m.iid} · ${esc(f.branch)} → main<span class="sp"></span><button class="btn" id="mrWeb">Abrir no GitLab</button></h4>${m.merged?'<p class="okc2">Mergeado. Histórico do vault atualizado.</p>':''}</div>
@@ -1991,12 +2005,30 @@ function renderMRTab(f){
     <div class="card2"><h4>Comentários de revisores<span class="sp"></span>${pend.length?`<button class="btn pri" id="mrCom">Mandar ${pend.length} pro Claude (/comentario)</button>`:''}</h4>${m.comments.length?m.comments.map(c=>`<div class="thr ${c.sent?'sent':''}" style="margin:0;max-width:none"><div class="th"><b>${c.who}</b><span class="mono">${c.where}</span><span class="sp"></span>${c.sent?'enviado ao Claude':''}</div><div class="bd"><p>${md(c.body)}</p></div></div>`).join(''):'<p class="muted">Nenhum ainda.</p>'}</div>
     ${m.merged?`<div class="acts"><button class="btn danger" id="mrRm">Remover worktree</button></div>`:`<div class="acts"><button class="btn" id="mrMerge">Simular merge</button><span class="muted">protótipo: no app isso vem do GitLab</span></div>`}</div>`;
 }
+const PF_ITEMS=['Branch atualizada com a base','Testes afetados','Lint e typecheck','Sonar local','Nenhum segredo no diff','Nenhum arquivo proibido'];
+function pfCard(f){ const pf=S.pf&&S.pf[f.id]; if(!pf) return '';
+  const g={run:['⟳','var(--yellow)'],ok:['✓','var(--ok)'],fail:['✗','var(--bad)'],skip:['–','var(--muted)']};
+  const rows=PF_ITEMS.map((n,i)=>{ const c=pf[i]; return `<div style="display:flex;gap:8px;text-align:left"><span style="width:12px;color:${g[c.st][1]}">${g[c.st][0]}</span><span style="display:grid;min-width:0"><span style="${c.st==='fail'?'color:var(--bad)':''}">${n}</span><span class="mono muted" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.d)}</span></span></div>`; }).join('');
+  const done=pf.every(c=>c.st!=='run'), failed=pf.some(c=>c.st==='fail');
+  return `<div class="card2" style="text-align:left;margin-top:8px"><h4>Pré-voo</h4>${rows}${done&&failed?`<div class="acts"><button class="btn pri" id="pfFix">Pedir ao Claude para corrigir</button><button class="btn" id="pfAgain">Rodar de novo</button><button class="btn danger" id="pfOver">Abrir mesmo assim</button></div><p class="muted" style="font-size:12px">O Claude recebe o comando que falhou e o fim da saída; o MR só abre quando você mandar.</p>`:''}</div>`; }
+function runPf(f){ S.pf=S.pf||{}; S.pf[f.id]=PF_ITEMS.map(()=>({st:'run',d:''})); renderRight();
+  const res=[['ok','em dia com origin/main'],['ok','npx vitest related --run src/slack.ts'],['fail',"npm run -s lint: src/slack.ts:2:11 'timeout' is assigned a value but never used"],['skip','nenhum arquivo que o Sonar analise'],['ok','nenhum token ou chave nas linhas novas'],['ok','sem .env, build ou node_modules']];
+  res.forEach((r,i)=>setTimeout(()=>{ if(!S.pf[f.id]) return; S.pf[f.id][i]={st:r[0],d:r[1]}; renderRight(); },300+i*250)); }
 function bindMRTab(el,f){
   const b=(id,fn)=>{ const e=el.querySelector('#'+id); if(e) e.onclick=fn; };
-  b('mrOpen',()=>{ f.tab=0; push(f,'u','> /mr'); setSt(f,'working','abrindo MR'); f.verb='Commitando';
+  b('mrOpen',()=>runPf(f));
+  b('pfAgain',()=>runPf(f));
+  b('pfFix',()=>{ const fl=S.pf[f.id].map((c,i)=>[PF_ITEMS[i],c]).filter(x=>x[1].st==='fail'); S.pf[f.id]=null; f.tab=0;
+    push(f,'u',`> O pré-voo do MR falhou. ${fl.map(([n,c])=>`${n}: ${c.d}`).join(' · ')} — corrija e rode o comando de novo; não abra o MR.`); setSt(f,'working','corrigindo o pré-voo');
+    run(f,[[900,'dot','⏺ Update(src/slack.ts)'],[800,'dot','⏺ Bash(npm run -s lint)'],[700,'out','  ⎿  ok']],()=>{ setSt(f,'done','lint corrigido'); renderRight(); }); toast(`Falhas do pré-voo enviadas ao Claude de ${f.branch}`); renderRight(); });
+  b('pfOver',()=>{ S.pf[f.id]=null; openMrNow(f); });
+}
+function openMrNow(f){ { f.tab=0; push(f,'u','> /mr'); setSt(f,'working','abrindo MR'); f.verb='Commitando';
     run(f,[[800,'dot','⏺ Skill(mr)'],[900,'out','  ⎿  commit "feat: healthcheck com checagem do banco" · push origin '+f.branch],[900,'out','  ⎿  MR !149 aberto em draft']],()=>{ f.mr={iid:149,pipe:'running',sonar:'pending',comments:[]}; setSt(f,'done','MR !149 aberto'); renderRight();
       vlog('repos/bots-api.md · Histórico: MR !149 aberto',null);
-      setTimeout(()=>{ f.mr.pipe='success'; f.mr.sonar='ok'; renderLeft(); renderRight(); renderFrame(); },5000); }); renderRight(); });
+      setTimeout(()=>{ f.mr.pipe='success'; f.mr.sonar='ok'; renderLeft(); renderRight(); renderFrame(); },5000); }); renderRight(); } }
+function bindMRTab2(el,f){
+  const b=(id,fn)=>{ const e=el.querySelector('#'+id); if(e) e.onclick=fn; };
   b('mrWeb',()=>toast(`Abriria gitlab.com/ctbz/experts/bots/bots-api/-/merge_requests/${f.mr.iid}`));
   b('mrPipe',()=>{ f.tab=0; push(f,'u',`> /pipe https://gitlab.com/ctbz/experts/bots/bots-api/-/jobs/91822041`); setSt(f,'working','diagnosticando o CI'); f.verb='Lendo o log';
     run(f,[[900,'dot','⏺ Skill(pipe)'],[1000,'out','  ⎿  job test:unit: "Option --testPathPattern was replaced by --testPathPatterns"'],[800,'dotw','⏺ O jest 30 renomeou --testPathPattern para --testPathPatterns. O script test:unit do package.json usa o nome antigo. Quer que eu corrija?']],()=>{

@@ -52,6 +52,8 @@ pub struct Shell {
     want_merge: Option<(String, String, crate::mrs::MergeOpts, bool)>,
     merge_dlg: Option<Entity<confirm::MergeDlg>>,
     review: Option<Entity<Review>>,
+    /// os outros repos da sessão: a faixa acima do painel troca entre eles sem perder rascunhos
+    parked: Vec<Entity<Review>>,
     want_review: Option<Option<String>>,
     want_file: Option<String>,
     want_fs: Option<FsOp>,
@@ -413,6 +415,7 @@ impl Shell {
             want_merge: None,
             merge_dlg: None,
             review: None,
+            parked: Vec::new(),
             want_review: None,
             want_file: None,
             want_fs: None,
@@ -1200,89 +1203,30 @@ impl Shell {
             .review
             .as_ref()
             .is_some_and(|r| r.read(cx).root == root);
+        let repos = self
+            .sidebar
+            .as_ref()
+            .map(|s| s.read(cx).session_repos())
+            .unwrap_or_default();
+        let owner = repos.first().cloned().unwrap_or_else(|| root.clone());
         if !same {
-            let branch = herdr::branch(&root).unwrap_or_default();
-            let theme = self.theme.clone();
-            let anchors = self.anchors.clone();
-            let r = cx.new(|cx| Review::new(root.clone(), branch.clone(), theme, anchors, cx));
-            cx.observe(&r, |this, r, cx| {
-                // o arquivo aberto (e se está sujo) aparece marcado na aba Arquivos da lateral
-                let open = r.read(cx).current_file(cx);
-                if let Some(s) = &this.sidebar {
-                    s.update(cx, |s, cx| s.set_open(open, cx));
-                }
-                cx.notify();
-            })
-            .detach();
-            cx.subscribe_in(
-                &r,
-                window,
-                move |this, r, e: &review::Event, window, cx| match e {
-                    review::Event::Close => {
-                        this.review = None;
-                        window.focus(&this.terminal.read(cx).focus_handle(), cx);
-                        cx.notify();
-                    }
-                    review::Event::Toast(m, redo) => this.toast_undo(m.clone(), redo.clone(), cx),
-                review::Event::RunTests(cmd) => {
-                    let root = r.read(cx).root.clone();
-                    let Some(s) = this.sidebar.clone() else { return };
-                    let s = s.read(cx);
-                    let target = s
-                        .agents
-                        .iter()
-                        .find(|a| std::path::Path::new(&a.cwd).starts_with(&root))
-                        .map(|a| a.pane_id.clone());
-                    let (herdr, cmd) = (s.herdr(), cmd.clone());
-                    // um split embaixo do Claude da feature, como no protótipo
-                    std::thread::spawn(move || {
-                        let p = herdr.call(
-                            "pane.split",
-                            serde_json::json!({ "direction": "down", "cwd": root, "target_pane_id": target, "focus": false }),
-                        )?;
-                        let pane = p["pane"]["pane_id"].as_str().unwrap_or_default().to_string();
-                        herdr.call("pane.send_text", serde_json::json!({ "pane_id": pane, "text": format!("{cmd}\r") }))
-                    });
-                    this.toast("Testes afetados rodando num split".into(), cx);
-                }
-                    review::Event::Send(text) => {
-                        let root = r.read(cx).root.clone();
-                        this.ask_claude(
-                            &root,
-                            text.clone(),
-                            format!("Revisão enviada ao Claude de {branch}"),
-                            cx,
-                        )
-                    }
-                    review::Event::Ask(text, ok) => {
-                        let root = r.read(cx).root.clone();
-                        this.ask_claude(&root, text.clone(), ok.clone(), cx)
-                    }
-                    review::Event::Conclude => {
-                        let root = r.read(cx).root.clone();
-                        this.remove_feature_at(Some(root), None, window, cx)
-                    }
-                    review::Event::AskClaude(c) => this.open_ask(c.clone(), window, cx),
-                    review::Event::MrOpened => {
-                        if this.tour.is_none() && !tour::seen("mrtab") {
-                            this.tour = Some((tour::MRTAB, "mrtab", 0));
-                            cx.notify();
-                        }
-                    }
-                    review::Event::OpenMr(row) => {
-                        this.run(Cmd::Mrs, window, cx);
-                        if let Some(m) = this.mrs.clone() {
-                            m.update(cx, |m, cx| m.open_row(row.clone(), cx));
-                        }
-                    }
-                },
-            )
-            .detach();
+            let keep_mr = self.review.as_ref().is_some_and(|r| r.read(cx).on_mr());
+            if let Some(old) = self.review.take() {
+                self.parked.push(old);
+            }
+            let r = match self.parked.iter().position(|r| r.read(cx).root == root) {
+                Some(i) => self.parked.remove(i),
+                None => self.new_review(root.clone(), owner.clone(), window, cx),
+            };
+            if keep_mr {
+                r.update(cx, |r, cx| r.open_mr(cx));
+            }
             self.review = Some(r);
             if self.tour.is_none() && !tour::seen("review") {
                 self.tour = Some((tour::REVIEW, "review", 0));
             }
         }
+        self.sync_repos(window, cx);
         if let (Some(p), Some(r)) = (path, &self.review) {
             r.update(cx, |r, cx| r.show_file(p, cx));
         }
@@ -1291,6 +1235,135 @@ impl Shell {
             window.focus(&f, cx);
         }
         cx.notify();
+    }
+
+    /// Os outros repos da sessão ficam prontos para a faixa (diff e MR lidos em segundo plano).
+    fn sync_repos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.review.is_none() {
+            return;
+        }
+        let repos = self
+            .sidebar
+            .as_ref()
+            .map(|s| s.read(cx).session_repos())
+            .unwrap_or_default();
+        let before = self.parked.len();
+        self.parked.retain(|r| repos.contains(&r.read(cx).root));
+        let Some(owner) = repos.first().cloned().filter(|_| repos.len() > 1) else {
+            if self.parked.len() != before {
+                cx.notify();
+            }
+            return;
+        };
+        for repo in &repos {
+            let known = self
+                .review
+                .iter()
+                .chain(&self.parked)
+                .any(|r| r.read(cx).root == *repo);
+            if !known {
+                let r = self.new_review(repo.clone(), owner.clone(), window, cx);
+                r.update(cx, |r, cx| r.ensure_mr(cx));
+                self.parked.push(r);
+            }
+        }
+        if let Some(r) = &self.review {
+            r.update(cx, |r, cx| r.ensure_mr(cx));
+        }
+    }
+
+    fn new_review(
+        &mut self,
+        root: std::path::PathBuf,
+        owner: std::path::PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Review> {
+        let branch = herdr::branch(&root).unwrap_or_default();
+        let theme = self.theme.clone();
+        let anchors = self.anchors.clone();
+        let r = cx.new(|cx| {
+            let mut r = Review::new(root.clone(), branch.clone(), theme, anchors, cx);
+            r.owner = owner;
+            r
+        });
+        cx.observe(&r, |this, r, cx| {
+            if this.review.as_ref() != Some(&r) {
+                return cx.notify();
+            }
+            // o arquivo aberto (e se está sujo) aparece marcado na aba Arquivos da lateral
+            let open = r.read(cx).current_file(cx);
+            if let Some(s) = &this.sidebar {
+                s.update(cx, |s, cx| s.set_open(open, cx));
+            }
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe_in(
+            &r,
+            window,
+            move |this, r, e: &review::Event, window, cx| match e {
+                review::Event::Close => {
+                    this.review = None;
+                    window.focus(&this.terminal.read(cx).focus_handle(), cx);
+                    cx.notify();
+                }
+                review::Event::Toast(m, redo) => this.toast_undo(m.clone(), redo.clone(), cx),
+            review::Event::RunTests(cmd) => {
+                let root = r.read(cx).root.clone();
+                let Some(s) = this.sidebar.clone() else { return };
+                let s = s.read(cx);
+                let target = s
+                    .agents
+                    .iter()
+                    .find(|a| std::path::Path::new(&a.cwd).starts_with(&root))
+                    .map(|a| a.pane_id.clone());
+                let (herdr, cmd) = (s.herdr(), cmd.clone());
+                // um split embaixo do Claude da feature, como no protótipo
+                std::thread::spawn(move || {
+                    let p = herdr.call(
+                        "pane.split",
+                        serde_json::json!({ "direction": "down", "cwd": root, "target_pane_id": target, "focus": false }),
+                    )?;
+                    let pane = p["pane"]["pane_id"].as_str().unwrap_or_default().to_string();
+                    herdr.call("pane.send_text", serde_json::json!({ "pane_id": pane, "text": format!("{cmd}\r") }))
+                });
+                this.toast("Testes afetados rodando num split".into(), cx);
+            }
+                review::Event::Send(text) => {
+                    let (root, owner) = (r.read(cx).root.clone(), r.read(cx).owner.clone());
+                    this.ask_claude(
+                        &owner,
+                        review::for_repo(text, &root, &owner),
+                        format!("Revisão enviada ao Claude de {branch}"),
+                        cx,
+                    )
+                }
+                review::Event::Ask(text, ok) => {
+                    let (root, owner) = (r.read(cx).root.clone(), r.read(cx).owner.clone());
+                    this.ask_claude(&owner, review::for_repo(text, &root, &owner), ok.clone(), cx)
+                }
+                review::Event::Conclude => {
+                    let root = r.read(cx).root.clone();
+                    this.remove_feature_at(Some(root), None, window, cx)
+                }
+                review::Event::AskClaude(c) => this.open_ask(c.clone(), window, cx),
+                review::Event::MrOpened => {
+                    if this.tour.is_none() && !tour::seen("mrtab") {
+                        this.tour = Some((tour::MRTAB, "mrtab", 0));
+                        cx.notify();
+                    }
+                }
+                review::Event::OpenMr(row) => {
+                    this.run(Cmd::Mrs, window, cx);
+                    if let Some(m) = this.mrs.clone() {
+                        m.update(cx, |m, cx| m.open_row(row.clone(), cx));
+                    }
+                }
+            },
+        )
+        .detach();
+        r
     }
 
     fn mrs_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<MrsView> {
@@ -2387,6 +2460,63 @@ impl Shell {
         std::rc::Rc::new(std::cell::RefCell::new(map))
     }
 
+    /// A faixa de repos acima do painel quando a sessão mexeu em mais de um (extensão do protótipo).
+    fn repo_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let active = self.review.as_ref()?;
+        if self.parked.is_empty() {
+            return None;
+        }
+        let t = &self.theme;
+        let order = self
+            .sidebar
+            .as_ref()
+            .map(|s| s.read(cx).session_repos())
+            .unwrap_or_default();
+        let mut all: Vec<&Entity<Review>> = std::iter::once(active).chain(&self.parked).collect();
+        all.sort_by_key(|r| order.iter().position(|o| *o == r.read(cx).root));
+        let mut strip = div()
+            .flex()
+            .gap(px(2.))
+            .px(px(6.))
+            .pt(px(4.))
+            .flex_none()
+            .overflow_x_hidden()
+            .bg(rgb(0x191a21))
+            .border_b_1()
+            .border_color(t.line)
+            .font_family(t.mono.clone())
+            .text_size(px(12.5));
+        for (i, r) in all.into_iter().enumerate() {
+            let rv = r.read(cx);
+            let on = r == active;
+            let root = rv.root.clone();
+            let name = root
+                .file_name()
+                .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+            strip = strip.child(
+                div()
+                    .id(("repo", i))
+                    .flex()
+                    .flex_none()
+                    .gap(px(6.))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded_t(px(5.))
+                    .cursor_pointer()
+                    .text_color(if on { t.fg } else { t.muted })
+                    .when(on, |d| d.bg(t.panel))
+                    .when(!on, |d| d.hover(|d| d.bg(t.raise)))
+                    .child(div().text_color(t.comment).child("⎇"))
+                    .child(name)
+                    .child(div().text_color(t.muted).child(rv.badge(cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_review_at(root.clone(), None, window, cx)
+                    })),
+            );
+        }
+        Some(strip)
+    }
+
     fn kbd(&self, k: &str) -> Div {
         let t = &self.theme;
         div()
@@ -3306,6 +3436,7 @@ fn resize_edges() -> impl Iterator<Item = Div> {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_repos(window, cx);
         let t = self.theme.clone();
         self.window_active = window.is_window_active();
         self.maximized = window.is_maximized();
@@ -3610,6 +3741,7 @@ impl Render for Shell {
                                     && !self.in_db
                             })
                             .map(|r| {
+                                let strip = self.repo_strip(cx);
                                 div()
                                     .map(|d| match self.right_w {
                                         Some(w) => d.w(px(w)),
@@ -3624,9 +3756,12 @@ impl Render for Shell {
                                             .flex_1()
                                             .min_w_0()
                                             .h_full()
+                                            .flex()
+                                            .flex_col()
                                             .border_l_1()
                                             .border_color(t.line)
-                                            .child(r),
+                                            .children(strip)
+                                            .child(div().flex_1().min_h_0().child(r)),
                                     )
                             }),
                     )
