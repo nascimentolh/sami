@@ -694,7 +694,7 @@ const FX={main:{port:3000,cost:0,ctx:0,turns:[]},
   deps:{port:3003,cost:.09,ctx:12,turns:[{n:1,p:'atualiza jest e typescript'}],mr:{iid:148,pipe:'failed',job:'test:unit',sonar:'fail',sonarMsg:'cobertura do código novo em 71% (o gate pede 80%)',comments:[]}},
   home:{cost:0,ctx:0}};
 FEATS.forEach(f=>Object.assign(f,FX[f.id]));
-FEATS.find(f=>f.id==='health').jira={key:'PRD-171500',type:'Story',status:'Em andamento',squad:'Squad Bots',title:'Endpoint /health com checagem do banco',desc:'GET /health responde 200 com o banco de pé e 503 quando ele cair.',subs:[{key:'PRD-171501',type:'Desenvolvimento',title:'[bots-api] criar o endpoint /health com ping no banco',sp:2,status:'Em andamento'}],proposed:[{on:true,type:'Desenvolvimento',title:'[k8s-configmap] apontar o readiness para /health',sp:1},{on:false,type:'Subtarefa',title:'[uptime] cadastrar o monitor do /health',sp:1},{on:true,type:'Qualidade e Testes',title:'e2e',sp:1}]};
+FEATS.find(f=>f.id==='health').jira={key:'PRD-171500',type:'Story',status:'Em andamento',squad:'Squad Bots',title:'Endpoint /health com checagem do banco',desc:'GET /health responde 200 com o banco de pé e 503 quando ele cair.',subs:[{key:'PRD-171501',type:'Desenvolvimento',title:'[bots-api] criar o endpoint /health com ping no banco',sp:2,status:'Building'}],proposed:[{on:true,type:'Desenvolvimento',title:'[k8s-configmap] apontar o readiness para /health',sp:1},{on:false,type:'Subtarefa',title:'[uptime] cadastrar o monitor do /health',sp:1},{on:true,type:'Qualidade e Testes',title:'e2e',sp:1}]};
 D_HEALTH[0].turn=1; D_HEALTH[1].turn=2;
 setTimeout(()=>{
   WORKS.push(mkWork('maestro','~/test-repos','main',[{branch:'feat/abas-trabalho', dir:'~/test-repos/maestro.wt/feat-abas-trabalho', st:'working', msg:'editando src/shell.rs', t0:Date.now(), verb:'Pensando',
@@ -1156,9 +1156,9 @@ function newFeatureDlg(){
       <label class="fld" style="display:grid"><span>Modelos</span><select id="nfM"><option value="same">mesmo modelo</option><option value="mix">variar entre Opus e Sonnet</option></select></label></div>
     <div class="prev" id="nfPrev"></div>
     <fieldset><legend>Ao criar</legend>
-      <label><input type="checkbox" id="nfEnv" checked> Copiar <span class="mono">.env</span>, <span class="mono">.env.local</span> (ignorados pelo git)</label>
-      <label><input type="checkbox" id="nfCi" checked> Rodar <span class="mono">npm ci</span> <span class="muted">(setup do repo, vem do .maestro.toml)</span></label>
-      <label><input type="checkbox" id="nfCl" checked> Abrir o <span class="mono">claude</span> nessa worktree, <b>em modo plano</b> <span class="muted">(propõe o plano e, com issue, as sub-tasks; só implementa quando você aprovar)</span></label></fieldset>
+      <label><input type="checkbox" id="nfEnv" checked><span>Copiar <span class="mono">.env</span>, <span class="mono">.env.local</span> <span class="muted">(ignorados pelo git)</span></span></label>
+      <label><input type="checkbox" id="nfCi" checked><span>Rodar <span class="mono">npm ci</span> <span class="muted">(setup do repo, vem do .maestro.toml)</span></span></label>
+      <label><input type="checkbox" id="nfCl" checked><span>Abrir o <span class="mono">claude</span> em modo plano <span class="muted">(só implementa quando você aprovar o plano)</span></span></label></fieldset>
     <span class="err" id="nfErr" role="alert"></span>
     <div class="acts"><button type="button" class="btn" id="nfNo">Cancelar</button><button class="btn pri" id="nfOk">Criar <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div></form></div>`;
   const b=$('#nfB'); const prev=()=>{ const n=+$('#nfN').value, par=$('#nfPar').value, base=par?feat(par).branch:$('#nfBase').value, rps=[...document.querySelectorAll('[data-rp]:checked')].map(x=>x.dataset.rp);
@@ -2024,6 +2024,11 @@ function renderMRTab(f){
     ${m.merged?`<div class="acts"><button class="btn danger" id="mrRm">Remover worktree</button></div>`:`<div class="acts"><button class="btn" id="mrMerge">Simular merge</button><span class="muted">protótipo: no app isso vem do GitLab</span></div>`}</div>`;
 }
 const SUBTYPES=['Desenvolvimento','Subtarefa','Qualidade e Testes'];
+const FLOW={'Desenvolvimento':['To-do','Building','Code Review','Pull Request','Waiting Test','Ready to Test','Ready for Release','Concluído'],'Subtarefa':['To-do','Building','Concluído'],'Qualidade e Testes':['Tarefas pendentes','Em andamento','Teste','Archived']};
+const firstSt=t=>(FLOW[t]||FLOW.Desenvolvimento)[0];
+/* a sub-task de Desenvolvimento cujo título começa com [repo] vai para Pull Request quando o MR desse repo abre */
+function subsToPR(f,repo,iid){ const j=f.jira; if(!j) return; const hit=j.subs.filter(x=>x.type==='Desenvolvimento'&&x.title.startsWith(`[${repo}]`)&&FLOW.Desenvolvimento.indexOf(x.status)<FLOW.Desenvolvimento.indexOf('Pull Request'));
+  hit.forEach(x=>{ const was=x.status; x.status='Pull Request'; toast(`${x.key} → Pull Request (MR !${iid})`,{label:'Desfazer',run:()=>{ x.status=was; renderRight(); }}); }); }
 const JIRA_SEED={'PRD-171500':{type:'Story',title:'Paginação no GET /bots',crit:'page e size na query (máx. 100) e o total no header X-Total-Count'}};
 function renderCardTab(f){
   const j=f.jira;
@@ -2035,7 +2040,8 @@ function renderCardTab(f){
         <input id="cnTitle" placeholder="título do card" style="flex:1;min-width:160px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:4px 8px"><button class="btn" id="cnNew">Criar pelo Claude</button></div>
       <p class="muted" style="font-size:12px">O Claude cria no projeto PRD, com a sua squad, e vincula a esta feature.</p></div></div>`;
   const dirty=j.draftTitle!=null&&(j.draftTitle!==j.title||j.draftDesc!==j.desc);
-  const sub=x=>`<div style="display:grid;grid-template-columns:100px 120px minmax(0,1fr) 34px 110px;gap:8px;align-items:center;font-size:12.5px"><span class="mono" style="color:var(--accent)">${x.key}</span><span class="muted">${x.type}</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.title)}</span><span class="mono muted">${x.sp} SP</span><span class="muted">${x.status}</span></div>`;
+  const sub=(x,i)=>`<div style="display:grid;grid-template-columns:96px minmax(0,1fr) 40px 132px;gap:8px;align-items:center;font-size:12.5px"><span class="mono" style="color:var(--accent)">${x.key}</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(x.type)}">${esc(x.title)}</span><span class="mono muted">${x.sp} SP</span>
+    <select data-sst="${i}" aria-label="Status de ${x.key}" style="background:var(--win);border:1px solid var(--line);border-radius:4px;color:${x.status==='Pull Request'?'var(--accent)':/Concluído|Archived/.test(x.status)?'var(--ok)':'var(--fg)'};padding:2px 4px;font:12px var(--sans)">${(FLOW[x.type]||FLOW.Desenvolvimento).map(s=>`<option ${s===x.status?'selected':''}>${s}</option>`).join('')}</select></div>`;
   const inp='background:var(--win);border:1px solid var(--line);border-radius:4px;color:var(--fg);padding:2px 6px;font:12.5px var(--sans)';
   const prop=(x,i)=>`<div style="display:grid;grid-template-columns:16px 140px minmax(0,1fr) 52px 22px;gap:8px;align-items:center;${x.on?'':'opacity:.55'}">
     <input type="checkbox" data-pon="${i}" ${x.on?'checked':''} aria-label="Abrir esta sub-task">
@@ -2049,7 +2055,7 @@ function renderCardTab(f){
       <label class="fld" style="display:grid;gap:4px"><span class="muted" style="font-size:12px">Título</span><input id="cjT" value="${esc(j.draftTitle??j.title)}" style="${inp};font-size:13px;padding:5px 8px"></label>
       <label class="fld" style="display:grid;gap:4px"><span class="muted" style="font-size:12px">Descrição</span><textarea id="cjD" style="${inp};font-size:13px;padding:5px 8px;min-height:70px;resize:vertical">${esc(j.draftDesc??j.desc)}</textarea></label>
       <div class="acts"><button class="btn pri" id="cjSave" ${dirty?'':'disabled'}>Salvar no Jira</button><span class="muted" style="font-size:12px">${j.squad} · responsável: você</span></div></div>
-    <div class="card2"><h4>Sub-tasks<span class="sp"></span><span class="mono" style="letter-spacing:0">${j.subs.length}</span></h4>${j.subs.length?j.subs.map(sub).join(''):'<p class="muted">Nenhuma ainda.</p>'}</div>
+    <div class="card2"><h4>Sub-tasks<span class="sp"></span><span class="mono" style="letter-spacing:0">${j.subs.length}</span></h4>${j.subs.length?j.subs.map(sub).join('')+`<p class="muted" style="font-size:12px">Quando o MR de um repo abre, a sub-task de Desenvolvimento <span class="mono">[repo]</span> dele vai para <b>Pull Request</b> sozinha.</p>`:'<p class="muted">Nenhuma ainda.</p>'}</div>
     <div class="card2"><h4>Propostas pelo planejamento<span class="sp"></span><button class="btn" id="cjAdd">+ sub-task</button></h4>
       ${j.proposed&&j.proposed.length?j.proposed.map(prop).join('')+`<div class="acts"><button class="btn pri" id="cjOpen" ${n?'':'disabled'}>Abrir ${n} no Jira</button><span class="muted" style="font-size:12px">vai ao Claude como <span class="mono">/subtasks ${j.key}</span> só com as marcadas; a de testes sai com Envolvimento Testes → E2E</span></div>`
         :j.planning?'<p class="runc2">⟳ o Claude está planejando as sub-tasks…</p>':`<p class="muted">O plano da feature propõe as sub-tasks aqui; você marca quais abrir.</p><div class="acts"><button class="btn" id="cjAsk">Pedir ao Claude para propor sub-tasks</button></div>`}</div></div>`;
@@ -2070,6 +2076,7 @@ function bindCardTab(el,f){
   b('cjSave',()=>{ j.title=j.draftTitle; j.desc=j.draftDesc; j.draftTitle=j.draftDesc=null; toast(`Título e descrição salvos em ${j.key}`); renderRight(); });
   b('cjWeb',()=>toast(`Abriria o ${j.key} no Jira`));
   b('cjUnlink',()=>confirmDlg(`Desvincular ${j.key} de ${f.branch}?`,'O card continua no Jira; só a ligação com esta feature sai.','Desvincular',()=>{ f.jira=null; renderRight(); }));
+  el.querySelectorAll('[data-sst]').forEach(c=>c.onchange=()=>{ const x=j.subs[+c.dataset.sst], was=x.status; x.status=c.value; toast(`${x.key} → ${c.value}`,{label:'Desfazer',run:()=>{ x.status=was; renderRight(); }}); renderRight(); });
   el.querySelectorAll('[data-pon]').forEach(c=>c.onchange=()=>{ j.proposed[+c.dataset.pon].on=c.checked; renderRight(); });
   el.querySelectorAll('[data-pty]').forEach(c=>c.onchange=()=>{ j.proposed[+c.dataset.pty].type=c.value; });
   el.querySelectorAll('[data-pti]').forEach(c=>c.oninput=()=>{ j.proposed[+c.dataset.pti].title=c.value; });
@@ -2081,7 +2088,7 @@ function bindCardTab(el,f){
   b('cjOpen',()=>{ const go=j.proposed.filter(x=>x.on); if(!go.length) return; f.tab=0;
     push(f,'u',`> /subtasks ${j.key} Lista aprovada: ${go.map(x=>`${x.type} · ${x.title} · ${x.sp} SP`).join(' | ')}`); setSt(f,'working','abrindo sub-tasks'); f.verb='Criando';
     run(f,go.map(x=>[600,'dot',`⏺ jira - createJiraIssue (${x.type}: ${x.title})`]),()=>{
-      let k=171650; go.forEach(x=>j.subs.push({key:'PRD-'+(k++),type:x.type,title:x.title,sp:x.sp,status:'Tarefas pendentes'})); j.proposed=j.proposed.filter(x=>!x.on);
+      let k=171650; go.forEach(x=>j.subs.push({key:'PRD-'+(k++),type:x.type,title:x.title,sp:x.sp,status:firstSt(x.type)})); j.proposed=j.proposed.filter(x=>!x.on);
       setSt(f,'blocked','plano pronto: aprove para implementar'); toast(`${go.length} sub-tasks abertas em ${j.key}`); renderRight(); });
     toast(`/subtasks ${j.key} enviado ao Claude de ${f.branch} com ${go.length} sub-tasks`); renderRight(); });
 }
@@ -2104,7 +2111,7 @@ function bindMRTab(el,f){
   b('pfOver',()=>{ S.pf[f.id]=null; openMrNow(f); });
 }
 function openMrNow(f){ { f.tab=0; push(f,'u','> /mr'); setSt(f,'working','abrindo MR'); f.verb='Commitando';
-    run(f,[[800,'dot','⏺ Skill(mr)'],[900,'out','  ⎿  commit "feat: healthcheck com checagem do banco" · push origin '+f.branch],[900,'out','  ⎿  MR !149 aberto em draft']],()=>{ f.mr={iid:149,pipe:'running',sonar:'pending',comments:[]}; setSt(f,'done','MR !149 aberto'); renderRight();
+    run(f,[[800,'dot','⏺ Skill(mr)'],[900,'out','  ⎿  commit "feat: healthcheck com checagem do banco" · push origin '+f.branch],[900,'out','  ⎿  MR !149 aberto em draft']],()=>{ f.mr={iid:149,pipe:'running',sonar:'pending',comments:[]}; setSt(f,'done','MR !149 aberto'); subsToPR(f,REPO,149); renderRight();
       vlog('repos/bots-api.md · Histórico: MR !149 aberto',null);
       setTimeout(()=>{ f.mr.pipe='success'; f.mr.sonar='ok'; renderLeft(); renderRight(); renderFrame(); },5000); }); renderRight(); } }
 function bindMRTab2(el,f){
