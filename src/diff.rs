@@ -34,13 +34,13 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
 }
 
-/// Linhas do lado a lado como (velha, nova): cada sequência de `-` casa com a de `+` logo depois.
-pub fn side_by_side(lines: &[Line]) -> Vec<(Option<&Line>, Option<&Line>)> {
+/// Índices do lado a lado como (velha, nova): cada sequência de `-` casa com a de `+` logo depois.
+pub fn side_by_side(lines: &[Line]) -> Vec<(Option<usize>, Option<usize>)> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         if lines[i].kind == Kind::Context {
-            out.push((Some(&lines[i]), Some(&lines[i])));
+            out.push((Some(i), Some(i)));
             i += 1;
             continue;
         }
@@ -54,8 +54,8 @@ pub fn side_by_side(lines: &[Line]) -> Vec<(Option<&Line>, Option<&Line>)> {
             .count();
         for k in 0..dels.max(adds) {
             out.push((
-                (k < dels).then(|| &lines[i + k]),
-                (k < adds).then(|| &lines[i + dels + k]),
+                (k < dels).then_some(i + k),
+                (k < adds).then_some(i + dels + k),
             ));
         }
         i += dels + adds;
@@ -486,7 +486,10 @@ new file mode 100644
         ];
         let got: Vec<_> = side_by_side(&lines)
             .into_iter()
-            .map(|(a, b)| (a.map(|l| l.text.as_str()), b.map(|l| l.text.as_str())))
+            .map(|(a, b)| {
+                let t = |x: Option<usize>| x.map(|x| lines[x].text.as_str());
+                (t(a), t(b))
+            })
             .collect();
         assert_eq!(
             got,
