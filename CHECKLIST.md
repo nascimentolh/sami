@@ -320,6 +320,16 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] App: aba Card lendo e editando pelo MCP do Atlassian (vincular, criar, salvar, status das sub-tasks e Pull Request quando o MR do repo abre), propostas lidas do plano, `/subtasks` com a lista marcada — só testes de unidade (parsers do Jira, plano no JSONL, comando); falta o teste no app com o Jira real
 - Desvios do protótipo: tipo do card e das propostas trocam no clique (sem select); o status abre a lista das transições que o Jira permite agora, não o fluxo inteiro; sem "Desfazer" no toast do status; "Desvincular" sem confirmação; "+ sub-task" não foca a linha nova; o texto do criar não cita a squad; o card relê o Jira a cada 60 s (um `claude -p` com haiku)
 
+## Work item aberto pela auditoria
+
+- [x] Protótipo: work item aberto mostra o texto do GitLab e os comentários; Abrir no GitLab, Won't do (motivo opcional, label `wont-do`, fecha e entra no audit-ignore; desfazer e Reabrir), Comentar e Iterar com o Claude (nova Correção sugerida, Atualizar o work item ou Descartar)
+- [x] Ler o work item e as notas do GitLab ao abrir o achado
+- [x] Abrir no GitLab
+- [x] Won't do com motivo no diálogo, desfazer no toast e Reabrir
+- [x] Comentar
+- [x] Iterar com o Claude (só leitura) e Atualizar o work item (troca só a Correção sugerida e comenta)
+- [x] Teste no app com `glab` e `claude` falsos (Abrir no GitLab não clicado: abriria o navegador)
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)

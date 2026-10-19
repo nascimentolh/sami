@@ -1,7 +1,7 @@
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
-    form::{button, checkbox},
+    form::{TextField, button, checkbox},
     mrs::MergeOpts,
     theme::Theme,
 };
@@ -17,6 +17,8 @@ pub struct Confirm {
     text: String,
     ok: String,
     danger: bool,
+    /// campo opcional entre o texto e os botões (o motivo do won't do)
+    pub field: Option<Entity<TextField>>,
     focus: FocusHandle,
     theme: Theme,
 }
@@ -40,6 +42,7 @@ impl Confirm {
             text,
             ok: ok.into(),
             danger,
+            field: None,
             focus,
             theme,
         }
@@ -82,6 +85,11 @@ impl Render for Confirm {
                     .child(self.title.clone()),
             )
             .child(div().text_color(t.muted).child(self.text.clone()))
+            .children(
+                self.field
+                    .clone()
+                    .map(|f| div().min_h(px(64.)).text_size(px(13.5)).child(f)),
+            )
             .child(
                 div()
                     .flex()
