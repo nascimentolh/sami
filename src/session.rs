@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs::File,
     io::{BufRead, BufReader, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -24,6 +24,8 @@ struct Tracked {
     last_day: String,
     tokens: u64,
     one_million: bool,
+    /// arquivos que o Claude editou (Edit/Write/MultiEdit/NotebookEdit), caminho absoluto
+    edited: BTreeSet<String>,
 }
 
 /// Lê só o que foi acrescentado desde a última vez em cada arquivo.
@@ -31,6 +33,8 @@ struct Tracked {
 pub struct Sessions {
     files: HashMap<PathBuf, Tracked>,
     by_pane: HashMap<String, PathBuf>,
+    /// pasta → raiz do repo git dela (None: fora de repo)
+    roots: HashMap<PathBuf, Option<PathBuf>>,
 }
 
 /// `~/.claude/projects/<cwd com tudo que não é letra ou dígito trocado por ->`
@@ -72,6 +76,28 @@ impl Sessions {
         Some(found)
     }
 
+    /// Os repos em que o Claude do pane editou arquivo, na ordem do caminho (lido no último `usage`).
+    pub fn repos(&mut self, pane: &str) -> Vec<PathBuf> {
+        let Some(t) = self.by_pane.get(pane).and_then(|p| self.files.get(p)) else {
+            return Vec::new();
+        };
+        let dirs: BTreeSet<PathBuf> = t
+            .edited
+            .iter()
+            .filter_map(|f| Path::new(f).parent().map(Path::to_path_buf))
+            .collect();
+        let mut out: Vec<PathBuf> = Vec::new();
+        for d in dirs {
+            let root = self.roots.entry(d.clone()).or_insert_with(|| git_root(&d));
+            if let Some(r) = root
+                && !out.contains(r)
+            {
+                out.push(r.clone());
+            }
+        }
+        out
+    }
+
     pub fn usage(&mut self, home: &Path, pane: &str, cwd: &str, title: &str) -> Option<Usage> {
         let path = self.find(home, pane, cwd, title)?;
         let today = today();
@@ -104,6 +130,19 @@ impl Sessions {
     }
 }
 
+fn git_root(dir: &Path) -> Option<PathBuf> {
+    // a pasta pode ter sido apagada depois: sobe até achar uma que existe
+    let dir = dir.ancestors().find(|d| d.is_dir())?;
+    let o = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    o.status
+        .success()
+        .then(|| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+}
+
 fn read_line(t: &mut Tracked, line: &str) {
     let cost = line.contains("\"type\":\"cost-state\"");
     let assistant = line.contains("\"type\":\"assistant\"");
@@ -132,6 +171,18 @@ fn read_line(t: &mut Tracked, line: &str) {
             n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens");
         if tokens > 0 {
             t.tokens = tokens;
+        }
+        for c in v["message"]["content"].as_array().into_iter().flatten() {
+            let edit = matches!(
+                c["name"].as_str(),
+                Some("Edit" | "Write" | "MultiEdit" | "NotebookEdit")
+            );
+            let path = c["input"]["file_path"]
+                .as_str()
+                .or(c["input"]["notebook_path"].as_str());
+            if let (true, Some(p)) = (c["type"] == "tool_use" && edit, path) {
+                t.edited.insert(p.into());
+            }
         }
     }
 }
@@ -182,9 +233,36 @@ mod tests {
             r#"{"type":"assistant","message":{"usage":{"input_tokens":2,"cache_read_input_tokens":299998,"cache_creation_input_tokens":0}}}"#.into(),
             r#"{"type":"cost-state","totalCostUSD":12.5,"modelUsage":{"claude-x[1m]":{}}}"#.into(),
         ];
+        let (a, b) = (home.join("a"), home.join("b/src"));
+        for r in [&a, &home.join("b")] {
+            std::fs::create_dir_all(r).unwrap();
+            std::process::Command::new("git")
+                .arg("init")
+                .arg("-q")
+                .arg(r)
+                .status()
+                .unwrap();
+        }
+        std::fs::create_dir_all(&b).unwrap();
+        let edit = |tool: &str, p: &Path| {
+            format!(
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"{tool}","input":{{"file_path":"{}"}}}}]}}}}"#,
+                p.display()
+            )
+        };
+        let mut lines = lines.to_vec();
+        lines.push(edit("Edit", &b.join("x.ts")));
+        lines.push(edit("Write", &a.join("novo.ts")));
+        lines.push(edit("Read", &home.join("fora/y.ts")));
+        lines.push(edit("Edit", &b.join("z.ts")));
         std::fs::write(dir.join("a.jsonl"), lines.join("\n") + "\n").unwrap();
         let mut s = Sessions::default();
         let u = s.usage(&home, "p1", "/repo/x.y", "plano").unwrap();
+        let canon = |p: PathBuf| p.canonicalize().unwrap();
+        assert_eq!(
+            s.repos("p1").into_iter().map(canon).collect::<Vec<_>>(),
+            vec![canon(a.clone()), canon(home.join("b"))]
+        );
         assert_eq!(
             u,
             Usage {

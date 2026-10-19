@@ -302,6 +302,15 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - Desvios do protótipo: o "Ir para a linha" não mostra o intervalo (1–N); ao arrastar acende só a pasta sob o mouse (no vazio, a lista inteira, mais fraca); o termo achado só é marcado quando o minúsculo da linha tem o mesmo tamanho
 - Fora desta rodada: formatar, renomear símbolo (LSP), dobrar código, dividir o editor, Ctrl+D (o gpui-base não expõe adicionar seleção), multi-cursor por Ctrl+Alt+↑/↓ (o sistema pega o atalho)
 
+## Vários repos por sessão e pré-voo que pede ao Claude (extensão: o protótipo não cobre)
+
+- [x] Protótipo: faixa de repos no painel da direita e "Pedir ao Claude para corrigir" no pré-voo
+- [x] Pré-voo sem falha falsa: base main/master descoberta e PATH do zsh (nvm) nos comandos
+- [x] Sessão: repos tocados pelos Edit/Write do Claude + worktrees da feature multi-repo + teste
+- [x] Painel: uma revisão por repo, faixa para trocar (mantém aba e rascunhos), envio ao Claude certo com "No repositório …"
+- [x] Pré-voo: "Pedir ao Claude para corrigir" com o fim da saída; `/mr` de outro repo leva o caminho; gate aceita carimbo por repo + teste
+- [ ] Teste no app com dois repos descartáveis
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)

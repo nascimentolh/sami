@@ -45,6 +45,7 @@ fn yellow() -> Hsla {
 impl MrTab {
     pub fn new(
         root: PathBuf,
+        owner: PathBuf,
         branch: String,
         theme: Theme,
         anchors: Anchors,
@@ -75,7 +76,8 @@ impl MrTab {
                     .await;
             }
         });
-        let inv = feature::find_by_path(&root);
+        // o carimbo do pré-voo é da feature do Claude (o hook do /mr roda nela), mesmo para outro repo
+        let inv = feature::find_by_path(&owner);
         let sent = inv.as_ref().map_or_else(HashSet::new, |i| {
             feature::state_lines(&i.id, "sent")
                 .iter()
@@ -83,7 +85,15 @@ impl MrTab {
                 .collect()
         });
         Self {
-            base: inv.as_ref().map_or("main".into(), |i| i.base.clone()),
+            base: inv
+                .as_ref()
+                .filter(|_| owner == root)
+                .map(|i| i.base.clone())
+                .unwrap_or_else(|| {
+                    crate::diff::base(&root)
+                        .map(|b| b.trim_start_matches("origin/").to_string())
+                        .unwrap_or_else(|| "main".into())
+                }),
             feature_id: inv.map(|i| i.id),
             root,
             branch,
@@ -100,7 +110,8 @@ impl MrTab {
         self.checks = Some(vec![
             Check {
                 state: State::Run,
-                detail: String::new()
+                detail: String::new(),
+                log: String::new(),
             };
             preflight::ITEMS.len()
         ]);
@@ -258,6 +269,14 @@ impl MrTab {
                     .filter(|(_, c)| c.state == State::Fail)
                     .map(|(n, c)| format!("{n} ({})", c.detail))
                     .collect();
+                let fix = preflight::fix_prompt(
+                    &preflight::ITEMS
+                        .iter()
+                        .zip(checks)
+                        .filter(|(_, c)| c.state == State::Fail)
+                        .map(|(n, c)| (*n, c))
+                        .collect::<Vec<_>>(),
+                );
                 d.child(
                     div()
                         .flex()
@@ -265,7 +284,22 @@ impl MrTab {
                         .gap(px(8.))
                         .items_center()
                         .child(
-                            button(&t, "pf-again", "Rodar de novo", true)
+                            button(&t, "pf-fix", "Pedir ao Claude para corrigir", true).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.checks = None;
+                                    cx.emit(Event::Ask(
+                                        fix.clone(),
+                                        format!(
+                                            "Falhas do pré-voo enviadas ao Claude de {}",
+                                            this.branch
+                                        ),
+                                    ));
+                                    cx.notify();
+                                }),
+                            ),
+                        )
+                        .child(
+                            button(&t, "pf-again", "Rodar de novo", false)
                                 .on_click(cx.listener(|this, _, _, cx| this.preflight(cx))),
                         )
                         .child(

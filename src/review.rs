@@ -74,6 +74,8 @@ struct Draft {
 /// O painel "Revisar" do protótipo: o diff da feature contra a base, com aceitar, desfazer e comentar.
 pub struct Review {
     pub root: PathBuf,
+    /// a worktree do Claude da sessão: igual a `root`, ou outra quando ele editou este repo de fora
+    pub owner: PathBuf,
     branch: String,
     base: String,
     files: Option<Vec<FileDiff>>,
@@ -184,6 +186,7 @@ impl Review {
         Self {
             feature_id: feature::find_by_path(&root).map(|i| i.id),
             env_warn: Vec::new(),
+            owner: root.clone(),
             root,
             branch,
             base: "main".into(),
@@ -335,24 +338,54 @@ impl Review {
     /// A aba MR (o `S.rtab='mr'` do protótipo); o MR é lido só a partir daqui.
     pub fn open_mr(&mut self, cx: &mut Context<Self>) {
         self.tab = Tab::Mr;
+        self.ensure_mr(cx);
+        cx.emit(Event::MrOpened);
+        cx.notify();
+    }
+
+    /// Lê o MR sem trocar de aba: a faixa de repos mostra o MR de cada um.
+    pub fn ensure_mr(&mut self, cx: &mut Context<Self>) {
         if self.mr.is_none() {
-            let (root, branch, theme, anchors) = (
+            let (root, owner, branch, theme, anchors) = (
                 self.root.clone(),
+                self.owner.clone(),
                 self.branch.clone(),
                 self.theme.clone(),
                 self.anchors.clone(),
             );
-            let m = cx.new(|cx| MrTab::new(root, branch, theme, anchors, cx));
+            let m = cx.new(|cx| MrTab::new(root, owner, branch, theme, anchors, cx));
             cx.subscribe(&m, |_, _, e: &mr_tab::Event, cx| match e {
                 mr_tab::Event::Ask(t, ok) => cx.emit(Event::Ask(t.clone(), ok.clone())),
                 mr_tab::Event::Conclude => cx.emit(Event::Conclude),
                 mr_tab::Event::Toast(m) => cx.emit(Event::Toast(m.clone(), None)),
             })
             .detach();
+            cx.observe(&m, |_, _, cx| cx.notify()).detach();
             self.mr = Some(m);
         }
-        cx.emit(Event::MrOpened);
-        cx.notify();
+    }
+
+    /// O resumo do chip na faixa de repos: arquivos mudados e o MR (`· 3 arq · !276 ✓`).
+    pub fn badge(&self, cx: &App) -> String {
+        let files = self
+            .files
+            .as_ref()
+            .map_or(String::new(), |f| format!(" · {} arq", f.len()));
+        let mr = match self.mr.as_ref().and_then(|m| m.read(cx).fetch.clone()) {
+            Some(crate::mr::Fetch::Mr(m)) => format!(
+                " · !{} {}",
+                m.iid,
+                match m.pipe {
+                    crate::mr::Status::Ok => "✓",
+                    crate::mr::Status::Fail => "✗",
+                    crate::mr::Status::Running => "⟳",
+                    crate::mr::Status::None => "",
+                }
+            ),
+            Some(crate::mr::Fetch::NoMr) => " · sem MR".into(),
+            _ => String::new(),
+        };
+        format!("{files}{mr}")
     }
 
     /// Troca os erros de uma tarefa pelos da execução que acabou de terminar.
@@ -1886,5 +1919,47 @@ impl Render for Review {
                             ),
                     ),
             )
+    }
+}
+
+/// O texto que a revisão de `root` manda ao Claude que mora em `owner`. Comando com barra só vale
+/// no começo da mensagem: vira `/mr no repositório <root>`; o resto ganha o repo na frente.
+pub fn for_repo(text: &str, root: &std::path::Path, owner: &std::path::Path) -> String {
+    if root == owner {
+        return text.into();
+    }
+    let at = root.display();
+    match text.strip_prefix('/') {
+        Some(rest) => {
+            let (cmd, more) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            let more = more.trim();
+            if more.is_empty() {
+                format!("/{cmd} no repositório {at}")
+            } else {
+                format!("/{cmd} no repositório {at}. {more}")
+            }
+        }
+        None => format!("No repositório {at}:\n{text}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::for_repo;
+    use std::path::Path;
+
+    #[test]
+    fn texto_para_o_claude_de_outro_repo() {
+        let (a, b) = (Path::new("/w/nfs"), Path::new("/w/atlantis"));
+        assert_eq!(for_repo("/mr", a, a), "/mr");
+        assert_eq!(for_repo("/mr", b, a), "/mr no repositório /w/atlantis");
+        assert_eq!(
+            for_repo("/mr Registre o override.", b, a),
+            "/mr no repositório /w/atlantis. Registre o override."
+        );
+        assert_eq!(
+            for_repo("@src/x.ts:3 troca", b, a),
+            "No repositório /w/atlantis:\n@src/x.ts:3 troca"
+        );
     }
 }
