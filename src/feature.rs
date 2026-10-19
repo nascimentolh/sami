@@ -28,6 +28,8 @@ pub struct Inventory {
     /// MR empilhado: a feature mãe e o ponto dela de onde esta saiu
     #[serde(default)]
     pub parent: Option<Parent>,
+    #[serde(default)]
+    pub jira: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -63,6 +65,7 @@ pub struct Request {
     pub others: Vec<PathBuf>,
     /// "Em cima de": a mãe; `base` já vem com a branch dela
     pub parent: Option<Inventory>,
+    pub jira: Option<String>,
 }
 
 pub fn slug(s: &str) -> String {
@@ -136,6 +139,23 @@ pub fn save(inv: &Inventory) -> std::io::Result<()> {
     let tmp = dst.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string_pretty(inv)?)?;
     std::fs::rename(tmp, dst)
+}
+
+/// Vincula (ou desvincula, `None`) o card do Jira à feature.
+pub fn set_jira(id: &str, key: Option<String>) -> std::io::Result<()> {
+    let mut inv = inventories()
+        .into_iter()
+        .find(|i| i.id == id)
+        .ok_or_else(|| std::io::Error::other("feature sem inventário"))?;
+    inv.jira = key;
+    save(&inv)
+}
+
+/// O bloco que a aba Card lê para propor as sub-tasks (o padrão da skill `/subtasks`).
+pub fn subtasks_format(key: &str) -> String {
+    format!(
+        "um bloco ```subtasks com um array JSON          [{{\"type\":\"Desenvolvimento|Subtarefa|Qualidade e Testes\",\"title\":\"[sistema] o que fazer\",\"sp\":2}}]          com as sub-tasks de {key} no padrão do time: uma por sistema tocado, títulos em minúsculas com o prefixo [sistema],          sempre uma última Qualidade e Testes com o título e2e, SP em Fibonacci (1, 2, 3 ou 5). Não crie nada no Jira."
+    )
 }
 
 /// A primeira porta acima de 3000 que nenhuma feature usa (3000 fica com a main).
@@ -267,7 +287,7 @@ pub fn start_command(
         parts.push(s.to_string());
     }
     if req.claude {
-        let mut c = String::from("claude");
+        let mut c = String::from("claude --permission-mode plan");
         if let Some(m) = req.model {
             c.push_str(&format!(" --model {m}"));
         }
@@ -281,8 +301,16 @@ pub fn start_command(
             ));
         }
         if !req.prompt.trim().is_empty() {
+            let prompt = match &req.jira {
+                Some(k) => format!(
+                    "{} No fim do plano, inclua {}",
+                    req.prompt.trim(),
+                    subtasks_format(k)
+                ),
+                None => req.prompt.trim().to_string(),
+            };
             c.push(' ');
-            c.push_str(&sh_quote(req.prompt.trim()));
+            c.push_str(&sh_quote(&prompt));
         }
         parts.push(c);
     }
@@ -349,6 +377,7 @@ pub fn create(herdr: &Herdr, req: &Request, port: u16) -> Result<Option<String>,
                 .to_string(),
             base: m.parent.as_ref().map_or(m.base.clone(), |p| p.base.clone()),
         }),
+        jira: req.jira.clone(),
     };
     // grava antes do herdr: se algo falhar daqui em diante, a Limpeza ainda acha a worktree
     save(&inv).map_err(|e| e.to_string())?;
@@ -1205,6 +1234,7 @@ mod tests {
             group: None,
             others: Vec::new(),
             parent: None,
+            jira: None,
         }
     }
 
@@ -1223,19 +1253,41 @@ mod tests {
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
         assert_eq!(
             start_command(&req("faz X"), Some("npm ci"), None, &[]),
-            "npm ci; claude 'faz X'"
+            "npm ci; claude --permission-mode plan 'faz X'"
         );
         let mut r = req("");
         r.setup = false;
         r.model = Some("sonnet");
         assert_eq!(
             start_command(&r, Some("npm ci"), None, &[]),
-            "claude --model sonnet"
+            "claude --permission-mode plan --model sonnet"
         );
         assert_eq!(
             start_command(&r, None, Some(Path::new("/d/x.context.md")), &[]),
-            "claude --model sonnet --append-system-prompt \"$(cat '/d/x.context.md')\""
+            "claude --permission-mode plan --model sonnet --append-system-prompt \"$(cat '/d/x.context.md')\""
         );
+        let mut j = req("pagina");
+        j.setup = false;
+        j.jira = Some("PRD-1".into());
+        let cmd = start_command(&j, None, None, &[]);
+        assert!(cmd.starts_with("claude --permission-mode plan 'pagina No fim do plano"));
+        assert!(
+            cmd.contains("```subtasks")
+                && cmd.contains("de PRD-1 no padrão")
+                && !cmd.contains('\n')
+        );
+    }
+
+    #[test]
+    fn inventario_antigo_sem_jira() {
+        let old = r#"{"id":"x","repo":"/r","branch":"b","base":"main","worktrees":[],"port":3001,
+            "compose_project":"r-b","workspace_id":null,"created_at":1}"#;
+        let inv: Inventory = serde_json::from_str(old).unwrap();
+        assert_eq!(inv.jira, None);
+        let mut v = serde_json::to_value(&inv).unwrap();
+        v["jira"] = "PRD-1".into();
+        let inv: Inventory = serde_json::from_value(v).unwrap();
+        assert_eq!(inv.jira.as_deref(), Some("PRD-1"));
     }
 
     #[test]
@@ -1345,6 +1397,7 @@ mod tests {
             model: None,
             created_at: 0,
             parent: None,
+            jira: None,
         };
         assert_eq!(sibling_repos(&app), vec![k8s.clone()]);
         let extra = add_repo(&h, &mut inv, &k8s).unwrap();
@@ -1367,7 +1420,7 @@ mod tests {
                 None,
                 &[PathBuf::from("/r/k8s-configmap.wt/feat-x")]
             ),
-            "claude --add-dir '/r/k8s-configmap.wt/feat-x'"
+            "claude --permission-mode plan --add-dir '/r/k8s-configmap.wt/feat-x'"
         );
     }
 
@@ -1434,6 +1487,7 @@ mod tests {
             model: None,
             created_at: 0,
             parent: None,
+            jira: None,
         };
         run(
             &repo,

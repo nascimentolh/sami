@@ -3,6 +3,7 @@ use std::{collections::HashSet, path::PathBuf, time::Duration};
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
+    card_tab::CardTab,
     diff::{self, FileDiff, Kind},
     editor::{self, FileEditor},
     feature,
@@ -16,6 +17,7 @@ use crate::{
 enum Tab {
     Review,
     Mr,
+    Card,
     File,
     Prob,
     /// "Histórico" do arquivo da aba da frente
@@ -60,6 +62,8 @@ pub enum Event {
     AskClaude(crate::ask::Ctx),
     /// "Abrir MR" do blame: abre no modo MRs
     OpenMr(crate::mrs::Row),
+    /// o MR deste repo abriu (iid): a sub-task de Desenvolvimento dele vai para Pull Request
+    MrOpenedIid(u64),
 }
 
 struct Draft {
@@ -103,6 +107,8 @@ pub struct Review {
     close_armed: Option<String>,
     hist: Option<Hist>,
     mr: Option<Entity<MrTab>>,
+    /// o card do Jira da sessão (um só para todos os repos dela)
+    card: Option<Entity<CardTab>>,
     /// os erros da última execução de cada tarefa (a aba Problemas junta com os do LSP)
     task_probs: Vec<(String, crate::tasks::Problem)>,
     /// `S.rtab` do protótipo
@@ -208,6 +214,7 @@ impl Review {
             close_armed: None,
             hist: None,
             mr: None,
+            card: None,
             task_probs: Vec::new(),
             tab: Tab::Review,
             focus: cx.focus_handle(),
@@ -343,6 +350,15 @@ impl Review {
         cx.notify();
     }
 
+    pub fn set_card(&mut self, card: Entity<CardTab>, cx: &mut Context<Self>) {
+        cx.observe(&card, |_, _, cx| cx.notify()).detach();
+        self.card = Some(card);
+    }
+
+    pub fn card(&self) -> Option<&Entity<CardTab>> {
+        self.card.as_ref()
+    }
+
     /// Lê o MR sem trocar de aba: a faixa de repos mostra o MR de cada um.
     pub fn ensure_mr(&mut self, cx: &mut Context<Self>) {
         if self.mr.is_none() {
@@ -358,6 +374,7 @@ impl Review {
                 mr_tab::Event::Ask(t, ok) => cx.emit(Event::Ask(t.clone(), ok.clone())),
                 mr_tab::Event::Conclude => cx.emit(Event::Conclude),
                 mr_tab::Event::Toast(m) => cx.emit(Event::Toast(m.clone(), None)),
+                mr_tab::Event::Opened(iid) => cx.emit(Event::MrOpenedIid(*iid)),
             })
             .detach();
             cx.observe(&m, |_, _, cx| cx.notify()).detach();
@@ -1634,6 +1651,25 @@ impl Render for Review {
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| this.open_mr(cx))),
             )
+            .when_some(
+                self.card.as_ref().map(|c| c.read(cx).label()),
+                |d, (key, n)| {
+                    d.child(
+                        tab("rt-card", "Card", self.tab == Tab::Card)
+                            .cursor_pointer()
+                            .when_some(key, |d, k| {
+                                d.child(div().font_family(t.mono.clone()).child(k))
+                            })
+                            .when(n > 0, |d| {
+                                d.child(div().text_color(rgb(0xf1fa8c)).child(n.to_string()))
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.tab = Tab::Card;
+                                cx.notify();
+                            })),
+                    )
+                },
+            )
             .child(
                 div()
                     .id("rt-files")
@@ -1691,6 +1727,20 @@ impl Render for Review {
                 .text_size(px(14.))
                 .child(tabs)
                 .child(self.problems_list(probs, cx));
+        }
+        let card_body = self.card.clone().filter(|_| self.tab == Tab::Card);
+        if let Some(c) = card_body {
+            return div()
+                .track_focus(&self.focus)
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(t.win)
+                .text_color(t.fg)
+                .font_family(t.sans)
+                .text_size(px(14.))
+                .child(tabs)
+                .child(c);
         }
         let mr_body = self.mr.clone().filter(|_| self.tab == Tab::Mr);
         if let Some(m) = mr_body {

@@ -242,6 +242,8 @@ impl NewFeature {
             [None; 3]
         };
         let prompt = self.prompt.read(cx).value.clone();
+        let key = self.jira.read(cx).value.trim().to_uppercase();
+        let key = jira::is_key(&key).then_some(key);
         let reqs: Vec<Request> = (0..n)
             .map(|i| Request {
                 repo: self.repo.clone(),
@@ -260,6 +262,7 @@ impl NewFeature {
                 // ponytail: outros repos entram depois, pela paleta ("Feature: adicionar repo…")
                 others: Vec::new(),
                 parent: self.mother().filter(|_| n == 1).cloned(),
+                jira: key.clone(),
             })
             .collect();
         let ports = self.ports(n);
@@ -641,7 +644,12 @@ impl Render for NewFeature {
                                 .gap(px(4.))
                                 .child("Abrir o")
                                 .child(mono("claude".into()))
-                                .child("nessa worktree"),
+                                .child("em modo plano")
+                                .child(
+                                    div()
+                                        .text_color(t.muted)
+                                        .child("(só implementa quando você aprovar o plano)"),
+                                ),
                             true,
                             cx,
                         ),

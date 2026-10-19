@@ -4,6 +4,7 @@ mod audit_view;
 mod binds;
 mod blame;
 mod braille;
+mod card_tab;
 mod changes;
 mod cleanup;
 mod compare;

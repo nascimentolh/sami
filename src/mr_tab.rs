@@ -16,6 +16,8 @@ pub enum Event {
     Ask(String, String),
     Conclude,
     Toast(String),
+    /// o MR do repo abriu enquanto a aba existia (iid)
+    Opened(u64),
 }
 
 /// A aba MR da feature (`renderMRTab` do protótipo), com o pré-voo antes do `/mr`.
@@ -63,6 +65,9 @@ impl MrTab {
                 if this
                     .update(cx, |this, cx| {
                         if this.fetch.as_ref() != Some(&f) {
+                            if let (Some(Fetch::NoMr), Fetch::Mr(m)) = (&this.fetch, &f) {
+                                cx.emit(Event::Opened(m.iid));
+                            }
                             this.fetch = Some(f);
                             cx.notify();
                         }
