@@ -309,7 +309,7 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] Sessão: repos tocados pelos Edit/Write do Claude + worktrees da feature multi-repo + teste
 - [x] Painel: uma revisão por repo, faixa para trocar (mantém aba e rascunhos), envio ao Claude certo com "No repositório …"
 - [x] Pré-voo: "Pedir ao Claude para corrigir" com o fim da saída; `/mr` de outro repo leva o caminho; gate aceita carimbo por repo + teste
-- [ ] Teste no app com dois repos descartáveis
+- [x] Teste no app com dois repos descartáveis (o gate do `/mr` por repo só nos testes: o teste não tinha feature do Maestro)
 
 ## Backlog (não entra sem decisão)
 
