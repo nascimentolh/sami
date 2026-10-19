@@ -5,6 +5,7 @@ use std::time::Duration;
 use crate::{
     ask::{AskEvent, AskView, KEvent, KcmdView},
     audit_view::{self, AuditView},
+    card_tab::{self, CardTab},
     changes,
     cleanup::{self, Cleanup},
     compare::{self, Attempt, Compare},
@@ -54,6 +55,8 @@ pub struct Shell {
     review: Option<Entity<Review>>,
     /// os outros repos da sessão: a faixa acima do painel troca entre eles sem perder rascunhos
     parked: Vec<Entity<Review>>,
+    /// o card do Jira de cada sessão (a worktree do Claude dela), comum a todos os repos
+    cards: std::collections::HashMap<std::path::PathBuf, Entity<CardTab>>,
     want_review: Option<Option<String>>,
     want_file: Option<String>,
     want_fs: Option<FsOp>,
@@ -416,6 +419,7 @@ impl Shell {
             merge_dlg: None,
             review: None,
             parked: Vec::new(),
+            cards: Default::default(),
             want_review: None,
             want_file: None,
             want_fs: None,
@@ -1239,6 +1243,14 @@ impl Shell {
 
     /// Os outros repos da sessão ficam prontos para a faixa (diff e MR lidos em segundo plano).
     fn sync_repos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // o card sem painel algum para de reler o Jira
+        let owners: Vec<_> = self
+            .review
+            .iter()
+            .chain(&self.parked)
+            .map(|r| r.read(cx).owner.clone())
+            .collect();
+        self.cards.retain(|o, _| owners.contains(o));
         if self.review.is_none() {
             return;
         }
@@ -1247,6 +1259,9 @@ impl Shell {
             .as_ref()
             .map(|s| s.read(cx).session_repos())
             .unwrap_or_default();
+        if let Some(r) = &self.review {
+            r.update(cx, |r, cx| r.ensure_mr(cx));
+        }
         let before = self.parked.len();
         self.parked.retain(|r| repos.contains(&r.read(cx).root));
         let Some(owner) = repos.first().cloned().filter(|_| repos.len() > 1) else {
@@ -1267,9 +1282,23 @@ impl Shell {
                 self.parked.push(r);
             }
         }
-        if let Some(r) = &self.review {
-            r.update(cx, |r, cx| r.ensure_mr(cx));
+    }
+
+    /// O card da sessão: um por worktree do Claude; o pedido vai direto a ele, sem o "No repositório …".
+    fn card_for(&mut self, owner: &std::path::Path, cx: &mut Context<Self>) -> Entity<CardTab> {
+        if let Some(c) = self.cards.get(owner) {
+            return c.clone();
         }
+        let theme = self.theme.clone();
+        let c = cx.new(|cx| CardTab::new(owner.to_path_buf(), theme, cx));
+        let o = owner.to_path_buf();
+        cx.subscribe(&c, move |this, _, e: &card_tab::Event, cx| match e {
+            card_tab::Event::Ask(text, ok) => this.ask_claude(&o, text.clone(), ok.clone(), cx),
+            card_tab::Event::Toast(m) => this.toast(m.clone(), cx),
+        })
+        .detach();
+        self.cards.insert(owner.to_path_buf(), c.clone());
+        c
     }
 
     fn new_review(
@@ -1282,9 +1311,11 @@ impl Shell {
         let branch = herdr::branch(&root).unwrap_or_default();
         let theme = self.theme.clone();
         let anchors = self.anchors.clone();
+        let card = self.card_for(&owner, cx);
         let r = cx.new(|cx| {
             let mut r = Review::new(root.clone(), branch.clone(), theme, anchors, cx);
             r.owner = owner;
+            r.set_card(card, cx);
             r
         });
         cx.observe(&r, |this, r, cx| {
@@ -1352,6 +1383,20 @@ impl Shell {
                     if this.tour.is_none() && !tour::seen("mrtab") {
                         this.tour = Some((tour::MRTAB, "mrtab", 0));
                         cx.notify();
+                    }
+                }
+                review::Event::MrOpenedIid(iid) => {
+                    let (root, owner) = (r.read(cx).root.clone(), r.read(cx).owner.clone());
+                    // o prefixo [repo] das sub-tasks é o nome do repo, não o da worktree
+                    let repo = crate::feature::find_by_path(&root)
+                        .and_then(|i| i.worktrees.into_iter().find(|w| root.starts_with(&w.path)))
+                        .map_or(root.clone(), |w| w.repo);
+                    let name = repo
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if let Some(c) = this.cards.get(&owner).cloned() {
+                        c.update(cx, |c, cx| c.mr_opened(&name, *iid, cx));
                     }
                 }
                 review::Event::OpenMr(row) => {
@@ -1457,6 +1502,7 @@ impl Shell {
             group: None,
             others: Vec::new(),
             parent: None,
+            jira: None,
         };
         let used: Vec<u16> = feature::inventories().iter().map(|i| i.port).collect();
         let port = feature::next_port(&used);
@@ -3437,6 +3483,15 @@ fn resize_edges() -> impl Iterator<Item = Div> {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_repos(window, cx);
+        if let (Some(c), Some(s)) = (
+            self.review
+                .as_ref()
+                .and_then(|r| r.read(cx).card().cloned()),
+            &self.sidebar,
+        ) {
+            let plan = s.read(cx).session_proposals();
+            c.update(cx, |c, cx| c.offer(plan, cx));
+        }
         let t = self.theme.clone();
         self.window_active = window.is_window_active();
         self.maximized = window.is_maximized();

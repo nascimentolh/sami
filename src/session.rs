@@ -6,7 +6,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use serde::Deserialize;
 use serde_json::Value;
+
+/// Sub-task proposta pelo plano (o bloco ```subtasks do ExitPlanMode).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Proposal {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub title: String,
+    pub sp: f64,
+}
 
 /// Custo e contexto de uma sessão do Claude Code, lidos do JSONL que ele mesmo grava.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -26,6 +36,8 @@ struct Tracked {
     one_million: bool,
     /// arquivos que o Claude editou (Edit/Write/MultiEdit/NotebookEdit), caminho absoluto
     edited: BTreeSet<String>,
+    /// o último plano com sub-tasks e quantos já vieram
+    plan: Option<(u64, Vec<Proposal>)>,
 }
 
 /// Lê só o que foi acrescentado desde a última vez em cada arquivo.
@@ -96,6 +108,14 @@ impl Sessions {
             }
         }
         out
+    }
+
+    pub fn proposals(&self, pane: &str) -> Option<(u64, Vec<Proposal>)> {
+        self.by_pane
+            .get(pane)
+            .and_then(|p| self.files.get(p))?
+            .plan
+            .clone()
     }
 
     pub fn usage(&mut self, home: &Path, pane: &str, cwd: &str, title: &str) -> Option<Usage> {
@@ -183,8 +203,25 @@ fn read_line(t: &mut Tracked, line: &str) {
             if let (true, Some(p)) = (c["type"] == "tool_use" && edit, path) {
                 t.edited.insert(p.into());
             }
+            // o plano vem no ExitPlanMode; o "Pedir ao Claude para propor" pode voltar em texto
+            let plan = match c["name"].as_str() {
+                Some("ExitPlanMode") => c["input"]["plan"].as_str(),
+                _ => c["text"].as_str().filter(|_| c["type"] == "text"),
+            };
+            if let Some(subs) = plan.and_then(subtasks) {
+                let n = t.plan.as_ref().map_or(0, |p| p.0) + 1;
+                t.plan = Some((n, subs));
+            }
         }
     }
+}
+
+/// O último bloco ```subtasks do plano.
+fn subtasks(plan: &str) -> Option<Vec<Proposal>> {
+    let start = plan.rfind("```subtasks")? + "```subtasks".len();
+    let body = &plan[start..];
+    let body = &body[..body.find("```").unwrap_or(body.len())];
+    serde_json::from_str(body.trim()).ok()
 }
 
 /// Data UTC de hoje como `AAAA-MM-DD` (os timestamps do JSONL são UTC).
@@ -255,9 +292,42 @@ mod tests {
         lines.push(edit("Write", &a.join("novo.ts")));
         lines.push(edit("Read", &home.join("fora/y.ts")));
         lines.push(edit("Edit", &b.join("z.ts")));
+        let plan = |p: &str| {
+            serde_json::json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"ExitPlanMode","input":{"plan":p}}]}})
+                .to_string()
+        };
+        lines.push(plan("só o plano, sem sub-tasks"));
+        lines.push(plan(
+            "velho\n```subtasks\n[{\"type\":\"Subtarefa\",\"title\":\"[x] y\",\"sp\":1}]\n```",
+        ));
+        lines.push(
+            serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"```subtasks\n[]\n```"}]}})
+                .to_string(),
+        );
+        lines.push(plan(
+            "Plano\n```subtasks\n[{\"type\":\"Desenvolvimento\",\"title\":\"[bots-api] paginar\",\"sp\":2},\
+             {\"type\":\"Qualidade e Testes\",\"title\":\"e2e\",\"sp\":1}]\n```\nfim",
+        ));
         std::fs::write(dir.join("a.jsonl"), lines.join("\n") + "\n").unwrap();
         let mut s = Sessions::default();
         let u = s.usage(&home, "p1", "/repo/x.y", "plano").unwrap();
+        let (n, subs) = s.proposals("p1").unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(
+            subs,
+            vec![
+                Proposal {
+                    kind: "Desenvolvimento".into(),
+                    title: "[bots-api] paginar".into(),
+                    sp: 2.
+                },
+                Proposal {
+                    kind: "Qualidade e Testes".into(),
+                    title: "e2e".into(),
+                    sp: 1.
+                }
+            ]
+        );
         let canon = |p: PathBuf| p.canonicalize().unwrap();
         assert_eq!(
             s.repos("p1").into_iter().map(canon).collect::<Vec<_>>(),

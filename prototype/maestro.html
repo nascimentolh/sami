@@ -694,6 +694,7 @@ const FX={main:{port:3000,cost:0,ctx:0,turns:[]},
   deps:{port:3003,cost:.09,ctx:12,turns:[{n:1,p:'atualiza jest e typescript'}],mr:{iid:148,pipe:'failed',job:'test:unit',sonar:'fail',sonarMsg:'cobertura do código novo em 71% (o gate pede 80%)',comments:[]}},
   home:{cost:0,ctx:0}};
 FEATS.forEach(f=>Object.assign(f,FX[f.id]));
+FEATS.find(f=>f.id==='health').jira={key:'PRD-171500',type:'Story',status:'Em andamento',squad:'Squad Bots',title:'Endpoint /health com checagem do banco',desc:'GET /health responde 200 com o banco de pé e 503 quando ele cair.',subs:[{key:'PRD-171501',type:'Desenvolvimento',title:'[bots-api] criar o endpoint /health com ping no banco',sp:2,status:'Building'}],proposed:[{on:true,type:'Desenvolvimento',title:'[k8s-configmap] apontar o readiness para /health',sp:1},{on:false,type:'Subtarefa',title:'[uptime] cadastrar o monitor do /health',sp:1},{on:true,type:'Qualidade e Testes',title:'e2e',sp:1}]};
 D_HEALTH[0].turn=1; D_HEALTH[1].turn=2;
 setTimeout(()=>{
   WORKS.push(mkWork('maestro','~/test-repos','main',[{branch:'feat/abas-trabalho', dir:'~/test-repos/maestro.wt/feat-abas-trabalho', st:'working', msg:'editando src/shell.rs', t0:Date.now(), verb:'Pensando',
@@ -1061,6 +1062,7 @@ function renderCenter(){
   if(el.querySelector('[data-task]')) el.querySelector('[data-task]').onclick=()=>openPal('cmd','Tarefa: ');
   if(el.querySelector('[data-dev]')) el.querySelector('[data-dev]').onclick=()=>toast(`Abriria http://localhost:${f.port} (servidor de dev de ${f.branch})`);
   el.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>answer(f,+b.dataset.p));
+  el.querySelectorAll('[data-pl]').forEach(b=>b.onclick=()=>planAnswer(f,+b.dataset.pl));
   el.querySelectorAll('.tbody').forEach(tb=>tb.scrollTop=tb.scrollHeight);
   el.querySelectorAll('.pane').forEach(p=>p.onclick=e=>{ if(getSelection().toString()||e.target.closest('button')) return; const t=+p.dataset.t; if(f.tab!==t){ f.tab=t; renderCenter(); } focusTerm(); });
   el.querySelectorAll('.tin-in').forEach(i=>{ const t=i.dataset.t; if(keep[t]) i.value=keep[t]; i.onkeydown=e=>termKey(e,f,+t,i); });
@@ -1070,7 +1072,8 @@ function paneHtml(f,i,unf){
   const t=f.tabs[i]; let body, input;
   if(t.k==='claude'){
     body = t.lines.map(l=> l.c==='cc' ? `<div class="cc"><span>✻ <b class="w">Claude Code</b></span><span class="w">  cwd: ${esc(l.dir)}</span><span>  skills: /mr /comentario /pipe · MCP: sonarqube, ripwire</span><span>  vault: repos/bots-api.md + 2 decisões no contexto</span></div>` : `<div class="${l.c}">${esc(l.t)}</div>`).join('');
-    if (f.st==='blocked') body+=`<div class="perm" role="group" aria-label="Pedido de permissão"><span class="h">Bash command</span><span class="cmd">  ${esc(f.ask)}</span><span class="out">  Roda os testes do client do Slack</span><span style="margin-top:4px">Do you want to proceed?</span>
+    if (f.st==='blocked'&&f.planned) body+=`<div class="perm" role="group" aria-label="Aprovar o plano"><span class="h">Ready to code?</span><span class="out">  Aqui está o plano. ${f.jira?`As sub-tasks propostas para ${f.jira.key} estão na aba Card do Maestro.`:''}</span><span style="margin-top:4px">Would you like to proceed?</span><button class="on" data-pl="1">❯ 1. Yes, and auto-accept edits</button><button data-pl="2">  2. No, keep planning</button></div>`;
+    else if (f.st==='blocked') body+=`<div class="perm" role="group" aria-label="Pedido de permissão"><span class="h">Bash command</span><span class="cmd">  ${esc(f.ask)}</span><span class="out">  Roda os testes do client do Slack</span><span style="margin-top:4px">Do you want to proceed?</span>
       <button class="on" data-p="1">❯ 1. Yes</button><button data-p="2">  2. Yes, and don't ask again for npm test commands</button><button data-p="3">  3. No, and tell Claude what to do differently (esc)</button></div>`;
     if (f.st==='working') body+=`<div class="think" id="thinking">✻ ${f.verb||'Trabalhando'}… (${Math.floor((Date.now()-f.t0)/1000)}s · esc para interromper)</div>`;
     input=`<div class="tin"><span>&gt;</span><input class="tin-in" data-t="${i}" aria-label="Mensagem para o Claude em ${f.branch}" autocomplete="off" placeholder="${f.st==='blocked'?'responda 1, 2 ou 3 acima':f.st==='working'?'enfileirar mensagem…':'Try &quot;cria um teste para src/health.ts&quot;'}"></div><div class="tfoot"><span class="${f.ctx>=80?'warn':''}">${f.ctx>=80?`contexto ${f.ctx}%: vai compactar em breve`:'? for shortcuts'}</span><span>PORT=${f.port} · ${f.dir}</span></div>`;
@@ -1085,6 +1088,7 @@ function termKey(e,f,t,inp){
   if(e.ctrlKey&&e.key==='a'){ e.preventDefault(); S.prefix=true; renderCenter(); return; }
   const tab=f.tabs[t];
   if(tab.k==='claude'){
+    if(f.st==='blocked'&&f.planned&&!inp.value&&['1','2'].includes(e.key)){ e.preventDefault(); planAnswer(f,+e.key); return; }
     if(f.st==='blocked'&&!inp.value&&['1','2','3'].includes(e.key)){ e.preventDefault(); answer(f,+e.key); return; }
     if(e.ctrlKey&&e.key==='c'){ e.preventDefault(); if(!interrupt(f)) inp.value=''; return; }
     if(e.key==='Enter'&&inp.value.trim()){ const q=inp.value.trim(); inp.value=''; ask(f,q); }
@@ -1138,8 +1142,9 @@ setInterval(()=>{ const t=$('#thinking'); const f=feat(); if(t&&f&&f.st==='worki
 
 /* ---------- nova feature / remover ---------- */
 const slug = b => b.replace(/[^a-zA-Z0-9._-]+/g,'-');
+let NFJ=null;
 function newFeatureDlg(){
-  OV={type:'dlg',ok:createFeature};
+  NFJ=null; OV={type:'dlg',ok:createFeature};
   $('#overlay').innerHTML=`<div class="scrim"><form class="dlg" id="nf" role="dialog" aria-label="Nova feature">
     <h3>Nova feature em ${REPO}</h3>
     <label class="fld" style="display:grid"><span>Issue do Jira (opcional: preenche branch e tarefa)</span><input type="text" id="nfJ" placeholder="ex.: PRD-171500" autocomplete="off"></label><span class="jira" id="nfJi"></span>
@@ -1151,9 +1156,9 @@ function newFeatureDlg(){
       <label class="fld" style="display:grid"><span>Modelos</span><select id="nfM"><option value="same">mesmo modelo</option><option value="mix">variar entre Opus e Sonnet</option></select></label></div>
     <div class="prev" id="nfPrev"></div>
     <fieldset><legend>Ao criar</legend>
-      <label><input type="checkbox" id="nfEnv" checked> Copiar <span class="mono">.env</span>, <span class="mono">.env.local</span> (ignorados pelo git)</label>
-      <label><input type="checkbox" id="nfCi" checked> Rodar <span class="mono">npm ci</span> <span class="muted">(setup do repo, vem do .maestro.toml)</span></label>
-      <label><input type="checkbox" id="nfCl" checked> Abrir o <span class="mono">claude</span> nessa worktree</label></fieldset>
+      <label><input type="checkbox" id="nfEnv" checked><span>Copiar <span class="mono">.env</span>, <span class="mono">.env.local</span> <span class="muted">(ignorados pelo git)</span></span></label>
+      <label><input type="checkbox" id="nfCi" checked><span>Rodar <span class="mono">npm ci</span> <span class="muted">(setup do repo, vem do .maestro.toml)</span></span></label>
+      <label><input type="checkbox" id="nfCl" checked><span>Abrir o <span class="mono">claude</span> em modo plano <span class="muted">(só implementa quando você aprovar o plano)</span></span></label></fieldset>
     <span class="err" id="nfErr" role="alert"></span>
     <div class="acts"><button type="button" class="btn" id="nfNo">Cancelar</button><button class="btn pri" id="nfOk">Criar <kbd style="background:transparent;color:inherit;border-color:currentColor">Ctrl+⏎</kbd></button></div></form></div>`;
   const b=$('#nfB'); const prev=()=>{ const n=+$('#nfN').value, par=$('#nfPar').value, base=par?feat(par).branch:$('#nfBase').value, rps=[...document.querySelectorAll('[data-rp]:checked')].map(x=>x.dataset.rp);
@@ -1162,7 +1167,7 @@ function newFeatureDlg(){
   b.oninput=prev; $('#nfBase').onchange=prev; $('#nfN').onchange=prev; $('#nfPar').onchange=prev; document.querySelectorAll('[data-rp]').forEach(c=>c.onchange=prev); prev(); $('#nfJ').focus();
   $('#nfJ').onchange=()=>{ const k=$('#nfJ').value.trim().toUpperCase(); if(!/^[A-Z][A-Z0-9]+-\d+$/.test(k)){ $('#nfJi').textContent=k?'Formato esperado: PROJ-123':''; return; }
     $('#nfJi').textContent='buscando no Jira…'; setTimeout(()=>{ const J={'PRD-171500':{type:'Story',title:'Paginação no GET /bots',crit:'page e size na query (máx. 100) e o total no header X-Total-Count'}}, info=J[k]||{type:'Task',title:'Issue do Jira',crit:'os critérios de aceite da issue'};
-      $('#nfJi').textContent=`✓ ${k} · ${info.type} · ${info.title} (MCP Atlassian)`; const s2=info.title.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+      NFJ={key:k,...info}; $('#nfJi').textContent=`✓ ${k} · ${info.type} · ${info.title} (MCP Atlassian)`; const s2=info.title.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
       if(!b.value||b.value==='feat/') b.value=`feat/${k}-${slug(s2).slice(0,28).replace(/-+$/,'')}`; if(!$('#nfP').value) $('#nfP').value=`Implementar ${k}: ${info.title}.\nCritérios: ${info.crit}.\nLeia a issue no Jira antes de começar e não commite.`; prev(); },500); };
   $('#nfNo').onclick=closeOverlay; $('#nf').onsubmit=e=>{ e.preventDefault(); createFeature(); };
 }
@@ -1170,10 +1175,10 @@ function createFeature(){
   const br=$('#nfB').value.trim(), base=$('#nfBase').value, p=$('#nfP').value.trim(), env=$('#nfEnv').checked, ci=$('#nfCi').checked, cl=$('#nfCl').checked;
   if(!br || br.endsWith('/')){ $('#nfErr').textContent='Dê um nome à branch, ex.: feat/paginacao-bots'; return; }
   if(FEATS.some(f=>f.branch===br)){ $('#nfErr').textContent=`Já existe uma feature em ${br}. Escolha outro nome ou abra a existente.`; return; }
-  const n=+$('#nfN').value, mix=$('#nfM').value==='mix', par=$('#nfPar').value||null, repos=[...document.querySelectorAll('[data-rp]:checked')].map(x=>({name:x.dataset.rp,files:0}));
+  const n=+$('#nfN').value, mix=$('#nfM').value==='mix', par=$('#nfPar').value||null, repos=[...document.querySelectorAll('[data-rp]:checked')].map(x=>({name:x.dataset.rp,files:0})), jira=NFJ&&$('#nfJ').value.trim().toUpperCase()===NFJ.key?NFJ:null;
   closeOverlay();
   if(n>1){ const models=mix?['Opus','Sonnet','Opus 1M']:['Opus','Opus','Opus']; ['a','b','c'].slice(0,n).forEach((x,i)=>spawnFeature(`${br}-${x}`,base,p,env,ci,cl,{group:br,model:models[i],variant:i})); toast(`${n} tentativas de ${br} em paralelo. A fila avisa quando der para comparar.`); return; }
-  spawnFeature(br,par?feat(par).branch:base,p,env,ci,cl,{parent:par,repos:repos.length?repos:null});
+  spawnFeature(br,par?feat(par).branch:base,p,env,ci,cl,{parent:par,repos:repos.length?repos:null,jira});
 }
 const VARIANTS=[
   {approach:'Offset (page/size) com total via COUNT(*). Mais simples; o COUNT pesa em tabela grande.',tests:'16/16',lines:["router.get('/bots', async (req, res) => {","  const { page = 1, size = 20 } = req.query","  const [rows, total] = await bots.page(+page, Math.min(+size, 100))","  res.set('X-Total-Count', String(total)).json(rows)","})"]},
@@ -1183,7 +1188,7 @@ const nextPort=()=>Math.max(...FEATS.map(x=>x.port||3000))+1;
 function spawnFeature(br,base,p,env,ci,cl,o){
   o=o||{}; const dir=WT+slug(br), V=VARIANTS[o.variant||0];
   const f={id:'f'+Date.now()+Math.random().toString(36).slice(2,5), branch:br, dir, st:'working', msg:'preparando worktree', ago:'agora', changes:[], tab:0, t0:Date.now(), verb:'Preparando',
-    port:nextPort(), cost:0, ctx:3, turns:[], group:o.group||null, model:o.model||'Opus', approach:V.approach, tests:V.tests, parent:o.parent||null, repos:o.repos||null,
+    port:nextPort(), cost:0, ctx:3, turns:[], jira:o.jira?{key:o.jira.key,type:o.jira.type,status:'Em andamento',squad:'Squad Bots',title:o.jira.title,desc:o.jira.crit,subs:[]}:null, group:o.group||null, model:o.model||'Opus', approach:V.approach, tests:V.tests, parent:o.parent||null, repos:o.repos||null,
     term:[{c:'ps',t:`$ herdr worktree create --branch ${br} --base ${base}`}]};
   mkTabs(f);
   if(f.parent){ let i=FEATS.indexOf(feat(f.parent))+1; while(FEATS[i]&&FEATS[i].parent===f.parent) i++; FEATS.splice(i,0,f); } else FEATS.splice(FEATS.findIndex(x=>x.kind==='ws'),0,f);
@@ -1198,10 +1203,21 @@ function spawnFeature(br,base,p,env,ci,cl,o){
     if(!cl){ f.st='idle'; f.msg='worktree pronta'; f.term.push({c:'ps',t:'$ █'}); render(); toast(`Feature ${br} criada`); return; }
     f.term.push(ccHead(dir));
     if(!p){ f.st='idle'; f.msg='claude aberto, sem tarefa'; render(); focusTerm(); toast(`Feature ${br} criada. O Claude está esperando.`); return; }
-    f.term.push({c:'u',t:'> '+p}); f.verb='Pensando'; f.msg='lendo o código'; const turn=newTurn(f,p); render();
+    f.term.push({c:'dim',t:'⏸ plan mode on (shift+tab to cycle)'},{c:'u',t:'> '+p}); f.verb='Planejando'; f.msg='planejando'; render();
+    run(f,[[900,'dot','⏺ Read(src/routes/bots.ts)','Lendo'],[700,'dot','⏺ Read(src/repositories/bots.ts)','Lendo'],[900,'dotw','⏺ Plano: paginar o GET /bots no repositório e expor o total no header; ajustar a lista do admin.'],
+      ...(f.jira?[[400,'out',`  ⎿  Sub-tasks propostas para ${f.jira.key}: 4 (veja na aba Card do Maestro)`]]:[])],()=>{
+      if(f.jira) f.jira.proposed=proposeFor(f);
+      f.planned=p; setSt(f,'blocked','plano pronto: aprove para implementar');
+      toast(`Plano de ${br} pronto${f.jira?' · sub-tasks propostas na aba Card':''}`,f.jira?{label:'Ver card',run:()=>{ S.right=true; S.rtab='card'; renderFrame(); renderRight(); }}:null); });
+  });
+}
+function proposeFor(f){ return [{on:true,type:'Desenvolvimento',title:'[bots-api] paginar o get /bots com total no header',sp:2},{on:true,type:'Desenvolvimento',title:'[bots-admin] usar a paginação na lista de bots',sp:3},{on:false,type:'Subtarefa',title:'[gateway] subir o limite de tamanho da resposta',sp:1},{on:true,type:'Qualidade e Testes',title:'e2e',sp:1}]; }
+function planAnswer(f,n){ if(n===1){ const p=f.planned; f.planned=null; f.st='working'; implementFeature(f,{p}); return; } f.planned=null; f.term.push({c:'u',t:'> 2'},{c:'dotw',t:'⏺ Ok, sigo planejando. O que ajusto no plano?'}); setSt(f,'idle','planejando'); }
+function implementFeature(f,o){ o=o||{}; const V=VARIANTS[o.variant||0], p=o.p||'';
+  { f.term.push({c:'u',t:'> 1'}); f.verb='Pensando'; f.msg='implementando o plano'; const turn=newTurn(f,p); render();
     run(f,[[1200+(o.variant||0)*500,'dot','⏺ Read(src/routes/bots.ts)','Lendo'],[700,'dot','⏺ Update(src/routes/bots.ts)','Escrevendo'],[1300,'dot','⏺ Bash(npm test)','Testando'],[900,'out',`  ⎿  Tests: ${V.tests}`],[600,'dotw','⏺ '+V.approach]],()=>{
       f.changes=[{path:'src/routes/bots.ts',turn,hunks:[{h:'@@ -12,3 +12,5 @@',l:V.lines.map((x,i)=>['+',0,12+i,x])}]}]; f.cost+=.25+(o.variant||0)*.08; setSt(f,'done','pronto pra revisar'); });
-  });
+  }
 }
 function removeFeatureDlg(f){
   f=f||feat(); if(f.id==='main'||f.kind==='ws'){ toast(f.kind==='ws'?'Este é o terminal da home; feche abas com Ctrl+A x':'A main é o checkout principal e não pode ser removida'); return; }
@@ -1275,7 +1291,7 @@ function repoStrip(){ const el=$('#right'), f=feat(); if(S.mode!=='feat'||!S.rig
   const all=[{name:REPO,files:f.changes.length,mr:f.mr}].concat(f.repos.map(r=>({name:r.name,files:r.files}))); const cur=(S.rrepo||{})[f.id]||0;
   el.insertAdjacentHTML('afterbegin',`<div class="rrepos" role="tablist" aria-label="Repositórios da sessão">${all.map((r,i)=>`<button role="tab" aria-selected="${i===cur}" data-rr="${i}"><span class="cm">⎇</span> ${r.name} <span class="muted">· ${r.files} arq · ${r.mr?`!${r.mr.iid} ${r.mr.pipe==='success'?'<span style="color:var(--ok)">✓</span>':r.mr.pipe==='failed'?'<span style="color:var(--bad)">✗</span>':'⟳'}`:'sem MR'}</span></button>`).join('')}</div>`);
   el.querySelectorAll('[data-rr]').forEach(b=>b.onclick=()=>{ S.rrepo=S.rrepo||{}; S.rrepo[f.id]=+b.dataset.rr; renderRight(); });
-  if(cur===0) return; const r=all[cur], tabs=el.querySelector('.rtabs'); while(tabs.nextSibling) tabs.nextSibling.remove();
+  if(cur===0||S.rtab==='card') return; const r=all[cur], tabs=el.querySelector('.rtabs'); while(tabs.nextSibling) tabs.nextSibling.remove();
   if(S.rtab==='mr') tabs.insertAdjacentHTML('afterend',`<div class="empty"><h3>${esc(f.branch)} em ${r.name} ainda não tem MR</h3><p>Vai ao mesmo Claude: <span class="mono">/mr no repositório ~/repos-ctbz/${r.name}</span>.</p>${r.files?'<div><button class="btn pri" id="rrMr">Abrir MR draft com /mr</button></div>':'<p class="muted">Nada mudou neste repositório.</p>'}</div>`);
   else tabs.insertAdjacentHTML('afterend',r.files?`<div class="diff"><div class="fh"><span class="p">.gitlab-ci.yml</span><span class="sp"></span><span class="plus">+1</span><span class="minus">−0</span></div><div class="hh">@@ -12,3 +12,4 @@</div><div class="dl"><span class="o">12</span><span class="nn">12</span><span class="sg"> </span><span class="cd">variables:</span></div><div class="dl add"><span class="o"></span><span class="nn">13</span><span class="sg">+</span><span class="cd">  SLACK_TIMEOUT_MS: "10000"</span></div></div>`:`<div class="empty"><h3>Nada mudou em ${r.name}</h3><p>A sessão leu este repositório, mas ainda não editou nada nele.</p></div>`);
   const m=$('#rrMr'); if(m) m.onclick=()=>{ f.tab=0; push(f,'u',`> /mr no repositório ~/repos-ctbz/${r.name}`); toast(`/mr de ${r.name} enviado ao Claude de ${f.branch}`); }; }
@@ -1284,8 +1300,9 @@ function renderRight0(){
   const f=feat(), ws=f.kind==='ws';
   if(S.rtab==='vault') S.rtab='review';
   const T=(k,l)=>`<button class="t" aria-pressed="${S.rtab===k}" data-rt="${k}">${l}</button>`;
+  if(S.rtab==='card'&&ws) S.rtab='review';
   const np=problems().length;
-  const tabs=`<div class="rtabs">${ws?'':T('review','Revisar')+T('mr',f.mr?`MR !${f.mr.iid}`:'MR')}${(S.open||[]).map(p=>{ const dirty=F[p].text!==F[p].saved; return `<button class="t" aria-pressed="${S.rtab==='file'&&S.file===p}" data-of="${p}" title="${p}">${p.split('/').pop()}<span class="cx${dirty?' dirty':''}" data-cx="${p}" role="button" aria-label="Fechar ${p}" title="${dirty?'Alterações não salvas: × fecha descartando':'Fechar'}">${dirty?'●':'×'}</span></button>`; }).join('')}${S.file?T('hist','Histórico'):''}${ws?'':T('prob',`Problemas${np?` <span class="mono" style="color:var(--bad)">${np}</span>`:''}`)}<span class="sp"></span><button class="x" id="rClose" title="Ctrl+Shift+E" aria-label="Fechar painel">×</button></div>`;
+  const tabs=`<div class="rtabs">${ws?'':T('review','Revisar')+T('mr',f.mr?`MR !${f.mr.iid}`:'MR')+T('card',f.jira?`Card <span class="mono">${f.jira.key}</span>${f.jira.proposed&&f.jira.proposed.length?` <span style="color:var(--yellow)">${f.jira.proposed.length}</span>`:''}`:'Card')}${(S.open||[]).map(p=>{ const dirty=F[p].text!==F[p].saved; return `<button class="t" aria-pressed="${S.rtab==='file'&&S.file===p}" data-of="${p}" title="${p}">${p.split('/').pop()}<span class="cx${dirty?' dirty':''}" data-cx="${p}" role="button" aria-label="Fechar ${p}" title="${dirty?'Alterações não salvas: × fecha descartando':'Fechar'}">${dirty?'●':'×'}</span></button>`; }).join('')}${S.file?T('hist','Histórico'):''}${ws?'':T('prob',`Problemas${np?` <span class="mono" style="color:var(--bad)">${np}</span>`:''}`)}<span class="sp"></span><button class="x" id="rClose" title="Ctrl+Shift+E" aria-label="Fechar painel">×</button></div>`;
   if(S.rtab==='file' && S.file){
     const py=/\.py$/.test(S.file)&&!S.lspOff[S.file];
     el.innerHTML=tabs+(py?`<div class="lspbar" role="status"><span>Sem servidor de linguagem para Python · instale com <span class="mono">npm i -g pyright</span></span><button class="btn" id="lspCp">Copiar</button><span class="sp"></span><button id="lspX" aria-label="Dispensar">×</button></div>`:'')+`<div class="ed"><div class="gut" id="gut"></div><div class="edwrap" id="edw"><pre id="hl" aria-hidden="true"></pre><textarea id="code" spellcheck="false" aria-label="Editor ${S.file}"></textarea><div id="edOv"></div></div></div>`;
@@ -1301,6 +1318,7 @@ function renderRight0(){
   } else if(S.rtab==='hist' && S.file){ el.innerHTML=tabs+renderHist(); bindHist(el); }
   else if(S.rtab==='prob'){ el.innerHTML=tabs+renderProb(); el.querySelectorAll('[data-pb]').forEach(b=>b.onclick=()=>{ const p=problems()[+b.dataset.pb]; S.gotoLn=p.ln; openFile(p.file); }); }
   else if(S.rtab==='mr'){ el.innerHTML=tabs+renderMRTab(f); bindMRTab(el,f); bindMRTab2(el,f); }
+  else if(S.rtab==='card'){ el.innerHTML=tabs+renderCardTab(f); bindCardTab(el,f); }
   else if(ws){ el.innerHTML=tabs+'<div class="empty"><h3>Terminal fora de repositório</h3><p>Aqui não há mudanças nem MR para revisar.</p></div>'; }
   else {
     const turns=f.turns||[], tsel=S.turn&&S.turn!=='all'?+S.turn:null;
@@ -2005,6 +2023,75 @@ function renderMRTab(f){
     <div class="card2"><h4>Comentários de revisores<span class="sp"></span>${pend.length?`<button class="btn pri" id="mrCom">Mandar ${pend.length} pro Claude (/comentario)</button>`:''}</h4>${m.comments.length?m.comments.map(c=>`<div class="thr ${c.sent?'sent':''}" style="margin:0;max-width:none"><div class="th"><b>${c.who}</b><span class="mono">${c.where}</span><span class="sp"></span>${c.sent?'enviado ao Claude':''}</div><div class="bd"><p>${md(c.body)}</p></div></div>`).join(''):'<p class="muted">Nenhum ainda.</p>'}</div>
     ${m.merged?`<div class="acts"><button class="btn danger" id="mrRm">Remover worktree</button></div>`:`<div class="acts"><button class="btn" id="mrMerge">Simular merge</button><span class="muted">protótipo: no app isso vem do GitLab</span></div>`}</div>`;
 }
+const SUBTYPES=['Desenvolvimento','Subtarefa','Qualidade e Testes'];
+const FLOW={'Desenvolvimento':['To-do','Building','Code Review','Pull Request','Waiting Test','Ready to Test','Ready for Release','Concluído'],'Subtarefa':['To-do','Building','Concluído'],'Qualidade e Testes':['Tarefas pendentes','Em andamento','Teste','Archived']};
+const firstSt=t=>(FLOW[t]||FLOW.Desenvolvimento)[0];
+/* a sub-task de Desenvolvimento cujo título começa com [repo] vai para Pull Request quando o MR desse repo abre */
+function subsToPR(f,repo,iid){ const j=f.jira; if(!j) return; const hit=j.subs.filter(x=>x.type==='Desenvolvimento'&&x.title.startsWith(`[${repo}]`)&&FLOW.Desenvolvimento.indexOf(x.status)<FLOW.Desenvolvimento.indexOf('Pull Request'));
+  hit.forEach(x=>{ const was=x.status; x.status='Pull Request'; toast(`${x.key} → Pull Request (MR !${iid})`,{label:'Desfazer',run:()=>{ x.status=was; renderRight(); }}); }); }
+const JIRA_SEED={'PRD-171500':{type:'Story',title:'Paginação no GET /bots',crit:'page e size na query (máx. 100) e o total no header X-Total-Count'}};
+function renderCardTab(f){
+  const j=f.jira;
+  if(!j) return `<div class="diff" style="font-family:var(--sans);padding:12px;display:grid;gap:12px;align-content:start">
+    <div class="card2"><h4>Nenhum card vinculado a ${esc(f.branch)}</h4><p class="muted">Vincule o card da tarefa para editar, ver e abrir as sub-tasks daqui. O Maestro lê pelo MCP do Atlassian.</p>
+      <div class="acts"><input id="cjKey" placeholder="PRD-171500" class="mono" style="background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:4px 8px;width:160px" autocomplete="off"><button class="btn pri" id="cjLink">Vincular</button><span class="muted" id="cjInfo"></span></div></div>
+    <div class="card2"><h4>Ou criar um card</h4>
+      <div class="acts"><select id="cnType" style="background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:3px 6px"><option>Story</option><option>Defeito</option><option>Tarefa</option></select>
+        <input id="cnTitle" placeholder="título do card" style="flex:1;min-width:160px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);padding:4px 8px"><button class="btn" id="cnNew">Criar pelo Claude</button></div>
+      <p class="muted" style="font-size:12px">O Claude cria no projeto PRD, com a sua squad, e vincula a esta feature.</p></div></div>`;
+  const dirty=j.draftTitle!=null&&(j.draftTitle!==j.title||j.draftDesc!==j.desc);
+  const sub=(x,i)=>`<div style="display:grid;grid-template-columns:96px minmax(0,1fr) 40px 132px;gap:8px;align-items:center;font-size:12.5px"><span class="mono" style="color:var(--accent)">${x.key}</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(x.type)}">${esc(x.title)}</span><span class="mono muted">${x.sp} SP</span>
+    <select data-sst="${i}" aria-label="Status de ${x.key}" style="background:var(--win);border:1px solid var(--line);border-radius:4px;color:${x.status==='Pull Request'?'var(--accent)':/Concluído|Archived/.test(x.status)?'var(--ok)':'var(--fg)'};padding:2px 4px;font:12px var(--sans)">${(FLOW[x.type]||FLOW.Desenvolvimento).map(s=>`<option ${s===x.status?'selected':''}>${s}</option>`).join('')}</select></div>`;
+  const inp='background:var(--win);border:1px solid var(--line);border-radius:4px;color:var(--fg);padding:2px 6px;font:12.5px var(--sans)';
+  const prop=(x,i)=>`<div style="display:grid;grid-template-columns:16px 140px minmax(0,1fr) 52px 22px;gap:8px;align-items:center;${x.on?'':'opacity:.55'}">
+    <input type="checkbox" data-pon="${i}" ${x.on?'checked':''} aria-label="Abrir esta sub-task">
+    <select data-pty="${i}" style="${inp}">${SUBTYPES.map(t=>`<option ${t===x.type?'selected':''}>${t}</option>`).join('')}</select>
+    <input data-pti="${i}" value="${esc(x.title)}" style="${inp};font-family:var(--mono)">
+    <input data-psp="${i}" value="${x.sp}" inputmode="numeric" style="${inp};width:52px;text-align:right" aria-label="Story points">
+    <button data-prm="${i}" title="Descartar" aria-label="Descartar" style="color:var(--muted)">×</button></div>`;
+  const n=(j.proposed||[]).filter(x=>x.on).length;
+  return `<div class="diff" style="font-family:var(--sans);padding:12px;display:grid;gap:12px;align-content:start">
+    <div class="card2"><h4><span class="mono" style="letter-spacing:0;text-transform:none;color:var(--fg)">${j.key}</span> · ${j.type} · ${j.status}<span class="sp"></span><button class="btn" id="cjWeb">Abrir no Jira</button><button class="btn" id="cjUnlink" title="Desvincular desta feature">Desvincular</button></h4>
+      <label class="fld" style="display:grid;gap:4px"><span class="muted" style="font-size:12px">Título</span><input id="cjT" value="${esc(j.draftTitle??j.title)}" style="${inp};font-size:13px;padding:5px 8px"></label>
+      <label class="fld" style="display:grid;gap:4px"><span class="muted" style="font-size:12px">Descrição</span><textarea id="cjD" style="${inp};font-size:13px;padding:5px 8px;min-height:70px;resize:vertical">${esc(j.draftDesc??j.desc)}</textarea></label>
+      <div class="acts"><button class="btn pri" id="cjSave" ${dirty?'':'disabled'}>Salvar no Jira</button><span class="muted" style="font-size:12px">${j.squad} · responsável: você</span></div></div>
+    <div class="card2"><h4>Sub-tasks<span class="sp"></span><span class="mono" style="letter-spacing:0">${j.subs.length}</span></h4>${j.subs.length?j.subs.map(sub).join('')+`<p class="muted" style="font-size:12px">Quando o MR de um repo abre, a sub-task de Desenvolvimento <span class="mono">[repo]</span> dele vai para <b>Pull Request</b> sozinha.</p>`:'<p class="muted">Nenhuma ainda.</p>'}</div>
+    <div class="card2"><h4>Propostas pelo planejamento<span class="sp"></span><button class="btn" id="cjAdd">+ sub-task</button></h4>
+      ${j.proposed&&j.proposed.length?j.proposed.map(prop).join('')+`<div class="acts"><button class="btn pri" id="cjOpen" ${n?'':'disabled'}>Abrir ${n} no Jira</button><span class="muted" style="font-size:12px">vai ao Claude como <span class="mono">/subtasks ${j.key}</span> só com as marcadas; a de testes sai com Envolvimento Testes → E2E</span></div>`
+        :j.planning?'<p class="runc2">⟳ o Claude está planejando as sub-tasks…</p>':`<p class="muted">O plano da feature propõe as sub-tasks aqui; você marca quais abrir.</p><div class="acts"><button class="btn" id="cjAsk">Pedir ao Claude para propor sub-tasks</button></div>`}</div></div>`;
+}
+function bindCardTab(el,f){
+  const b=(id,fn)=>{ const e=el.querySelector('#'+id); if(e) e.onclick=fn; }, j=f.jira;
+  if(!j){
+    b('cjLink',()=>{ const k=$('#cjKey').value.trim().toUpperCase(); if(!/^[A-Z][A-Z0-9]+-\d+$/.test(k)){ $('#cjInfo').textContent='Formato esperado: PROJ-123'; return; }
+      $('#cjInfo').textContent='buscando no Jira…'; setTimeout(()=>{ const i=JIRA_SEED[k]||{type:'Story',title:'Issue do Jira',crit:'os critérios de aceite da issue'};
+        f.jira={key:k,type:i.type,status:'Em andamento',squad:'Squad Bots',title:i.title,desc:i.crit,subs:[]}; toast(`${k} vinculado a ${f.branch}`); renderRight(); },500); });
+    b('cnNew',()=>{ const t=$('#cnTitle').value.trim(), ty=$('#cnType').value; if(!t){ $('#cnTitle').focus(); return; }
+      f.tab=0; push(f,'u',`> Crie no Jira (projeto PRD, minha squad) um card ${ty} "${t}" e me devolva a key.`); toast(`Pedido de card enviado ao Claude de ${f.branch}`);
+      setTimeout(()=>{ push(f,'dotw','⏺ Criado PRD-171640.'); f.jira={key:'PRD-171640',type:ty,status:'Itens pendentes',squad:'Squad Bots',title:t,desc:'',subs:[]}; renderRight(); },1400); });
+    return;
+  }
+  const sync=()=>{ j.draftTitle=$('#cjT').value; j.draftDesc=$('#cjD').value; const s=$('#cjSave'); if(s) s.disabled=!(j.draftTitle!==j.title||j.draftDesc!==j.desc); };
+  $('#cjT').oninput=sync; $('#cjD').oninput=sync;
+  b('cjSave',()=>{ j.title=j.draftTitle; j.desc=j.draftDesc; j.draftTitle=j.draftDesc=null; toast(`Título e descrição salvos em ${j.key}`); renderRight(); });
+  b('cjWeb',()=>toast(`Abriria o ${j.key} no Jira`));
+  b('cjUnlink',()=>confirmDlg(`Desvincular ${j.key} de ${f.branch}?`,'O card continua no Jira; só a ligação com esta feature sai.','Desvincular',()=>{ f.jira=null; renderRight(); }));
+  el.querySelectorAll('[data-sst]').forEach(c=>c.onchange=()=>{ const x=j.subs[+c.dataset.sst], was=x.status; x.status=c.value; toast(`${x.key} → ${c.value}`,{label:'Desfazer',run:()=>{ x.status=was; renderRight(); }}); renderRight(); });
+  el.querySelectorAll('[data-pon]').forEach(c=>c.onchange=()=>{ j.proposed[+c.dataset.pon].on=c.checked; renderRight(); });
+  el.querySelectorAll('[data-pty]').forEach(c=>c.onchange=()=>{ j.proposed[+c.dataset.pty].type=c.value; });
+  el.querySelectorAll('[data-pti]').forEach(c=>c.oninput=()=>{ j.proposed[+c.dataset.pti].title=c.value; });
+  el.querySelectorAll('[data-psp]').forEach(c=>c.oninput=()=>{ j.proposed[+c.dataset.psp].sp=+c.value||c.value; });
+  el.querySelectorAll('[data-prm]').forEach(c=>c.onclick=()=>{ j.proposed.splice(+c.dataset.prm,1); renderRight(); });
+  b('cjAdd',()=>{ j.proposed=j.proposed||[]; j.proposed.push({on:true,type:'Desenvolvimento',title:'[sistema] o que fazer',sp:1}); renderRight(); setTimeout(()=>{ const x=el.querySelectorAll('[data-pti]'); const i=x[x.length-1]; if(i){ i.focus(); i.select(); } }); });
+  b('cjAsk',()=>{ j.planning=true; f.tab=0; push(f,'u',`> Proponha as sub-tasks de ${j.key} para o que planejamos (sem criar nada).`); toast(`Pedido enviado ao Claude de ${f.branch}`); renderRight();
+    setTimeout(()=>{ j.planning=false; j.proposed=proposeFor(f); push(f,'dotw','⏺ 4 sub-tasks propostas (veja na aba Card do Maestro)'); renderRight(); },1500); });
+  b('cjOpen',()=>{ const go=j.proposed.filter(x=>x.on); if(!go.length) return; f.tab=0;
+    push(f,'u',`> /subtasks ${j.key} Lista aprovada: ${go.map(x=>`${x.type} · ${x.title} · ${x.sp} SP`).join(' | ')}`); setSt(f,'working','abrindo sub-tasks'); f.verb='Criando';
+    run(f,go.map(x=>[600,'dot',`⏺ jira - createJiraIssue (${x.type}: ${x.title})`]),()=>{
+      let k=171650; go.forEach(x=>j.subs.push({key:'PRD-'+(k++),type:x.type,title:x.title,sp:x.sp,status:firstSt(x.type)})); j.proposed=j.proposed.filter(x=>!x.on);
+      setSt(f,'blocked','plano pronto: aprove para implementar'); toast(`${go.length} sub-tasks abertas em ${j.key}`); renderRight(); });
+    toast(`/subtasks ${j.key} enviado ao Claude de ${f.branch} com ${go.length} sub-tasks`); renderRight(); });
+}
 const PF_ITEMS=['Branch atualizada com a base','Testes afetados','Lint e typecheck','Sonar local','Nenhum segredo no diff','Nenhum arquivo proibido'];
 function pfCard(f){ const pf=S.pf&&S.pf[f.id]; if(!pf) return '';
   const g={run:['⟳','var(--yellow)'],ok:['✓','var(--ok)'],fail:['✗','var(--bad)'],skip:['–','var(--muted)']};
@@ -2024,7 +2111,7 @@ function bindMRTab(el,f){
   b('pfOver',()=>{ S.pf[f.id]=null; openMrNow(f); });
 }
 function openMrNow(f){ { f.tab=0; push(f,'u','> /mr'); setSt(f,'working','abrindo MR'); f.verb='Commitando';
-    run(f,[[800,'dot','⏺ Skill(mr)'],[900,'out','  ⎿  commit "feat: healthcheck com checagem do banco" · push origin '+f.branch],[900,'out','  ⎿  MR !149 aberto em draft']],()=>{ f.mr={iid:149,pipe:'running',sonar:'pending',comments:[]}; setSt(f,'done','MR !149 aberto'); renderRight();
+    run(f,[[800,'dot','⏺ Skill(mr)'],[900,'out','  ⎿  commit "feat: healthcheck com checagem do banco" · push origin '+f.branch],[900,'out','  ⎿  MR !149 aberto em draft']],()=>{ f.mr={iid:149,pipe:'running',sonar:'pending',comments:[]}; setSt(f,'done','MR !149 aberto'); subsToPR(f,REPO,149); renderRight();
       vlog('repos/bots-api.md · Histórico: MR !149 aberto',null);
       setTimeout(()=>{ f.mr.pipe='success'; f.mr.sonar='ok'; renderLeft(); renderRight(); renderFrame(); },5000); }); renderRight(); } }
 function bindMRTab2(el,f){

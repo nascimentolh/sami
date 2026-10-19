@@ -143,6 +143,8 @@ pub struct Sidebar {
     pub usage: HashMap<String, Usage>,
     /// por pane: os repos em que o Claude dele editou arquivo
     touched: HashMap<String, Vec<PathBuf>>,
+    /// por pane: as sub-tasks do último plano (contador, lista)
+    proposals: HashMap<String, (u64, Vec<crate::session::Proposal>)>,
     pub inventories: Vec<Inventory>,
     changes: Option<Changes>,
     /// aba Arquivos à frente e a lista dela (lida no clique da aba)
@@ -314,34 +316,41 @@ impl Sidebar {
                     }) else {
                         break;
                     };
-                    let (usage, touched, changes, inventories, learn, extra, stacks) = cx
-                        .background_executor()
-                        .spawn(async move {
-                            let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-                            let mut s = sessions.lock().unwrap();
-                            let usage: HashMap<_, _> = jobs
-                                .iter()
-                                .filter_map(|(pane, cwd, title)| {
-                                    Some((pane.clone(), s.usage(&home, pane, cwd, title)?))
-                                })
-                                .collect();
-                            let touched: HashMap<_, _> = jobs
-                                .iter()
-                                .map(|(pane, ..)| (pane.clone(), s.repos(pane)))
-                                .collect();
-                            let invs = feature::inventories();
-                            let (extra, stacks) = stack_and_repos(&invs, &merged);
-                            (
-                                usage,
-                                touched,
-                                root.and_then(|r| changes::changes(&r)),
-                                invs,
-                                perms::pending(),
-                                extra,
-                                stacks,
-                            )
-                        })
-                        .await;
+                    let (usage, (touched, proposals), changes, inventories, learn, extra, stacks) =
+                        cx.background_executor()
+                            .spawn(async move {
+                                let home =
+                                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+                                let mut s = sessions.lock().unwrap();
+                                let usage: HashMap<_, _> = jobs
+                                    .iter()
+                                    .filter_map(|(pane, cwd, title)| {
+                                        Some((pane.clone(), s.usage(&home, pane, cwd, title)?))
+                                    })
+                                    .collect();
+                                let touched: HashMap<_, _> = jobs
+                                    .iter()
+                                    .map(|(pane, ..)| (pane.clone(), s.repos(pane)))
+                                    .collect();
+                                let proposals: HashMap<_, _> = jobs
+                                    .iter()
+                                    .filter_map(|(pane, ..)| {
+                                        Some((pane.clone(), s.proposals(pane)?))
+                                    })
+                                    .collect();
+                                let invs = feature::inventories();
+                                let (extra, stacks) = stack_and_repos(&invs, &merged);
+                                (
+                                    usage,
+                                    (touched, proposals),
+                                    root.and_then(|r| changes::changes(&r)),
+                                    invs,
+                                    perms::pending(),
+                                    extra,
+                                    stacks,
+                                )
+                            })
+                            .await;
                     let Ok(invs) = this.read_with(cx, |this, _| this.inventories.clone()) else {
                         break;
                     };
@@ -371,6 +380,7 @@ impl Sidebar {
                         }
                         if this.usage != usage
                             || this.touched != touched
+                            || this.proposals != proposals
                             || this.changes != changes
                             || this.inventories != inventories
                             || this.extra != extra
@@ -378,6 +388,7 @@ impl Sidebar {
                         {
                             this.usage = usage;
                             this.touched = touched;
+                            this.proposals = proposals;
                             this.changes = changes;
                             this.inventories = inventories;
                             this.extra = extra;
@@ -481,6 +492,7 @@ impl Sidebar {
             since: HashMap::new(),
             usage: HashMap::new(),
             touched: HashMap::new(),
+            proposals: HashMap::new(),
             inventories: Vec::new(),
             changes: None,
             files: None,
@@ -843,19 +855,30 @@ impl Sidebar {
         {
             inv.worktrees.iter().for_each(|w| add(&w.path));
         }
-        let pane = self
-            .agents
-            .iter()
-            .find(|a| a.focused && Path::new(&a.cwd).starts_with(&top))
-            .or_else(|| {
-                self.agents
-                    .iter()
-                    .find(|a| Path::new(&a.cwd).starts_with(&top))
-            });
+        let pane = self.session_pane(&top);
         if let Some(repos) = pane.and_then(|a| self.touched.get(&a.pane_id)) {
             repos.iter().for_each(|r| add(r));
         }
         out
+    }
+
+    /// O Claude da sessão: o pane em foco na worktree, senão o primeiro dela.
+    fn session_pane(&self, top: &Path) -> Option<&Agent> {
+        self.agents
+            .iter()
+            .find(|a| a.focused && Path::new(&a.cwd).starts_with(top))
+            .or_else(|| {
+                self.agents
+                    .iter()
+                    .find(|a| Path::new(&a.cwd).starts_with(top))
+            })
+    }
+
+    /// As sub-tasks do último plano do Claude da sessão em foco (o mesmo pane de `session_repos`).
+    pub fn session_proposals(&self) -> Option<(u64, Vec<crate::session::Proposal>)> {
+        let top = self.top_worktree()?;
+        let pane = self.session_pane(&top)?;
+        self.proposals.get(&pane.pane_id).cloned()
     }
 
     /// Clique numa feature ou terminal: foca e avisa o Shell para sair de MRs, Vault ou Auditoria.

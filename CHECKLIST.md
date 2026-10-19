@@ -311,6 +311,15 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] Pré-voo: "Pedir ao Claude para corrigir" com o fim da saída; `/mr` de outro repo leva o caminho; gate aceita carimbo por repo + teste
 - [x] Teste no app com dois repos descartáveis (o gate do `/mr` por repo só nos testes: o teste não tinha feature do Maestro)
 
+## Card do Jira e planejamento (extensão: o protótipo não cobre)
+
+- [x] Protótipo: Nova feature sempre em modo plano ("Ready to code?" antes de implementar)
+- [x] Protótipo: aba Card (editar título e descrição, vincular ou criar card, sub-tasks existentes, propostas do plano com caixa, tipo, título e SP, "Abrir N no Jira")
+- [x] Protótipo: status de cada sub-task editável (fluxo real do PRD) e a de Desenvolvimento `[repo]` vai para Pull Request quando o MR do repo abre
+- [x] App: Claude da feature em `--permission-mode plan`, com a key do Jira no inventário e o pedido do bloco ```subtasks no prompt
+- [x] App: aba Card lendo e editando pelo MCP do Atlassian (vincular, criar, salvar, status das sub-tasks e Pull Request quando o MR do repo abre), propostas lidas do plano, `/subtasks` com a lista marcada — só testes de unidade (parsers do Jira, plano no JSONL, comando); falta o teste no app com o Jira real
+- Desvios do protótipo: tipo do card e das propostas trocam no clique (sem select); o status abre a lista das transições que o Jira permite agora, não o fluxo inteiro; sem "Desfazer" no toast do status; "Desvincular" sem confirmação; "+ sub-task" não foca a linha nova; o texto do criar não cita a squad; o card relê o Jira a cada 60 s (um `claude -p` com haiku)
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
