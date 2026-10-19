@@ -39,6 +39,8 @@ pub enum Redo {
     Vault(crate::vault::Write),
     /// "Não é problema" na auditoria: desfazer tira do `audit-ignore.json`
     Audit(crate::audit::Ignored),
+    /// won't do de um work item da auditoria: desfazer reabre
+    AuditReopen(usize),
     /// descarte de rascunho no MR alheio
     MrDraft,
     /// "Não relevante" no News: (tag, fonte) volta a aparecer

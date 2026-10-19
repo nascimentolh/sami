@@ -1,10 +1,10 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use futures::StreamExt;
 use gpui_kit::{prelude::FluentBuilder, *};
 
 use crate::{
-    audit::{self, Ev, Finding, Ignored, Opts, Report, St},
+    audit::{self, Ev, Finding, Ignored, Opts, Report, St, Wi},
     form::{FieldEvent, TextField, button, checkbox},
     theme::Theme,
     tour::{self, Anchors},
@@ -18,7 +18,14 @@ pub enum Event {
     AskCreate(String, String),
     /// "Corrigir em feature": (título, texto, branch, prompt)
     AskFix(String, String, String, String),
+    /// "Won't do": (achado, título, texto); o motivo vem do campo do diálogo
+    AskWont(usize, String, String),
+    /// fechado como won't do, com desfazer (reabre)
+    Wont(usize, u64),
 }
+
+/// (correção, por quê) ou o erro
+type Iter = Result<(String, String), String>;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
@@ -57,6 +64,13 @@ pub struct AuditView {
     open: Option<usize>,
     editing: Option<(usize, Entity<TextField>)>,
     creating: bool,
+    /// o work item no GitLab, por iid (`None` enquanto lê)
+    wis: HashMap<u64, Option<Result<Wi, String>>>,
+    note: Entity<TextField>,
+    /// "Iterar com o Claude": iid → (pedido, `None` enquanto pensa, ou (correção, por quê))
+    iters: HashMap<u64, (String, Option<Iter>)>,
+    /// comentar, fechar, reabrir ou atualizar em andamento
+    writing: bool,
     scroll: ScrollHandle,
     focus: FocusHandle,
     theme: Theme,
@@ -85,8 +99,18 @@ impl AuditView {
     pub fn new(theme: Theme, anchors: Anchors, cx: &mut Context<Self>) -> Self {
         let t = theme.clone();
         let budget = cx.new(|cx| TextField::new(t.clone(), "2", "", false, true, cx));
-        let base = cx.new(|cx| TextField::new(t, "", "sha", false, true, cx));
-        for f in [&budget, &base] {
+        let base = cx.new(|cx| TextField::new(t.clone(), "", "sha", false, true, cx));
+        let note = cx.new(|cx| {
+            TextField::new(
+                t,
+                "",
+                "Comentar no work item, ou pedir ao Claude outra correção (ele lê o código e os comentários, só leitura)",
+                true,
+                false,
+                cx,
+            )
+        });
+        for f in [&budget, &base, &note] {
             cx.subscribe(f, |_, _, _: &FieldEvent, cx| cx.notify())
                 .detach();
         }
@@ -117,6 +141,10 @@ impl AuditView {
             open: None,
             editing: None,
             creating: false,
+            wis: HashMap::new(),
+            note,
+            iters: HashMap::new(),
+            writing: false,
             scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             theme,
@@ -335,10 +363,13 @@ impl AuditView {
             .collect()
     }
 
+    /// O won't do também entra no ignore (some das próximas auditorias), mas fica neste relatório.
     fn is_ignored(&self, f: &Finding) -> bool {
-        self.ignored
-            .iter()
-            .any(|i| i.title == f.title && i.location == f.location)
+        !matches!(f.st, St::Wont(_))
+            && self
+                .ignored
+                .iter()
+                .any(|i| i.title == f.title && i.location == f.location)
     }
 
     fn selected(&self) -> Vec<usize> {
@@ -534,6 +565,212 @@ impl AuditView {
         ));
     }
 
+    fn expand(&mut self, i: usize, cx: &mut Context<Self>) {
+        self.open = if self.open == Some(i) { None } else { Some(i) };
+        self.editing = None;
+        self.note.update(cx, |n, cx| n.set(String::new(), cx));
+        if self.open.is_some()
+            && let Some(iid) = self.iid_of(i)
+        {
+            self.load_wi(iid, cx);
+        }
+        cx.notify();
+    }
+
+    fn iid_of(&self, i: usize) -> Option<u64> {
+        self.report.as_ref()?.findings.get(i)?.iid()
+    }
+
+    fn project(&self) -> Option<String> {
+        audit::project_of(self.repo.as_ref()?)
+    }
+
+    fn load_wi(&mut self, iid: u64, cx: &mut Context<Self>) {
+        let Some(project) = self.project() else {
+            self.wis
+                .insert(iid, Some(Err("o origin deste repo não é do GitLab".into())));
+            return;
+        };
+        self.wis.entry(iid).or_insert(None);
+        cx.spawn(async move |this, cx| {
+            let w = cx
+                .background_executor()
+                .spawn(async move { audit::work_item(&project, iid) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.wis.insert(iid, Some(w));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Uma escrita no GitLab fora da thread de UI; no fim relê o work item e avisa.
+    fn gitlab(
+        &mut self,
+        iid: u64,
+        ok: String,
+        op: impl FnOnce(&str) -> Result<(), String> + Send + 'static,
+        done: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project() else {
+            return cx.emit(Event::Toast("O origin deste repo não é do GitLab.".into()));
+        };
+        if self.writing {
+            return;
+        }
+        self.writing = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let r = cx
+                .background_executor()
+                .spawn(async move { op(&project) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.writing = false;
+                match r {
+                    Ok(()) => {
+                        done(this, cx);
+                        if !ok.is_empty() {
+                            cx.emit(Event::Toast(ok));
+                        }
+                    }
+                    Err(e) => cx.emit(Event::Toast(format!("O GitLab recusou: {e}"))),
+                }
+                this.load_wi(iid, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn open_gitlab(&self, iid: u64) {
+        let url = match self.wis.get(&iid) {
+            Some(Some(Ok(w))) if !w.web.is_empty() => w.web.clone(),
+            _ => match self.project() {
+                Some(p) => format!("https://gitlab.com/{p}/-/issues/{iid}"),
+                None => return,
+            },
+        };
+        crate::spawn_reaped(std::process::Command::new("xdg-open").arg(url));
+    }
+
+    fn comment(&mut self, iid: u64, cx: &mut Context<Self>) {
+        let text = self.note.read(cx).value.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        self.gitlab(
+            iid,
+            "Comentário publicado no work item".into(),
+            move |p| audit::comment(p, iid, &text),
+            |this, cx| this.note.update(cx, |n, cx| n.set(String::new(), cx)),
+            cx,
+        );
+    }
+
+    fn iterate(&mut self, iid: u64, cx: &mut Context<Self>) {
+        let ask = self.note.read(cx).value.trim().to_string();
+        let (Some(repo), Some(Some(Ok(w)))) = (self.repo.clone(), self.wis.get(&iid).cloned())
+        else {
+            return;
+        };
+        if ask.is_empty() {
+            return;
+        }
+        self.note.update(cx, |n, cx| n.set(String::new(), cx));
+        self.iters.insert(iid, (ask.clone(), None));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let r = cx
+                .background_executor()
+                .spawn(async move { audit::iterate(&repo, iid, &w, &ask) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(it) = this.iters.get_mut(&iid) {
+                    it.1 = Some(r.map(|(f, y, _)| (f, y)));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn apply_iter(&mut self, iid: u64, cx: &mut Context<Self>) {
+        let (Some((ask, Some(Ok((fix, why))))), Some(Some(Ok(w)))) =
+            (self.iters.get(&iid).cloned(), self.wis.get(&iid))
+        else {
+            return;
+        };
+        let body = audit::replace_fix(&w.body, &fix);
+        let note = format!("Correção sugerida atualizada a pedido: {ask}\n\n{why}");
+        self.gitlab(
+            iid,
+            format!("#{iid} atualizado no GitLab"),
+            move |p| audit::update_fix(p, iid, &body, &note),
+            move |this, _| {
+                this.iters.remove(&iid);
+            },
+            cx,
+        );
+    }
+
+    fn ask_wont(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(iid) = self.iid_of(i) else { return };
+        cx.emit(Event::AskWont(
+            i,
+            format!("Fechar #{iid} como won't do?"),
+            "Fecha o work item no GitLab com a label wont-do e o motivo abaixo como comentário. Ele também entra no .maestro/audit-ignore.json, para não voltar nas próximas auditorias.".into(),
+        ));
+    }
+
+    fn set_wont(&mut self, i: usize, on: bool, cx: &mut Context<Self>) {
+        let Some(f) = self.report.as_mut().and_then(|r| r.findings.get_mut(i)) else {
+            return;
+        };
+        let Some(iid) = f.iid() else { return };
+        f.st = if on { St::Wont(iid) } else { St::Created(iid) };
+        let ig = Ignored {
+            title: f.title.clone(),
+            location: f.location.clone(),
+        };
+        self.ignored.retain(|x| *x != ig);
+        if on {
+            self.ignored.push(ig);
+        }
+        if let Some(repo) = &self.repo {
+            audit::set_ignored(repo, &self.ignored);
+        }
+        self.save(cx);
+    }
+
+    /// Depois do diálogo: o motivo vira comentário, o work item fecha e entra no ignore.
+    pub fn wont_do(&mut self, i: usize, why: String, cx: &mut Context<Self>) {
+        let Some(iid) = self.iid_of(i) else { return };
+        self.gitlab(
+            iid,
+            String::new(),
+            move |p| audit::wont_do(p, iid, &why),
+            move |this, cx| {
+                this.set_wont(i, true, cx);
+                cx.emit(Event::Wont(i, iid));
+            },
+            cx,
+        );
+    }
+
+    pub fn reopen(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(iid) = self.iid_of(i) else { return };
+        self.gitlab(
+            iid,
+            format!("#{iid} reaberto"),
+            move |p| audit::reopen(p, iid),
+            move |this, cx| this.set_wont(i, false, cx),
+            cx,
+        );
+    }
+
     pub fn repo(&self) -> Option<PathBuf> {
         self.repo.clone()
     }
@@ -542,6 +779,7 @@ impl AuditView {
         if self.editing.is_some()
             || self.budget.read(cx).focus_handle().is_focused(window)
             || self.base.read(cx).focus_handle().is_focused(window)
+            || self.note.read(cx).focus_handle().is_focused(window)
         {
             return;
         }
@@ -955,13 +1193,14 @@ impl AuditView {
             St::Cross(r) => (format!("novo · mesmo padrão de {r}"), t.accent),
             St::Dup(r) => (format!("já existe {r}"), t.muted),
             St::Created(i) => (format!("aberto #{i}"), t.ok),
+            St::Wont(i) => (format!("won't do #{i}"), t.muted),
         };
         div()
             .px(px(7.))
             .py(px(1.))
             .rounded(px(10.))
             .border_1()
-            .border_color(if matches!(f.st, St::Dup(_)) {
+            .border_color(if matches!(f.st, St::Dup(_) | St::Wont(_)) {
                 t.line
             } else {
                 c
@@ -998,11 +1237,7 @@ impl AuditView {
                     .flex_1()
                     .min_w_0()
                     .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open = if this.open == Some(i) { None } else { Some(i) };
-                        this.editing = None;
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.expand(i, cx)))
                     .child(div().truncate().child(format!(
                         "{} {}",
                         if o { "▾" } else { "▸" },
@@ -1029,6 +1264,16 @@ impl AuditView {
                 )
             });
         let mut el = div().border_b_1().border_color(t.line).child(row);
+        if o && let Some(iid) = f.iid() {
+            return el.child(
+                div()
+                    .pl(px(42.))
+                    .pr(px(12.))
+                    .pb(px(12.))
+                    .pt(px(4.))
+                    .child(self.wi_view(i, iid, cx)),
+            );
+        }
         if o {
             let inner =
                 match &self.editing {
@@ -1109,6 +1354,213 @@ impl AuditView {
             );
         }
         el
+    }
+
+    /// O work item aberto: texto do GitLab, comentários, rascunho do Claude e a caixa de comentar.
+    fn wi_view(&self, i: usize, iid: u64, cx: &mut Context<Self>) -> Div {
+        let t = self.theme.clone();
+        let wont = self
+            .report
+            .as_ref()
+            .and_then(|r| r.findings.get(i))
+            .is_some_and(|f| matches!(f.st, St::Wont(_)));
+        let w = self.wis.get(&iid).cloned().flatten();
+        let n = match &w {
+            Some(Ok(w)) => w.notes.len(),
+            _ => 0,
+        };
+        let state = match &w {
+            None => "lendo do GitLab…".to_string(),
+            Some(Err(_)) => "não deu para ler".into(),
+            Some(Ok(w)) => format!(
+                "{} · {n} comentário{}",
+                if wont {
+                    "fechado como won't do"
+                } else if w.closed {
+                    "fechado"
+                } else {
+                    "aberto"
+                },
+                s(n)
+            ),
+        };
+        let busy = self.writing;
+        let head = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(8.))
+            .items_center()
+            .px(px(10.))
+            .py(px(6.))
+            .border_b_1()
+            .border_color(t.line)
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(format!("Work item #{iid}")),
+            )
+            .child(div().text_size(px(13.)).text_color(t.muted).child(state))
+            .child(div().flex_1())
+            .child(
+                button(&t, ("au-gl", i), "Abrir no GitLab ↗", false)
+                    .on_click(cx.listener(move |this, _, _, _| this.open_gitlab(iid))),
+            )
+            .child(if wont {
+                button(&t, ("au-ro", i), "Reabrir", false)
+                    .when(busy, |d| d.opacity(0.5))
+                    .on_click(cx.listener(move |this, _, _, cx| this.reopen(i, cx)))
+            } else {
+                button(&t, ("au-wd", i), "Won't do", false)
+                    .text_color(red())
+                    .when(busy, |d| d.opacity(0.5))
+                    .on_click(cx.listener(move |this, _, _, cx| this.ask_wont(i, cx)))
+            });
+        let mut body = div().flex().flex_col().gap(px(8.)).px(px(10.)).py(px(8.));
+        match &w {
+            None => {}
+            Some(Err(e)) => {
+                body = body.child(div().text_color(red()).child(e.clone()));
+            }
+            Some(Ok(w)) => {
+                body = body
+                    .child(
+                        div()
+                            .font_family(t.mono.clone())
+                            .text_size(px(13.5))
+                            .line_height(px(21.))
+                            .whitespace_normal()
+                            .child(md(&t, &w.body)),
+                    )
+                    .children(w.notes.iter().map(|(who, when, text)| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .pl(px(8.))
+                            .border_l_2()
+                            .border_color(t.line)
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(t.muted)
+                                    .child(format!("{who} · {when}")),
+                            )
+                            .child(div().whitespace_normal().child(md(&t, text)))
+                    }));
+            }
+        }
+        let it = self.iters.get(&iid);
+        if let Some((ask, res)) = it {
+            let ready = matches!(res, Some(Ok(_)));
+            let draft = div()
+                .rounded(px(6.))
+                .border_1()
+                .border_dashed()
+                .border_color(yellow())
+                .bg(Hsla {
+                    a: 0.07,
+                    ..yellow()
+                })
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .items_center()
+                        .px(px(10.))
+                        .py(px(6.))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(yellow())
+                                .child(match res {
+                                    None => "CLAUDE PENSANDO…",
+                                    Some(Err(_)) => "O CLAUDE NÃO RESPONDEU",
+                                    Some(Ok(_)) => "NOVA CORREÇÃO SUGERIDA",
+                                }),
+                        )
+                        .child(div().flex_1())
+                        .when(ready, |d| {
+                            d.child(
+                                button(&t, ("au-ap", i), "Atualizar o work item", true)
+                                    .when(busy, |d| d.opacity(0.5))
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| this.apply_iter(iid, cx)),
+                                    ),
+                            )
+                        })
+                        .when(res.is_some(), |d| {
+                            d.child(button(&t, ("au-dc", i), "Descartar", false).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.iters.remove(&iid);
+                                    cx.notify();
+                                }),
+                            ))
+                        }),
+                );
+            let mut inner = div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .px(px(10.))
+                .pb(px(8.))
+                .child(div().text_color(t.muted).child(format!("Você: {ask}")));
+            match res {
+                Some(Ok((fix, why))) => {
+                    inner = inner
+                        .child(
+                            div()
+                                .font_family(t.mono.clone())
+                                .text_size(px(13.5))
+                                .line_height(px(21.))
+                                .whitespace_normal()
+                                .child(md(&t, fix)),
+                        )
+                        .child(div().text_color(t.muted).child(why.clone()))
+                        .child(div().text_size(px(13.)).text_color(t.muted).child(
+                            "Troca só a seção Correção sugerida e comenta no work item o que mudou e por quê.",
+                        ));
+                }
+                Some(Err(e)) => inner = inner.child(div().text_color(red()).child(e.clone())),
+                None => {}
+            }
+            body = body.child(draft.child(inner));
+        } else if !wont && matches!(w, Some(Ok(_))) {
+            body = body
+                .child(
+                    div()
+                        .min_h(px(64.))
+                        .text_size(px(13.5))
+                        .child(self.note.clone()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .text_color(t.muted)
+                                .child("o comentário vai como você"),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            button(&t, ("au-cm", i), "Comentar", false)
+                                .when(busy, |d| d.opacity(0.5))
+                                .on_click(cx.listener(move |this, _, _, cx| this.comment(iid, cx))),
+                        )
+                        .child(
+                            button(&t, ("au-it", i), "Iterar com o Claude", true)
+                                .on_click(cx.listener(move |this, _, _, cx| this.iterate(iid, cx))),
+                        ),
+                );
+        }
+        div()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(t.line)
+            .child(head)
+            .child(body)
     }
 
     fn report_view(&self, cx: &mut Context<Self>) -> Div {

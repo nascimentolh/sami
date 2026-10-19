@@ -11,7 +11,7 @@ use crate::{
     compare::{self, Attempt, Compare},
     confirm::{self, Answer, Choice, Chose, Confirm},
     editor, feature,
-    form::button,
+    form::{FieldEvent, TextField, button},
     herdr::{self, Status},
     keys,
     mascot::{self, Note},
@@ -91,6 +91,7 @@ pub struct Shell {
     want_audit: bool,
     want_create: Option<(String, String)>,
     want_fix: Option<(String, String, String, String)>,
+    want_wont: Option<(usize, String, String)>,
     /// o `openHelp` do protótipo
     help: bool,
     want_publish: Option<(String, String)>,
@@ -444,6 +445,7 @@ impl Shell {
             want_audit: false,
             want_create: None,
             want_fix: None,
+            want_wont: None,
             help: false,
             want_publish: None,
             mascot: None,
@@ -1470,6 +1472,14 @@ impl Shell {
                 audit_view::Event::AskFix(a, b, c, d) => {
                     this.want_fix = Some((a.clone(), b.clone(), c.clone(), d.clone()))
                 }
+                audit_view::Event::AskWont(i, a, b) => {
+                    this.want_wont = Some((*i, a.clone(), b.clone()))
+                }
+                audit_view::Event::Wont(i, iid) => this.toast_undo(
+                    format!("#{iid} fechado como won't do"),
+                    Some(Redo::AuditReopen(*i)),
+                    cx,
+                ),
             }
             cx.notify();
         })
@@ -3602,6 +3612,50 @@ impl Render for Shell {
             self.confirm = Some(c);
         }
         if self.confirm.is_none()
+            && let Some((i, title, text)) = self.want_wont.take()
+        {
+            let theme = self.theme.clone();
+            let field = cx.new(|cx| {
+                TextField::new(
+                    theme.clone(),
+                    "",
+                    "Motivo (opcional), vai como comentário",
+                    true,
+                    false,
+                    cx,
+                )
+            });
+            let c = cx.new(|cx| {
+                let mut c =
+                    Confirm::new(theme, title, text, "Fechar como won't do", true, window, cx);
+                c.field = Some(field.clone());
+                c
+            });
+            window.focus(&field.read(cx).focus_handle(), cx);
+            let f = field.clone();
+            cx.subscribe_in(&c, window, move |this, _, a: &Answer, window, cx| {
+                this.confirm = None;
+                if let Some(au) = &this.audit {
+                    if matches!(a, Answer::Ok) {
+                        let why = f.read(cx).value.clone();
+                        au.update(cx, |au, cx| au.wont_do(i, why, cx));
+                    }
+                    let h = au.read(cx).focus_handle();
+                    window.focus(&h, cx);
+                }
+                cx.notify();
+            })
+            .detach();
+            let c2 = c.clone();
+            cx.subscribe(&field, move |_, _, e: &FieldEvent, cx| match e {
+                FieldEvent::Cancel => c2.update(cx, |_, cx| cx.emit(Answer::Cancel)),
+                FieldEvent::Submit => c2.update(cx, |_, cx| cx.emit(Answer::Ok)),
+                FieldEvent::Changed => {}
+            })
+            .detach();
+            self.confirm = Some(c);
+        }
+        if self.confirm.is_none()
             && let Some((title, text, branch, prompt)) = self.want_fix.take()
         {
             let theme = self.theme.clone();
@@ -4024,6 +4078,12 @@ impl Render for Shell {
                                         Redo::Audit(ig) => {
                                             if let Some(a) = &this.audit {
                                                 a.update(cx, |a, cx| a.unignore(ig, cx));
+                                            }
+                                            Ok(())
+                                        }
+                                        Redo::AuditReopen(i) => {
+                                            if let Some(a) = &this.audit {
+                                                a.update(cx, |a, cx| a.reopen(*i, cx));
                                             }
                                             Ok(())
                                         }

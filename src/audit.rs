@@ -36,6 +36,8 @@ pub enum St {
     /// já existe neste repo (`#12`)
     Dup(String),
     Created(u64),
+    /// fechado como won't do pelo Maestro
+    Wont(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,7 +86,14 @@ impl Finding {
     }
 
     pub fn open(&self) -> bool {
-        !matches!(self.st, St::Dup(_) | St::Created(_))
+        !matches!(self.st, St::Dup(_) | St::Created(_) | St::Wont(_))
+    }
+
+    pub fn iid(&self) -> Option<u64> {
+        match self.st {
+            St::Created(i) | St::Wont(i) => Some(i),
+            _ => None,
+        }
     }
 }
 
@@ -880,6 +889,146 @@ pub fn create(project: &str, f: &Finding) -> Result<u64, String> {
         .ok_or_else(|| "o GitLab não devolveu o iid".into())
 }
 
+/// O work item como está no GitLab, com as notas de gente (sem as de sistema).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Wi {
+    pub body: String,
+    pub closed: bool,
+    pub web: String,
+    /// (autor, data `2026-10-02`, texto)
+    pub notes: Vec<(String, String, String)>,
+}
+
+pub fn work_item(project: &str, iid: u64) -> Result<Wi, String> {
+    let base = format!("projects/{}/issues/{iid}", mrs::enc(project));
+    let i = mrs::read(&base, false)?;
+    let n = mrs::read(&format!("{base}/notes?sort=asc&per_page=100"), true)?;
+    Ok(parse_wi(&i, &n))
+}
+
+pub fn parse_wi(i: &Value, n: &Value) -> Wi {
+    Wi {
+        body: i["description"].as_str().unwrap_or_default().into(),
+        closed: i["state"] == "closed",
+        web: i["web_url"].as_str().unwrap_or_default().into(),
+        notes: n
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|x| x["system"] != true)
+            .map(|x| {
+                (
+                    x["author"]["username"].as_str().unwrap_or_default().into(),
+                    x["created_at"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .chars()
+                        .take(10)
+                        .collect(),
+                    x["body"].as_str().unwrap_or_default().into(),
+                )
+            })
+            .collect(),
+    }
+}
+
+pub fn comment(project: &str, iid: u64, text: &str) -> Result<(), String> {
+    mrs::write(
+        "POST",
+        &format!("projects/{}/issues/{iid}/notes", mrs::enc(project)),
+        &json!({ "body": text }),
+    )
+    .map(|_| ())
+}
+
+fn put(project: &str, iid: u64, body: Value) -> Result<(), String> {
+    mrs::write(
+        "PUT",
+        &format!("projects/{}/issues/{iid}", mrs::enc(project)),
+        &body,
+    )
+    .map(|_| ())
+}
+
+/// Fecha com a label `wont-do`; o motivo vai antes, como comentário.
+pub fn wont_do(project: &str, iid: u64, why: &str) -> Result<(), String> {
+    if !why.trim().is_empty() {
+        comment(project, iid, &format!("Won't do: {}", why.trim()))?;
+    }
+    put(
+        project,
+        iid,
+        json!({ "state_event": "close", "add_labels": "wont-do" }),
+    )
+}
+
+pub fn reopen(project: &str, iid: u64) -> Result<(), String> {
+    put(
+        project,
+        iid,
+        json!({ "state_event": "reopen", "remove_labels": "wont-do" }),
+    )
+}
+
+/// Troca a descrição e comenta o que mudou.
+pub fn update_fix(project: &str, iid: u64, body: &str, note: &str) -> Result<(), String> {
+    put(project, iid, json!({ "description": body }))?;
+    comment(project, iid, note)
+}
+
+/// O corpo com a seção `## Correção sugerida` trocada (ou somada no fim, se não houver).
+pub fn replace_fix(body: &str, fix: &str) -> String {
+    const H: &str = "## Correção sugerida";
+    let Some(i) = body.find(H) else {
+        return format!("{}\n\n{H}\n\n{}", body.trim_end(), fix.trim());
+    };
+    let rest = &body[i + H.len()..];
+    let end = rest.find("\n## ").map_or(body.len(), |j| i + H.len() + j);
+    format!("{}{H}\n\n{}\n{}", &body[..i], fix.trim(), &body[end..])
+}
+
+pub const ITER_SCHEMA: &str = r#"{"type":"object","properties":{"fix":{"type":"string"},"why":{"type":"string"}},"required":["fix","why"]}"#;
+
+pub fn iter_prompt(iid: u64, w: &Wi, ask: &str) -> String {
+    let notes: String = w
+        .notes
+        .iter()
+        .map(|(who, when, t)| format!("- {who} ({when}): {t}\n"))
+        .collect();
+    format!(
+        "Este é o work item #{iid} aberto por uma auditoria deste repositório:
+
+{}
+
+Comentários:
+{}
+Pedido: {ask}
+
+Leia o código citado e reescreva só a correção sugerida, atendendo ao pedido e aos comentários. \
+fix: o novo texto da seção \"Correção sugerida\" em markdown curto (sem o título), com arquivo:linha quando ajudar. \
+why: uma frase em português dizendo o que mudou e por quê. Não altere arquivos.",
+        w.body,
+        if notes.is_empty() { "(nenhum)\n".into() } else { notes }
+    )
+}
+
+/// Iterar com o Claude: só leitura, como a auditoria; devolve (correção, por quê, custo).
+pub fn iterate(repo: &Path, iid: u64, w: &Wi, ask: &str) -> Result<(String, String, f64), String> {
+    let (v, cost) = claude(
+        repo,
+        ITER_SCHEMA,
+        1.,
+        false,
+        &iter_prompt(iid, w, ask),
+        &|_| {},
+    )
+    .map_err(|(e, _)| e)?;
+    match (v["fix"].as_str(), v["why"].as_str()) {
+        (Some(f), Some(y)) if !f.trim().is_empty() => Ok((f.into(), y.into(), cost)),
+        _ => Err("o Claude não devolveu uma correção".into()),
+    }
+}
+
 /// `fix/<iid>-slug` do `fixInFeature` do protótipo.
 pub fn fix_branch(iid: u64, title: &str) -> String {
     let rest = title.split_once(": ").map_or(title, |x| x.1);
@@ -1040,6 +1189,39 @@ mod tests {
                 .any(|x| x.contains("gcloud"))
         );
         assert_eq!(parse_findings(&v)[0].title, "sec(logs): x");
+    }
+
+    #[test]
+    fn work_item_e_correcao() {
+        let w = parse_wi(
+            &json!({"description":"## Problema\n\na\n\n## Correção sugerida\n\nvelha\n\n## Impacto\n\nb","state":"closed","web_url":"u"}),
+            &json!([{"system":true,"body":"x"},{"system":false,"author":{"username":"ana"},"created_at":"2026-10-02T10:00:00Z","body":"e o redact?"}]),
+        );
+        assert!(w.closed);
+        assert_eq!(
+            w.notes,
+            [("ana".into(), "2026-10-02".into(), "e o redact?".into())]
+        );
+        assert_eq!(
+            replace_fix(&w.body, "nova"),
+            "## Problema\n\na\n\n## Correção sugerida\n\nnova\n\n## Impacto\n\nb"
+        );
+        assert_eq!(
+            replace_fix("## Problema\n\na\n\n## Correção sugerida\n\nvelha", "nova"),
+            "## Problema\n\na\n\n## Correção sugerida\n\nnova\n"
+        );
+        assert_eq!(
+            replace_fix("só texto", "nova"),
+            "só texto\n\n## Correção sugerida\n\nnova"
+        );
+        assert!(iter_prompt(28, &w, "basta o redact?").contains("ana (2026-10-02): e o redact?"));
+        assert!(
+            !Finding {
+                st: St::Wont(3),
+                ..f("x")
+            }
+            .open()
+        );
     }
 
     #[test]

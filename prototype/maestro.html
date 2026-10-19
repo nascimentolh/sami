@@ -1665,7 +1665,7 @@ function makeDrafts(){ const m=RV.mr; RV.f.filter(x=>x.on).forEach(x=>S.drafts.p
 
 /* ---------- auditoria (prompt do snippet 5996330, melhorado) ---------- */
 const AU = { phase:'cached', kind:'inc', budget:{inc:2,full:12}, prod:false, pil:{arq:true,sec:true,qual:true,custo:true,hig:true},
-  spent:0, steps:[], open:null, editing:null, ignored:[], nextIid:31,
+  spent:0, steps:[], open:null, editing:null, ignored:[], nextIid:31, iter:{},
   last:{when:'3 out', sha:'51bb0d2', commits:41, files:23, cost:'US$ 7,40'} };
 const PIL={arq:'Arquitetura & Design',sec:'Segurança',qual:'Qualidade',custo:'Custos & Performance',hig:'Higiene'};
 const SEVT={P0:'perda de dados ou serviço fora em produção',P1:'risco alto e provável',P2:'risco real, raro ou contornável',P3:'higiene'};
@@ -1674,7 +1674,8 @@ const AUD=[
    prob:'O `catch` do handler chama `message.ack()`. Qualquer erro transitório (banco, rede) descarta o webhook para sempre.',
    ev:'`src/worker.ts:38-44`: `catch (err) { log.error(err); message.ack() }`. O mesmo padrão foi corrigido em email-service #19.',
    fix:'Trocar por `message.nack()` e configurar dead letter topic com `maxDeliveryAttempts: 10`.',imp:'Nenhum webhook perdido em instabilidade do banco.'},
-  {id:'a2',sev:'P1',lab:['security'],title:'sec(logs): payload do webhook logado inteiro em INFO (contém CPF)',loc:'src/handler.ts:13',conf:'alta',st:'new',size:'small',
+  {id:'a2',sev:'P1',lab:['security'],title:'sec(logs): payload do webhook logado inteiro em INFO (contém CPF)',loc:'src/handler.ts:13',conf:'alta',st:'created',iid:28,size:'small',
+   notes:[{who:'ana.souza',when:'2 out',t:'O redact no logger já resolve. Precisa mesmo mexer no handler?'}],
    prob:'`log.info(\'webhook ok\', payload)` grava o corpo completo, que inclui CPF. O CLAUDE.md do repo proíbe isso.',
    ev:'`src/handler.ts:13`; amostra no Cloud Logging de ontem com campo `document` preenchido.',
    fix:'Logar só `{ id: payload.id }` e adicionar redact de `document`/`cpf` no logger.',imp:'Fecha exposição de dado pessoal nos logs (LGPD).'},
@@ -1687,9 +1688,19 @@ const AUD=[
    prob:'O `.env.example` declara `SLAK_TOKEN`, e o código lê `SLACK_TOKEN`.',ev:'`.env.example:4` vs `src/slack.ts:3`.',fix:'Renomear no `.env.example`.',imp:'Setup local sem erro silencioso.'},
 ];
 const AUD_DROPPED=['infra(k8s) limite de 512Mi sem --max-old-space-size: descartado, contradiz a decisão do vault [[node-24-dimensiona-a-heap-pelo-cgroup]] (o Node 24 dimensiona o heap pelo cgroup)','SQL injection em findByName: descartado, usa query parametrizada do drizzle','Segredo hard-coded em test/fixtures: descartado, é valor fake de teste','N+1 em listBots: descartado, a rota pagina em 20','Complexidade alta em router.ts: descartado, 1 função de 40 linhas'];
-AUD.forEach(a=>a.on=a.st!=='dup');
+AUD.forEach(a=>{ a.on=a.st==='new'||a.st==='cross'; a.notes=a.notes||[]; });
 const body=a=>`## Problema\n\n${a.prob}\n\n## Evidência\n\n${a.ev}\n\n## Correção sugerida\n\n${a.fix}\n\n## Impacto\n\n${a.imp}${a.ref&&a.st==='cross'?`\n\nRelacionado: ${a.ref}`:''}`;
-const stLbl=a=>({new:'<span class="pill new">novo</span>',cross:`<span class="pill new">novo · mesmo padrão de ${a.ref}</span>`,dup:`<span class="pill">já existe ${a.ref}</span>`,created:`<span class="pill" style="color:var(--ok);border-color:var(--ok)">aberto #${a.iid}</span>`}[a.st]);
+const stLbl=a=>({new:'<span class="pill new">novo</span>',cross:`<span class="pill new">novo · mesmo padrão de ${a.ref}</span>`,dup:`<span class="pill">já existe ${a.ref}</span>`,created:`<span class="pill" style="color:var(--ok);border-color:var(--ok)">aberto #${a.iid}</span>`,wont:`<span class="pill">won't do #${a.iid}</span>`}[a.st]);
+const woView=a=>{
+  const it=AU.iter[a.id], live=a.st==='created';
+  return `<div class="thr" style="margin:0;max-width:none"><div class="th"><b>Work item #${a.iid}</b><span>${live?'aberto':'fechado como won\'t do'} · ${a.notes.length} comentário${a.notes.length!==1?'s':''}</span><span class="sp"></span>
+    <button class="btn" data-agl="${a.id}">Abrir no GitLab ↗</button>${live?`<button class="btn danger" data-awd="${a.id}">Won't do</button>`:`<button class="btn" data-aro="${a.id}">Reabrir</button>`}</div>
+    <div class="bd"><pre style="margin:0;white-space:pre-wrap;font:12.5px/1.5 var(--mono)">${md(a.custom||body(a))}</pre>
+    ${a.notes.map(n=>`<div class="rp"><span class="muted">${esc(n.who)} · ${n.when}</span><p>${md(n.t)}</p></div>`).join('')}
+    ${it?`<div class="thr draft" style="margin:0;max-width:none"><div class="th"><span class="lbl">${it.busy?'CLAUDE PENSANDO…':'NOVA CORREÇÃO SUGERIDA'}</span><span class="sp"></span>${it.busy?'':`<button class="btn pri" data-aap="${a.id}">Atualizar o work item</button><button class="btn" data-adc="${a.id}">Descartar</button>`}</div>
+      <div class="bd"><p class="muted">Você: ${esc(it.ask)}</p>${it.busy?'':`<pre style="margin:0;white-space:pre-wrap;font:12.5px/1.5 var(--mono)">${md(it.fix)}</pre><p class="muted">Troca só a seção Correção sugerida e comenta no work item o que mudou e por quê.</p>`}</div></div>`:''}
+    ${live&&!it?`<textarea id="aC" placeholder="Comentar no #${a.iid}, ou pedir ao Claude outra correção (ele lê o código e os comentários, só leitura)"></textarea>
+      <div class="acts"><span class="muted">o comentário vai como você</span><span class="sp" style="flex:1"></span><button class="btn" data-acm="${a.id}">Comentar</button><button class="btn pri" data-ait="${a.id}">Iterar com o Claude</button></div>`:''}</div></div>`; };
 
 function renderAudit(el){
   const L=AU.last, list=AUD.filter(a=>!AU.ignored.includes(a));
@@ -1720,16 +1731,16 @@ function renderAudit(el){
     main=`<div class="ovw" style="max-width:760px;padding:16px 18px;overflow:auto;display:grid;gap:12px"><div class="steps">${AU.steps.map(s=>`<span class="${s.k}">${s.k==='ok'?'✓':s.k==='run'?'⟳':'↳'} ${esc(s.t)}</span>`).join('')}</div>
       <div class="acts"><span class="mono">US$ ${AU.spent.toFixed(2).replace('.',',')} de ${String(cap).replace('.',',')}</span><span class="sp" style="flex:1"></span>${AU.phase==='run'?'<button class="btn danger" id="auStop">Parar</button>':'<span class="muted">Parada. Nada foi criado; o gasto até aqui fica registrado.</span>'}</div></div>`;
   } else {
-    const sel=list.filter(a=>a.on&&a.st!=='dup'&&a.st!=='created');
+    const sel=list.filter(a=>a.on&&(a.st==='new'||a.st==='cross'));
     const groups=['P0','P1','P2','P3'].map(s=>[s,list.filter(a=>a.sev===s)]).filter(g=>g[1].length);
     main=`<div class="diff" style="font-family:var(--sans);padding:8px 0 30px">${AU.phase==='cached'?`<div class="banner" style="margin:0 12px 8px;border-radius:6px"><span>Este é o relatório salvo de ${L.when}. Abrir o projeto não roda auditoria; rode uma <b>incremental</b> quando quiser cobrir os ${L.commits} commits novos.</span></div>`:''}
       ${groups.map(([s,g])=>`<div class="fh" style="position:static"><b>${s}</b><span class="muted">${SEVT[s]}</span></div>`+g.map(a=>{
         const o=AU.open===a.id;
         return `<div style="border-bottom:1px solid var(--line)"><div class="row" style="grid-template-columns:18px minmax(0,1fr) auto auto;cursor:default">
-          <input type="checkbox" data-au="${a.id}" ${a.on?'checked':''} ${a.st==='dup'||a.st==='created'?'disabled':''} aria-label="Selecionar ${esc(a.title)}">
+          <input type="checkbox" data-au="${a.id}" ${a.on?'checked':''} ${a.st==='new'||a.st==='cross'?'':'disabled'} aria-label="Selecionar ${esc(a.title)}">
           <button style="text-align:left;min-width:0" data-ao="${a.id}"><div class="t">${o?'▾':'▸'} [${a.sev}] ${esc(a.title)}</div><div class="who"><span class="mono">${a.loc}</span> · ${a.lab.join(', ')} · confiança ${a.conf}</div></button>
           ${stLbl(a)}<span class="acts">${a.st==='created'?`<button class="btn" data-afix="${a.id}">Corrigir em feature</button>`:''}</span></div>
-          ${o?`<div style="padding:4px 12px 12px 42px;display:grid;gap:8px">${AU.editing===a.id?`<textarea id="aT" style="width:100%;min-height:220px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:12.5px/1.5 var(--mono);padding:8px">${esc(a.custom||body(a))}</textarea><div class="acts"><button class="btn pri" data-asv="${a.id}">Salvar texto</button><button class="btn" data-acn>Cancelar</button></div>`
+          ${o?`<div style="padding:4px 12px 12px 42px;display:grid;gap:8px">${a.st==='created'||a.st==='wont'?woView(a):AU.editing===a.id?`<textarea id="aT" style="width:100%;min-height:220px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:12.5px/1.5 var(--mono);padding:8px">${esc(a.custom||body(a))}</textarea><div class="acts"><button class="btn pri" data-asv="${a.id}">Salvar texto</button><button class="btn" data-acn>Cancelar</button></div>`
             :`<div class="thr" style="margin:0;max-width:none"><div class="th"><b>Prévia do work item</b><span class="sp"></span>${a.st==='dup'||a.st==='created'?'':`<button class="btn" data-aed="${a.id}">Editar</button><button class="btn danger" data-aig="${a.id}">Não é problema</button>`}</div><div class="bd"><pre style="margin:0;white-space:pre-wrap;font:12.5px/1.5 var(--mono)">${md(a.custom||body(a))}</pre></div></div>`}</div>`:''}</div>`; }).join('')).join('')}
       <details style="padding:10px 14px"><summary class="muted" style="cursor:pointer">${AUD_DROPPED.length} descartados na verificação${AU.ignored.length?` · ${AU.ignored.length} marcados como “não é problema”`:''}</summary><ul style="color:var(--muted);padding-left:18px">${AUD_DROPPED.map(d=>`<li>${esc(d)}</li>`).join('')}${AU.ignored.map(a=>`<li>${esc(a.title)}: ignorado por você <button class="btn" data-aun="${a.id}">Desfazer</button></li>`).join('')}</ul></details></div>
       <div class="pubbar"><span class="${sel.length?'cnt':'muted'}">${sel.length} selecionado${sel.length!==1?'s':''}</span><span class="muted">nada é criado no GitLab sem este botão</span><span class="sp"></span><button class="btn pri" id="auCreate" ${sel.length?'':'disabled'}>Abrir ${sel.length} work item${sel.length!==1?'s':''}</button></div>`;
@@ -1750,6 +1761,15 @@ function renderAudit(el){
   el.querySelectorAll('[data-aig]').forEach(x=>x.onclick=()=>{ const a=A(x.dataset.aig); a.on=false; AU.ignored.push(a); AU.open=null; renderCenter(); toast('Ignorado: não volta nas próximas auditorias (.maestro/audit-ignore.json)',{label:'Desfazer',run:()=>{ AU.ignored=AU.ignored.filter(y=>y!==a); a.on=true; renderCenter(); }}); });
   el.querySelectorAll('[data-aun]').forEach(x=>x.onclick=()=>{ const a=A(x.dataset.aun); AU.ignored=AU.ignored.filter(y=>y!==a); a.on=true; renderCenter(); });
   el.querySelectorAll('[data-afix]').forEach(x=>x.onclick=()=>fixInFeature(A(x.dataset.afix)));
+  el.querySelectorAll('[data-agl]').forEach(x=>x.onclick=()=>toast(`Abrindo gitlab.com/…/bots-api/-/work_items/${A(x.dataset.agl).iid} no navegador`));
+  el.querySelectorAll('[data-awd]').forEach(x=>x.onclick=()=>wontDo(A(x.dataset.awd)));
+  el.querySelectorAll('[data-aro]').forEach(x=>x.onclick=()=>{ const a=A(x.dataset.aro); a.st='created'; a.lab=a.lab.filter(l=>l!=='wont-do'); renderCenter(); toast(`#${a.iid} reaberto`); });
+  el.querySelectorAll('[data-acm]').forEach(x=>x.onclick=()=>{ const t=$('#aC').value.trim(); if(!t) return $('#aC').focus(); A(x.dataset.acm).notes.push({who:'você',when:'agora',t}); renderCenter(); toast('Comentário publicado no work item'); });
+  el.querySelectorAll('[data-ait]').forEach(x=>x.onclick=()=>{ const a=A(x.dataset.ait), t=$('#aC').value.trim(); if(!t) return $('#aC').focus();
+    AU.iter[a.id]={ask:t,busy:true}; renderCenter();
+    setTimeout(()=>{ AU.iter[a.id]={ask:t,fix:'Deixar o handler como está e só adicionar `redact: [\'*.document\', \'*.cpf\']` no logger (`src/logger.ts`). O redact cobre também os outros 3 pontos que logam payload (`src/retry.ts:22`, `src/dlq.ts:9`, `src/slack.ts:31`).'}; if(S.mode==='audit') renderCenter(); },1400); });
+  el.querySelectorAll('[data-aap]').forEach(x=>x.onclick=()=>{ const a=A(x.dataset.aap), it=AU.iter[a.id]; a.fix=it.fix; a.custom=null; a.notes.push({who:'você',when:'agora',t:`Correção sugerida atualizada: ${it.ask}`}); delete AU.iter[a.id]; renderCenter(); toast(`#${a.iid} atualizado no GitLab`); });
+  el.querySelectorAll('[data-adc]').forEach(x=>x.onclick=()=>{ delete AU.iter[x.dataset.adc]; renderCenter(); });
 }
 let auT=[];
 function runAudit(){
@@ -1765,9 +1785,16 @@ function runAudit(){
 }
 function stopAudit(why){ auT.forEach(clearTimeout); auT=[]; AU.phase='stopped'; AU.steps.push({k:'',t:typeof why==='string'?why:'processo claude encerrado'}); renderCenter(); renderStatus(); }
 function createItems(){
-  const sel=AUD.filter(a=>a.on&&a.st!=='dup'&&a.st!=='created'&&!AU.ignored.includes(a));
+  const sel=AUD.filter(a=>a.on&&(a.st==='new'||a.st==='cross')&&!AU.ignored.includes(a));
   confirmDlg(`Abrir ${sel.length} work item${sel.length>1?'s':''} em bots-api?`,`Títulos no padrão [P0–P3] tipo(escopo), labels ${[...new Set(sel.flatMap(a=>a.lab))].join(', ')}, corpo com Problema / Evidência / Correção sugerida / Impacto. Ninguém é atribuído e nada é corrigido.`,'Abrir work items',()=>{
     sel.forEach(a=>{ a.st='created'; a.iid=AU.nextIid++; a.on=false; }); renderCenter(); toast(`${sel.length} work items abertos: #${sel[0].iid} a #${sel[sel.length-1].iid}`); });
+}
+function wontDo(a){
+  confirmDlg(`Fechar #${a.iid} como won't do?`,`Fecha o work item no GitLab com a label wont-do e o motivo abaixo como comentário. Ele também entra no .maestro/audit-ignore.json, para não voltar nas próximas auditorias.`,"Fechar como won't do",()=>{
+    const why=AU.why.trim(); a.st='wont'; a.lab=[...a.lab,'wont-do']; if(why) a.notes.push({who:'você',when:'agora',t:`Won't do: ${why}`}); renderCenter();
+    toast(`#${a.iid} fechado como won't do`,{label:'Desfazer',run:()=>{ a.st='created'; a.lab=a.lab.filter(l=>l!=='wont-do'); if(why) a.notes.pop(); renderCenter(); }}); },true);
+  $('.dlg p').insertAdjacentHTML('afterend','<textarea id="dWhy" placeholder="Motivo (opcional), vai como comentário" style="width:100%;min-height:64px;margin-top:8px;background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:13px/1.5 var(--sans);padding:6px 8px"></textarea>');
+  AU.why=''; $('#dWhy').oninput=e=>AU.why=e.target.value; $('#dWhy').focus();
 }
 function fixInFeature(a){
   const br=`fix/${a.iid}-${slug(a.title.replace(/^[^:]+:\s*/,'')).toLowerCase().slice(0,32).replace(/-+$/,'')}`;
