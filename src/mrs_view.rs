@@ -38,6 +38,21 @@ enum Drag {
     Drawer,
 }
 
+#[derive(Clone, Copy)]
+enum DRow {
+    Desc,
+    Disc,
+    File(usize),
+    Hunk(usize, usize),
+    Line(usize, usize, usize),
+    /// lado a lado: índices da velha e da nova no hunk
+    Pair(usize, usize, Option<usize>, Option<usize>),
+    /// rascunhos em linhas fora dos hunks, no fim do arquivo
+    Orphans(usize),
+    Lone,
+    Gens,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
     Review,
@@ -84,7 +99,12 @@ pub struct MrsView {
     /// o `S.undo` do protótipo: (MR, [(posição, rascunho)]) por descarte
     undo: Vec<(String, Vec<(usize, Draft)>)>,
     posting: bool,
-    scroll: ScrollHandle,
+    /// o diff do MR aberto, virtualizado: só as linhas na tela viram elemento
+    diff: ListState,
+    drows: Vec<DRow>,
+    scroll_to: Option<String>,
+    /// hash do diff de cada arquivo do MR aberto, para o "Visto"
+    hashes: HashMap<String, u64>,
     list_scroll: ScrollHandle,
     focus: FocusHandle,
     files_w: f32,
@@ -210,7 +230,10 @@ impl MrsView {
             drawer: None,
             undo: Vec::new(),
             posting: false,
-            scroll: ScrollHandle::new(),
+            diff: ListState::new(0, ListAlignment::Top, px(400.)),
+            drows: Vec::new(),
+            scroll_to: None,
+            hashes: HashMap::new(),
             list_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             files_w: 270.,
@@ -650,6 +673,8 @@ impl MrsView {
             self.selected = None;
             self.collapsed.clear();
             self.replying = None;
+            self.hashes.clear();
+            self.diff.reset(0);
         }
         cx.spawn(async move |this, cx| {
             let o = cx
@@ -661,8 +686,13 @@ impl MrsView {
                     && row.iid == iid
                 {
                     if let Ok(o) = &o {
-                        for (path, _, diff) in &o.raw {
-                            if this.viewed.get(path) == Some(&mrs::diff_hash(diff)) {
+                        this.hashes = o
+                            .raw
+                            .iter()
+                            .map(|(p, _, d)| (p.clone(), mrs::diff_hash(d)))
+                            .collect();
+                        for (path, h) in &this.hashes {
+                            if this.viewed.get(path) == Some(h) {
                                 this.collapsed.insert(path.clone());
                             }
                         }
@@ -676,22 +706,19 @@ impl MrsView {
         cx.notify();
     }
 
-    fn file_hash(o: &Opened, path: &str) -> u64 {
-        o.raw
-            .iter()
-            .find(|(p, _, _)| p == path)
-            .map_or(0, |(_, _, d)| mrs::diff_hash(d))
+    fn file_hash(&self, path: &str) -> u64 {
+        self.hashes.get(path).copied().unwrap_or_default()
     }
 
-    fn is_viewed(&self, o: &Opened, path: &str) -> bool {
-        self.viewed.get(path) == Some(&Self::file_hash(o, path))
+    fn is_viewed(&self, _: &Opened, path: &str) -> bool {
+        self.viewed.get(path) == Some(&self.file_hash(path))
     }
 
     /// Marcado e depois mudou num commit novo: volta a "não visto", com aviso.
-    fn changed_since(&self, o: &Opened, path: &str) -> bool {
+    fn changed_since(&self, _: &Opened, path: &str) -> bool {
         self.viewed
             .get(path)
-            .is_some_and(|h| *h != Self::file_hash(o, path))
+            .is_some_and(|h| *h != self.file_hash(path))
     }
 
     fn visible_files(&self, o: &Opened) -> Vec<String> {
@@ -707,7 +734,7 @@ impl MrsView {
         let Some((row, Some(Ok(o)))) = &self.open else {
             return;
         };
-        let (key, hash) = (row.key(), Self::file_hash(o, path));
+        let (key, hash) = (row.key(), self.file_hash(path));
         let on = !self.is_viewed(o, path);
         let file = mrs::viewed_file();
         let state = std::fs::read_to_string(&file).unwrap_or_default();
@@ -1178,9 +1205,7 @@ impl MrsView {
 
     /// `set_offset` não limita: o offset vai de 0 a `-max_offset`.
     fn scroll_by(&self, dy: Pixels) {
-        let o = self.scroll.offset();
-        let y = (o.y - dy).min(px(0.)).max(-self.scroll.max_offset().y);
-        self.scroll.set_offset(point(o.x, y));
+        self.diff.scroll_by(dy);
     }
 
     fn on_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1228,13 +1253,16 @@ impl MrsView {
             ("j" | "down", Some(_)) if !k.modifiers.modified() => self.scroll_by(px(66.)),
             ("k" | "up", Some(_)) if !k.modifiers.modified() => self.scroll_by(px(-66.)),
             ("pagedown" | "space", Some(_)) if !k.modifiers.modified() => {
-                self.scroll_by(self.scroll.bounds().size.height - px(44.))
+                self.scroll_by(self.diff.viewport_bounds().size.height - px(44.))
             }
             ("pageup", Some(_)) if !k.modifiers.modified() => {
-                self.scroll_by(px(44.) - self.scroll.bounds().size.height)
+                self.scroll_by(px(44.) - self.diff.viewport_bounds().size.height)
             }
-            ("home", Some(_)) => self.scroll_by(self.scroll.offset().y),
-            ("end", Some(_)) => self.scroll_by(self.scroll.max_offset().y),
+            ("home", Some(_)) => self.diff.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.),
+            }),
+            ("end", Some(_)) => self.diff.scroll_to_end(),
             ("j" | "down", None) => {
                 self.sel = (self.sel + 1).min(self.rows(cx).len().saturating_sub(1));
                 // o filho 0 da lista é a âncora do tour
@@ -1910,39 +1938,89 @@ impl MrsView {
     }
 
     /// As discussões que não são de sistema, com o índice original (id dos botões).
-    fn threads(o: &Opened) -> Vec<(usize, Value)> {
+    fn threads(o: &Opened) -> Vec<(usize, &Value)> {
         o.discussions
             .as_array()
             .into_iter()
             .flatten()
             .enumerate()
             .filter(|(_, d)| d["notes"][0]["system"] != true)
-            .map(|(i, d)| (i, d.clone()))
             .collect()
     }
 
-    /// Em que posição da rolagem está cada arquivo: Discussões (se houver) vem antes.
     fn scroll_to_file(&mut self, path: &str, cx: &mut Context<Self>) {
-        let Some((_, Some(Ok(o)))) = &self.open else {
-            return;
-        };
-        if self.hide_gen && Self::is_gen(o, path) {
+        if let Some((_, Some(Ok(o)))) = &self.open
+            && self.hide_gen
+            && Self::is_gen(o, path)
+        {
             self.hide_gen = false;
         }
-        let disc = Self::threads(o)
-            .iter()
-            .any(|(_, d)| d["notes"][0]["position"].is_null());
-        let i = o
-            .files
-            .iter()
-            .filter(|f| !(self.hide_gen && Self::is_gen(o, &f.path)))
-            .position(|f| f.path == path);
-        let desc = !Self::description(o).is_empty();
-        if let Some(i) = i {
-            self.scroll
-                .scroll_to_top_of_item(i + disc as usize + desc as usize);
-        }
+        self.scroll_to = Some(path.to_string());
         cx.notify();
+    }
+
+    /// As linhas da lista; contar no fim preserva o topo da rolagem quando algo abre ou fecha.
+    fn sync_rows(&mut self) {
+        let mut rows = Vec::new();
+        if let Some((_, Some(Ok(o)))) = &self.open {
+            if !Self::description(o).is_empty() {
+                rows.push(DRow::Desc);
+            }
+            if Self::threads(o)
+                .iter()
+                .any(|(_, d)| d["notes"][0]["position"].is_null())
+            {
+                rows.push(DRow::Disc);
+            }
+            let mut gens = false;
+            for (fi, f) in o.files.iter().enumerate() {
+                if Self::is_gen(o, &f.path) {
+                    gens = true;
+                    if self.hide_gen {
+                        continue;
+                    }
+                }
+                rows.push(DRow::File(fi));
+                if self.collapsed.contains(&f.path) {
+                    continue;
+                }
+                for (hi, h) in f.hunks.iter().enumerate() {
+                    rows.push(DRow::Hunk(fi, hi));
+                    if self.split {
+                        rows.extend(
+                            diff::side_by_side(&h.lines)
+                                .into_iter()
+                                .map(|(l, r)| DRow::Pair(fi, hi, l, r)),
+                        );
+                    } else {
+                        rows.extend((0..h.lines.len()).map(|li| DRow::Line(fi, hi, li)));
+                    }
+                }
+                rows.push(DRow::Orphans(fi));
+            }
+            rows.push(DRow::Lone);
+            if self.hide_gen && gens {
+                rows.push(DRow::Gens);
+            }
+            if let Some(target) = self.scroll_to.take()
+                && let Some(ix) = rows
+                    .iter()
+                    .position(|r| matches!(r, DRow::File(fi) if o.files[*fi].path == target))
+            {
+                self.diff.scroll_to(ListOffset {
+                    item_ix: ix,
+                    offset_in_item: px(0.),
+                });
+            }
+        }
+        let (old, new) = (self.diff.item_count(), rows.len());
+        if new > old {
+            self.diff.splice(old..old, new - old);
+        } else if new < old {
+            self.diff.splice(new..old, 0);
+        }
+        self.diff.remeasure_items(0..new);
+        self.drows = rows;
     }
 
     fn toggle_collapsed(&mut self, path: &str, cx: &mut Context<Self>) {
@@ -1988,7 +2066,7 @@ impl MrsView {
         &self,
         f: &FileDiff,
         l: &diff::Line,
-        threads: &[(usize, Value)],
+        threads: &[(usize, &Value)],
         drafts: &[Draft],
         side: Side,
         cx: &mut Context<Self>,
@@ -2150,209 +2228,413 @@ impl MrsView {
             })
     }
 
-    fn file_block(&self, fi: usize, f: &FileDiff, o: &Opened, cx: &mut Context<Self>) -> Div {
+    fn desc_block(&self, row: &Row, o: &Opened, cx: &mut Context<Self>) -> Div {
         let t = self.theme.clone();
-        let (a, r) = f.counts();
-        let drafts: Vec<Draft> = self
-            .open
-            .as_ref()
-            .and_then(|(row, _)| self.drafts.get(&row.key()))
-            .cloned()
-            .unwrap_or_default();
-        let threads = Self::threads(o);
-        let collapsed = self.collapsed.contains(&f.path);
-        let (seen, changed) = (self.is_viewed(o, &f.path), self.changed_since(o, &f.path));
-        let vpath = f.path.clone();
-        let n_threads = threads
-            .iter()
-            .filter(|(_, d)| d["notes"][0]["position"]["new_path"] == f.path.as_str())
-            .count();
-        let path = f.path.clone();
-        let mut block =
-            div().flex().flex_col().child(
+        let desc = Self::description(o);
+        let open = !self.desc_closed.contains(&row.key());
+        let key = row.key();
+        div()
+            .flex()
+            .flex_col()
+            .border_b_1()
+            .border_color(t.line)
+            .font_family(t.sans)
+            .child(
                 div()
-                    .id(("fh", fi))
+                    .id("mr-desc")
                     .flex()
                     .gap(px(10.))
                     .items_center()
                     .px(px(12.))
                     .py(px(6.))
                     .bg(t.panel)
-                    .border_t_1()
-                    .border_b_1()
-                    .border_color(t.line)
-                    .font_family(t.sans)
                     .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_collapsed(&path, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.desc_closed.remove(&key) {
+                            this.desc_closed.insert(key.clone());
+                        }
+                        cx.notify();
+                    }))
                     .child(
                         div()
                             .w(px(16.))
-                            .flex_none()
                             .text_center()
                             .text_size(px(12.))
-                            .font_family(t.mono.clone())
                             .text_color(t.muted)
-                            .child(if collapsed { "▸" } else { "▾" }),
+                            .child(if open { "▾" } else { "▸" }),
                     )
-                    .child(div().font_family(t.mono.clone()).child(f.path.clone()))
-                    .when(f.new, |x| x.child(pill(&t, "novo", t.accent, false)))
-                    .when(Self::is_gen(o, &f.path), |x| {
-                        x.child(pill(&t, "gerado", t.comment, true))
-                    })
-                    .child(div().text_color(t.ok).child(format!("+{a}")))
-                    .child(div().text_color(red()).child(format!("−{r}")))
-                    .child(div().flex_1())
-                    .when(collapsed, |x| {
-                        let what = if seen { "visto" } else { "colapsado" };
-                        x.child(div().text_size(px(12.)).text_color(t.muted).child(
-                            if n_threads > 0 {
+                    .child("Descrição")
+                    .child(div().text_color(t.muted).child(row.who.clone())),
+            )
+            .when(open, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .px(px(14.))
+                        .py(px(8.))
+                        .line_height(px(20.))
+                        .text_size(px(13.5))
+                        .children(Self::desc_lines(desc, &t)),
+                )
+            })
+    }
+
+    fn disc_block(&self, o: &Opened, cx: &mut Context<Self>) -> Div {
+        let t = self.theme.clone();
+        let general: Vec<(usize, &Value)> = Self::threads(o)
+            .into_iter()
+            .filter(|(_, d)| d["notes"][0]["position"].is_null())
+            .collect();
+        let n = general.len();
+        let mut disc = div()
+            .flex()
+            .flex_col()
+            .pb(px(6.))
+            .border_b_1()
+            .border_color(t.line)
+            .child(
+                div()
+                    .flex()
+                    .gap(px(10.))
+                    .items_center()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .bg(t.panel)
+                    .border_b_1()
+                    .border_color(t.line)
+                    .font_family(t.sans)
+                    .child("Discussões")
+                    .child(div().text_color(t.muted).child(format!(
+                        "{n} gera{}, fora do código",
+                        if n > 1 { "is" } else { "l" }
+                    ))),
+            );
+        for (i, d) in &general {
+            disc = disc.child(self.thread(d, *i, Side::Disc, cx));
+        }
+        disc
+    }
+
+    fn lone(&self, row: &Row, cx: &mut Context<Self>) -> Div {
+        let lone: Vec<Draft> = self
+            .drafts
+            .get(&row.key())
+            .map(|v| {
+                v.iter()
+                    .filter(|d| d.line.is_none() && d.old.is_none() && d.reply_to.is_none())
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        div().flex().flex_col().children(
+            lone.iter()
+                .map(|d| self.place(Side::Unified, self.draft_box(d, cx))),
+        )
+    }
+
+    fn gens_note(&self, o: &Opened, cx: &mut Context<Self>) -> Div {
+        let t = self.theme.clone();
+        let gens: Vec<&FileDiff> = o
+            .files
+            .iter()
+            .filter(|f| Self::is_gen(o, &f.path))
+            .collect();
+        let names: Vec<&str> = gens
+            .iter()
+            .map(|f| f.path.rsplit('/').next().unwrap_or(&f.path))
+            .collect();
+        let n = gens.len();
+        div()
+            .flex()
+            .flex_wrap()
+            .gap(px(8.))
+            .items_center()
+            .px(px(12.))
+            .py(px(10.))
+            .font_family(t.sans)
+            .text_color(t.muted)
+            .child(format!(
+                "{n} arquivo{s} gerado{s} oculto{s} ({}).",
+                names.join(", "),
+                s = if n > 1 { "s" } else { "" }
+            ))
+            .child(
+                button(&t, "gen-show", "Mostrar", false).on_click(cx.listener(|this, _, _, cx| {
+                    this.hide_gen = false;
+                    cx.notify();
+                })),
+            )
+    }
+
+    fn row_ctx<'a>(
+        &'a self,
+        f: &FileDiff,
+        o: &'a Opened,
+    ) -> (Vec<(usize, &'a Value)>, &'a [Draft]) {
+        let drafts = self
+            .open
+            .as_ref()
+            .and_then(|(row, _)| self.drafts.get(&row.key()))
+            .map_or(&[][..], Vec::as_slice);
+        let threads = Self::threads(o)
+            .into_iter()
+            .filter(|(_, d)| {
+                let p = &d["notes"][0]["position"];
+                p["new_path"] == f.path.as_str() || p["old_path"] == f.path.as_str()
+            })
+            .collect();
+        (threads, drafts)
+    }
+
+    fn diff_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let (Some((row, Some(Ok(o)))), Some(&r)) = (&self.open, self.drows.get(ix)) else {
+            return div().into_any_element();
+        };
+        match r {
+            DRow::Desc => self.desc_block(row, o, cx),
+            DRow::Disc => self.disc_block(o, cx),
+            DRow::File(fi) => self.file_head(fi, &o.files[fi], o, cx),
+            DRow::Hunk(fi, hi) => self.hunk_head(fi, hi, &o.files[fi], cx),
+            DRow::Line(fi, hi, li) => self.line_row(fi, hi, li, &o.files[fi], o, cx),
+            DRow::Pair(fi, hi, l, r) => self.pair_row(fi, hi, (l, r), &o.files[fi], o, cx),
+            DRow::Orphans(fi) => self.orphans(&o.files[fi], o, cx),
+            DRow::Lone => self.lone(row, cx),
+            DRow::Gens => self.gens_note(o, cx),
+        }
+        .w_full()
+        .into_any_element()
+    }
+
+    fn file_head(&self, fi: usize, f: &FileDiff, o: &Opened, cx: &mut Context<Self>) -> Div {
+        let t = self.theme.clone();
+        let (a, r) = f.counts();
+        let collapsed = self.collapsed.contains(&f.path);
+        let (seen, changed) = (self.is_viewed(o, &f.path), self.changed_since(o, &f.path));
+        let vpath = f.path.clone();
+        let n_threads = Self::threads(o)
+            .iter()
+            .filter(|(_, d)| d["notes"][0]["position"]["new_path"] == f.path.as_str())
+            .count();
+        let path = f.path.clone();
+        div().flex().flex_col().child(
+            div()
+                .id(("fh", fi))
+                .flex()
+                .gap(px(10.))
+                .items_center()
+                .px(px(12.))
+                .py(px(6.))
+                .bg(t.panel)
+                .border_t_1()
+                .border_b_1()
+                .border_color(t.line)
+                .font_family(t.sans)
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_collapsed(&path, cx)))
+                .child(
+                    div()
+                        .w(px(16.))
+                        .flex_none()
+                        .text_center()
+                        .text_size(px(12.))
+                        .font_family(t.mono.clone())
+                        .text_color(t.muted)
+                        .child(if collapsed { "▸" } else { "▾" }),
+                )
+                .child(div().font_family(t.mono.clone()).child(f.path.clone()))
+                .when(f.new, |x| x.child(pill(&t, "novo", t.accent, false)))
+                .when(Self::is_gen(o, &f.path), |x| {
+                    x.child(pill(&t, "gerado", t.comment, true))
+                })
+                .child(div().text_color(t.ok).child(format!("+{a}")))
+                .child(div().text_color(red()).child(format!("−{r}")))
+                .child(div().flex_1())
+                .when(collapsed, |x| {
+                    let what = if seen { "visto" } else { "colapsado" };
+                    x.child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(t.muted)
+                            .child(if n_threads > 0 {
                                 format!("{n_threads} thread(s) · {what}")
                             } else {
                                 what.into()
-                            },
-                        ))
-                    })
-                    .when(changed, |x| {
-                        x.child(pill(&t, "mudou desde que você viu", t.orange, false))
-                    })
-                    .child(
-                        div()
-                            .id(("mr-vw", fi))
-                            .flex()
-                            .gap(px(5.))
-                            .items_center()
-                            .text_size(px(12.))
-                            .text_color(t.muted)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.toggle_viewed(&vpath, false, cx)
-                            }))
-                            .child(checkbox(&t, seen))
-                            .child("Visto"),
-                    ),
-            );
-        if collapsed {
-            return block;
-        }
-        for (hi, h) in f.hunks.iter().enumerate() {
-            let path = f.path.clone();
-            block = block.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .px(px(12.))
-                    .text_color(t.comment)
-                    .bg(rgba(0x6272a41f))
-                    .child(h.header.clone())
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .id(("mr-ask", fi * 1000 + hi))
-                            .font_family(t.mono.clone())
-                            .text_size(px(11.5))
-                            .px(px(6.))
-                            .border_1()
-                            .border_color(t.line)
-                            .rounded(px(4.))
-                            .bg(t.raise)
-                            .text_color(t.muted)
-                            .cursor_pointer()
-                            .hover(|d| d.text_color(t.fg).border_color(t.muted))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(c) = this.ask_ctx(&path, Some(hi), 0) {
-                                    cx.emit(Event::AskClaude(c));
-                                }
-                            }))
-                            .child("?"),
-                    ),
-            );
-            if self.split {
-                for (li, (l, r)) in diff::side_by_side(&h.lines).into_iter().enumerate() {
-                    let id = (fi * 1000 + hi) * 10_000 + li;
-                    block = block.child(
-                        div()
-                            .flex()
-                            .child(self.half(id * 2, f, l, true, cx))
-                            .child(self.half(id * 2 + 1, f, r, false, cx)),
-                    );
-                    if let Some(l) = l.filter(|l| l.kind == Kind::Del) {
-                        block =
-                            block.children(self.extras(f, l, &threads, &drafts, Side::Left, cx));
-                    }
-                    if let Some(r) = r {
-                        block =
-                            block.children(self.extras(f, r, &threads, &drafts, Side::Right, cx));
-                    }
-                }
-                continue;
-            }
-            for (li, l) in h.lines.iter().enumerate() {
-                let sel = self.is_selected(&f.path, l);
-                let (path, n, old) = (f.path.clone(), l.new, l.old);
-                let bg = match l.kind {
-                    Kind::Add => Some(Hsla::from(rgba(0x50fa7b1a))),
-                    Kind::Del => Some(Hsla::from(rgba(0xff55551f))),
-                    Kind::Context => None,
-                };
-                let sign = match l.kind {
-                    Kind::Add => "+",
-                    Kind::Del => "-",
-                    Kind::Context => "",
-                };
-                let num = |v: Option<u32>| {
-                    div()
-                        .w(px(40.))
-                        .flex_none()
-                        .pr(px(8.))
-                        .text_right()
-                        .text_color(t.comment)
-                        .child(v.map(|x| x.to_string()).unwrap_or_default())
-                };
-                let id = (fi * 1000 + hi) * 10_000 + li;
-                block = block.child(
-                    div()
-                        .id(("ml", id))
-                        .group("ml")
-                        .relative()
-                        .flex()
-                        .h(px(20.))
-                        .cursor_pointer()
-                        .when_some(bg, |x, c| x.bg(c))
-                        .hover(|x| x.bg(rgba(0x44475a73)))
-                        .when(sel, |x| x.border_l_3().border_color(t.accent))
-                        .on_click(cx.listener(move |this, _, w, cx| {
-                            this.select_line(&path, n, old, false, w, cx)
-                        }))
-                        .child(num(l.old))
-                        .child(num(l.new))
-                        .child(div().w(px(18.)).flex_none().text_color(t.muted).child(sign))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .pr(px(8.))
-                                .child(self.code(&l.text)),
-                        )
-                        .child(self.comment_btn(id, 62., (&f.path, l.new, l.old), sel, cx)),
-                );
-                block = block.children(self.extras(f, l, &threads, &drafts, Side::Unified, cx));
-            }
-        }
-        for d in drafts.iter().filter(|d| {
-            d.reply_to.is_none()
-                && d.file == f.path
-                && d.line.is_some_and(|l| {
-                    !f.hunks
-                        .iter()
-                        .flat_map(|h| &h.lines)
-                        .any(|x| x.new == Some(l))
+                            }),
+                    )
                 })
-        }) {
-            block = block.child(self.place(Side::Unified, self.draft_box(d, cx)));
+                .when(changed, |x| {
+                    x.child(pill(&t, "mudou desde que você viu", t.orange, false))
+                })
+                .child(
+                    div()
+                        .id(("mr-vw", fi))
+                        .flex()
+                        .gap(px(5.))
+                        .items_center()
+                        .text_size(px(12.))
+                        .text_color(t.muted)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_viewed(&vpath, false, cx)
+                        }))
+                        .child(checkbox(&t, seen))
+                        .child("Visto"),
+                ),
+        )
+    }
+
+    fn hunk_head(&self, fi: usize, hi: usize, f: &FileDiff, cx: &mut Context<Self>) -> Div {
+        let t = self.theme.clone();
+        let h = &f.hunks[hi];
+        let path = f.path.clone();
+        div()
+            .flex()
+            .items_center()
+            .px(px(12.))
+            .text_color(t.comment)
+            .bg(rgba(0x6272a41f))
+            .child(h.header.clone())
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id(("mr-ask", fi * 1000 + hi))
+                    .font_family(t.mono.clone())
+                    .text_size(px(11.5))
+                    .px(px(6.))
+                    .border_1()
+                    .border_color(t.line)
+                    .rounded(px(4.))
+                    .bg(t.raise)
+                    .text_color(t.muted)
+                    .cursor_pointer()
+                    .hover(|d| d.text_color(t.fg).border_color(t.muted))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(c) = this.ask_ctx(&path, Some(hi), 0) {
+                            cx.emit(Event::AskClaude(c));
+                        }
+                    }))
+                    .child("?"),
+            )
+    }
+
+    fn line_row(
+        &self,
+        fi: usize,
+        hi: usize,
+        li: usize,
+        f: &FileDiff,
+        o: &Opened,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = self.theme.clone();
+        let (threads, drafts) = self.row_ctx(f, o);
+        let l = &f.hunks[hi].lines[li];
+        let sel = self.is_selected(&f.path, l);
+        let (path, n, old) = (f.path.clone(), l.new, l.old);
+        let bg = match l.kind {
+            Kind::Add => Some(Hsla::from(rgba(0x50fa7b1a))),
+            Kind::Del => Some(Hsla::from(rgba(0xff55551f))),
+            Kind::Context => None,
+        };
+        let sign = match l.kind {
+            Kind::Add => "+",
+            Kind::Del => "-",
+            Kind::Context => "",
+        };
+        let num = |v: Option<u32>| {
+            div()
+                .w(px(40.))
+                .flex_none()
+                .pr(px(8.))
+                .text_right()
+                .text_color(t.comment)
+                .child(v.map(|x| x.to_string()).unwrap_or_default())
+        };
+        let id = (fi * 1000 + hi) * 10_000 + li;
+        let line = div()
+            .id(("ml", id))
+            .group("ml")
+            .relative()
+            .flex()
+            .h(px(20.))
+            .cursor_pointer()
+            .when_some(bg, |x, c| x.bg(c))
+            .hover(|x| x.bg(rgba(0x44475a73)))
+            .when(sel, |x| x.border_l_3().border_color(t.accent))
+            .on_click(
+                cx.listener(move |this, _, w, cx| this.select_line(&path, n, old, false, w, cx)),
+            )
+            .child(num(l.old))
+            .child(num(l.new))
+            .child(div().w(px(18.)).flex_none().text_color(t.muted).child(sign))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .pr(px(8.))
+                    .child(self.code(&l.text)),
+            )
+            .child(self.comment_btn(id, 62., (&f.path, l.new, l.old), sel, cx));
+        div().flex().flex_col().child(line).children(self.extras(
+            f,
+            l,
+            &threads,
+            drafts,
+            Side::Unified,
+            cx,
+        ))
+    }
+
+    fn pair_row(
+        &self,
+        fi: usize,
+        hi: usize,
+        (l, r): (Option<usize>, Option<usize>),
+        f: &FileDiff,
+        o: &Opened,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (threads, drafts) = self.row_ctx(f, o);
+        let lines = &f.hunks[hi].lines;
+        // a nova é única por par; sem nova, a velha é uma removida que nenhum outro par usa
+        let id = (fi * 1000 + hi) * 10_000 + r.or(l).unwrap_or_default();
+        let (l, r) = (l.map(|i| &lines[i]), r.map(|i| &lines[i]));
+        let mut out = div().flex().flex_col().child(
+            div()
+                .flex()
+                .child(self.half(id * 2, f, l, true, cx))
+                .child(self.half(id * 2 + 1, f, r, false, cx)),
+        );
+        if let Some(l) = l.filter(|l| l.kind == Kind::Del) {
+            out = out.children(self.extras(f, l, &threads, drafts, Side::Left, cx));
         }
-        block
+        if let Some(r) = r {
+            out = out.children(self.extras(f, r, &threads, drafts, Side::Right, cx));
+        }
+        out
+    }
+
+    fn orphans(&self, f: &FileDiff, o: &Opened, cx: &mut Context<Self>) -> Div {
+        let (_, drafts) = self.row_ctx(f, o);
+        div().flex().flex_col().children(
+            drafts
+                .iter()
+                .filter(|d| {
+                    d.reply_to.is_none()
+                        && d.file == f.path
+                        && d.line.is_some_and(|l| {
+                            !f.hunks
+                                .iter()
+                                .flat_map(|h| &h.lines)
+                                .any(|x| x.new == Some(l))
+                        })
+                })
+                .map(|d| self.place(Side::Unified, self.draft_box(d, cx))),
+        )
     }
 
     /// A coluna "Arquivos do MR" (o `renderMRFiles` do protótipo), com os gerados numa seção recolhível.
@@ -2505,7 +2787,7 @@ impl MrsView {
 
     fn mr(&self, cx: &mut Context<Self>) -> Div {
         let t = self.theme.clone();
-        let Some((row, opened)) = self.open.clone() else {
+        let Some((row, opened)) = &self.open else {
             return div();
         };
         let ci = Self::ci_label(self.ci.get(&row.key()).copied(), &t);
@@ -2728,151 +3010,22 @@ impl MrsView {
                                 cx.notify();
                             }),
                         ));
-                let mut scroll = div()
-                    .id("mr-diff")
+                let scroll = div()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .pb(px(40.))
+                    .flex()
+                    .flex_col()
                     .font_family(t.mono.clone())
                     .text_size(px(13.5))
-                    .line_height(px(22.));
-                let desc = Self::description(o);
-                if !desc.is_empty() {
-                    let open = !self.desc_closed.contains(&row.key());
-                    let key = row.key();
-                    scroll = scroll.child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .border_b_1()
-                            .border_color(t.line)
-                            .font_family(t.sans)
-                            .child(
-                                div()
-                                    .id("mr-desc")
-                                    .flex()
-                                    .gap(px(10.))
-                                    .items_center()
-                                    .px(px(12.))
-                                    .py(px(6.))
-                                    .bg(t.panel)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if !this.desc_closed.remove(&key) {
-                                            this.desc_closed.insert(key.clone());
-                                        }
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        div()
-                                            .w(px(16.))
-                                            .text_center()
-                                            .text_size(px(12.))
-                                            .text_color(t.muted)
-                                            .child(if open { "▾" } else { "▸" }),
-                                    )
-                                    .child("Descrição")
-                                    .child(div().text_color(t.muted).child(row.who.clone())),
-                            )
-                            .when(open, |d| {
-                                d.child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap(px(2.))
-                                        .px(px(14.))
-                                        .py(px(8.))
-                                        .line_height(px(20.))
-                                        .text_size(px(13.5))
-                                        .children(Self::desc_lines(desc, &t)),
-                                )
-                            }),
+                    .line_height(px(22.))
+                    .child(
+                        list(
+                            self.diff.clone(),
+                            cx.processor(|this, ix, _, cx| this.diff_row(ix, cx)),
+                        )
+                        .flex_1()
+                        .pb(px(40.)),
                     );
-                }
-                let general: Vec<(usize, Value)> = Self::threads(o)
-                    .into_iter()
-                    .filter(|(_, d)| d["notes"][0]["position"].is_null())
-                    .collect();
-                if !general.is_empty() {
-                    let n = general.len();
-                    let mut disc = div()
-                        .flex()
-                        .flex_col()
-                        .pb(px(6.))
-                        .border_b_1()
-                        .border_color(t.line)
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(10.))
-                                .items_center()
-                                .px(px(12.))
-                                .py(px(6.))
-                                .bg(t.panel)
-                                .border_b_1()
-                                .border_color(t.line)
-                                .font_family(t.sans)
-                                .child("Discussões")
-                                .child(div().text_color(t.muted).child(format!(
-                                    "{n} gera{}, fora do código",
-                                    if n > 1 { "is" } else { "l" }
-                                ))),
-                        );
-                    for (i, d) in &general {
-                        disc = disc.child(self.thread(d, *i, Side::Disc, cx));
-                    }
-                    scroll = scroll.child(disc);
-                }
-                for (i, f) in o.files.iter().enumerate() {
-                    if !(hide && Self::is_gen(o, &f.path)) {
-                        scroll = scroll.child(self.file_block(i, f, o, cx));
-                    }
-                }
-                let lone: Vec<Draft> = self
-                    .drafts
-                    .get(&row.key())
-                    .map(|v| {
-                        v.iter()
-                            .filter(|d| d.line.is_none() && d.old.is_none() && d.reply_to.is_none())
-                            .cloned()
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                for d in &lone {
-                    scroll = scroll.child(self.place(Side::Unified, self.draft_box(d, cx)));
-                }
-                if hide && !gens.is_empty() {
-                    let names: Vec<&str> = gens
-                        .iter()
-                        .map(|f| f.path.rsplit('/').next().unwrap_or(&f.path))
-                        .collect();
-                    let n = gens.len();
-                    scroll =
-                        scroll.child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap(px(8.))
-                                .items_center()
-                                .px(px(12.))
-                                .py(px(10.))
-                                .font_family(t.sans)
-                                .text_color(t.muted)
-                                .child(format!(
-                                    "{n} arquivo{s} gerado{s} oculto{s} ({}).",
-                                    names.join(", "),
-                                    s = if n > 1 { "s" } else { "" }
-                                ))
-                                .child(button(&t, "gen-show", "Mostrar", false).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.hide_gen = false;
-                                        cx.notify();
-                                    }),
-                                )),
-                        );
-                }
                 div()
                     .flex_1()
                     .min_h_0()
@@ -3267,6 +3420,7 @@ impl MrsView {
 impl Render for MrsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme.clone();
+        self.sync_rows();
         let center = if self.open.is_some() {
             self.mr(cx)
         } else {
