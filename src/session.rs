@@ -36,6 +36,8 @@ struct Tracked {
     one_million: bool,
     /// arquivos que o Claude editou (Edit/Write/MultiEdit/NotebookEdit), caminho absoluto
     edited: BTreeSet<String>,
+    /// pastas em que um Bash escreveu (`cd outro-repo && sed -i …`, `git commit`, `glab mr create`)
+    bash_dirs: BTreeSet<String>,
     /// o último plano com sub-tasks e quantos já vieram
     plan: Option<(u64, Vec<Proposal>)>,
 }
@@ -97,6 +99,7 @@ impl Sessions {
             .edited
             .iter()
             .filter_map(|f| Path::new(f).parent().map(Path::to_path_buf))
+            .chain(t.bash_dirs.iter().map(PathBuf::from))
             .collect();
         let mut out: Vec<PathBuf> = Vec::new();
         for d in dirs {
@@ -163,6 +166,95 @@ fn git_root(dir: &Path) -> Option<PathBuf> {
         .then(|| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
 }
 
+/// As pastas em que um comando Bash escreveu: segue os `cd` e marca o trecho que muda arquivo ou o git.
+/// ponytail: heurística por palavra-chave; um `>` de comparação num script pode marcar a pasta atual a mais
+fn bash_writes(cmd: &str, home: &str) -> Vec<String> {
+    let resolve = |d: &str, cur: Option<&str>| -> Option<String> {
+        let d = d.trim_matches(|c| c == '"' || c == '\'');
+        let d = match d.strip_prefix('~').or_else(|| d.strip_prefix("$HOME")) {
+            Some(rest) => format!("{home}{rest}"),
+            None => d.to_string(),
+        };
+        if d.starts_with('/') {
+            Some(d)
+        } else {
+            cur.map(|c| format!("{c}/{d}"))
+        }
+    };
+    let mut cur: Option<String> = None;
+    let mut out: Vec<String> = Vec::new();
+    for seg in cmd
+        .split(['\n', ';'])
+        .flat_map(|s| s.split("&&"))
+        .flat_map(|s| s.split("||"))
+    {
+        let seg = seg.trim().trim_start_matches(['(', '{']).trim();
+        let w: Vec<&str> = seg.split_whitespace().collect();
+        if w.first() == Some(&"cd") {
+            if let Some(d) = w.get(1) {
+                cur = resolve(d, cur.as_deref());
+            }
+            continue;
+        }
+        let dir = match w.as_slice() {
+            ["git", "-C", d, ..] => resolve(d, cur.as_deref()),
+            _ => cur.clone(),
+        };
+        if let Some(d) = dir.filter(|_| writes(seg))
+            && !out.contains(&d)
+        {
+            out.push(d);
+        }
+    }
+    out
+}
+
+fn writes(seg: &str) -> bool {
+    const W: &[&str] = &[
+        "sed -i",
+        "tee ",
+        "cp ",
+        "mv ",
+        "rm ",
+        "mkdir ",
+        "git add",
+        "git commit",
+        "git checkout -b",
+        "git switch -c",
+        "git push",
+        "git apply",
+        "git cherry-pick",
+        "git merge",
+        "git rebase",
+        "git reset",
+        "git restore",
+        "git stash",
+        "glab mr create",
+        "--write",
+        "--fix",
+        "pnpm install",
+        "pnpm add",
+        "npm install",
+        "npm i ",
+        "yarn add",
+        "yarn install",
+    ];
+    let padded = format!(" {seg} ");
+    let git_c = seg.starts_with("git -C ");
+    W.iter().any(|w| {
+        padded.contains(&format!(" {w}"))
+            || git_c && w.starts_with("git ") && padded.contains(&format!(" {}", &w[4..]))
+    }) || seg.contains("open(") && (seg.contains("'w'") || seg.contains("\"w\""))
+        || seg.match_indices('>').any(|(i, _)| {
+            let before = seg[..i].chars().last();
+            let rest = seg[i + 1..].trim_start_matches('>').trim_start();
+            !matches!(before, Some('=' | '-' | '>'))
+                && !rest.is_empty()
+                && !rest.starts_with('&')
+                && !rest.starts_with("/dev/")
+        })
+}
+
 fn read_line(t: &mut Tracked, line: &str) {
     let cost = line.contains("\"type\":\"cost-state\"");
     let assistant = line.contains("\"type\":\"assistant\"");
@@ -202,6 +294,13 @@ fn read_line(t: &mut Tracked, line: &str) {
                 .or(c["input"]["notebook_path"].as_str());
             if let (true, Some(p)) = (c["type"] == "tool_use" && edit, path) {
                 t.edited.insert(p.into());
+            }
+            if c["type"] == "tool_use"
+                && c["name"] == "Bash"
+                && let Some(cmd) = c["input"]["command"].as_str()
+            {
+                let home = std::env::var("HOME").unwrap_or_default();
+                t.bash_dirs.extend(bash_writes(cmd, &home));
             }
             // o plano vem no ExitPlanMode; o "Pedir ao Claude para propor" pode voltar em texto
             let plan = match c["name"].as_str() {
@@ -249,6 +348,41 @@ fn civil(days: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bash_que_escreve_em_outro_repo() {
+        let h = "/h";
+        let w = |c: &str| bash_writes(c, h);
+        assert_eq!(
+            w("cd ~/r/zendesk && sed -i 's/a/b/' package.json && grep -n x package.json"),
+            ["/h/r/zendesk"]
+        );
+        assert_eq!(
+            w(
+                "cd ~/r/zendesk && mkdir -p src/x && cat > src/x/a.ts <<'EOF'\nconst f = () => 1;\nEOF"
+            ),
+            ["/h/r/zendesk"]
+        );
+        assert_eq!(
+            w("set -e\ncd ~/r/roleset && git checkout -q -b feat/x && git commit -q -m y"),
+            ["/h/r/roleset"]
+        );
+        assert_eq!(
+            w("cd ~/r/roleset && glab mr create --draft --title t"),
+            ["/h/r/roleset"]
+        );
+        assert!(w("cd ~/r/kong && grep -rln zendesk . | head; sed -n 1,5p a.yaml").is_empty());
+        assert!(w("cd ~/r/pipe && git status -sb | head -2 && cat a.yml 2>/dev/null").is_empty());
+        assert!(w("cd ~/r/z 2>/dev/null || { ls ~/r | grep -i z; exit; }").is_empty());
+        assert!(w("sed -i s/a/b/ relativo-sem-cd.txt").is_empty());
+        assert_eq!(w("cd /a && cd b && echo x > f"), ["/a/b"]);
+        assert_eq!(w("git -C /a/b commit -m x"), ["/a/b"]);
+        assert_eq!(
+            w("cd ~/r/z && python3 - <<'EOF'\nopen(p,'w').write(s)\nEOF"),
+            ["/h/r/z"]
+        );
+        assert!(w("cd /a && git log -1 --format=%h 2>&1").is_empty());
+    }
 
     #[test]
     fn datas() {
