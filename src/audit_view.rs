@@ -1267,6 +1267,7 @@ impl AuditView {
         if o && let Some(iid) = f.iid() {
             return el.child(
                 div()
+                    .min_w_0()
                     .pl(px(42.))
                     .pr(px(12.))
                     .pb(px(12.))
@@ -1415,7 +1416,13 @@ impl AuditView {
                     .when(busy, |d| d.opacity(0.5))
                     .on_click(cx.listener(move |this, _, _, cx| this.ask_wont(i, cx)))
             });
-        let mut body = div().flex().flex_col().gap(px(8.)).px(px(10.)).py(px(8.));
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .gap(px(8.))
+            .px(px(10.))
+            .py(px(8.));
         match &w {
             None => {}
             Some(Err(e)) => {
@@ -1425,6 +1432,7 @@ impl AuditView {
                 body = body
                     .child(
                         div()
+                            .min_w_0()
                             .font_family(t.mono.clone())
                             .text_size(px(13.5))
                             .line_height(px(21.))
@@ -1435,6 +1443,7 @@ impl AuditView {
                         div()
                             .flex()
                             .flex_col()
+                            .min_w_0()
                             .pl(px(8.))
                             .border_l_2()
                             .border_color(t.line)
@@ -1444,7 +1453,7 @@ impl AuditView {
                                     .text_color(t.muted)
                                     .child(format!("{who} · {when}")),
                             )
-                            .child(div().whitespace_normal().child(md(&t, text)))
+                            .child(div().min_w_0().whitespace_normal().child(md(&t, text)))
                     }));
             }
         }
@@ -1452,6 +1461,7 @@ impl AuditView {
         if let Some((ask, res)) = it {
             let ready = matches!(res, Some(Ok(_)));
             let draft = div()
+                .min_w_0()
                 .rounded(px(6.))
                 .border_1()
                 .border_dashed()
@@ -1500,6 +1510,7 @@ impl AuditView {
             let mut inner = div()
                 .flex()
                 .flex_col()
+                .min_w_0()
                 .gap(px(6.))
                 .px(px(10.))
                 .pb(px(8.))
@@ -1509,6 +1520,7 @@ impl AuditView {
                     inner = inner
                         .child(
                             div()
+                                .min_w_0()
                                 .font_family(t.mono.clone())
                                 .text_size(px(13.5))
                                 .line_height(px(21.))
@@ -1528,6 +1540,7 @@ impl AuditView {
             body = body
                 .child(
                     div()
+                        .min_w_0()
                         .min_h(px(64.))
                         .text_size(px(13.5))
                         .child(self.note.clone()),
@@ -1556,6 +1569,7 @@ impl AuditView {
                 );
         }
         div()
+            .min_w_0()
             .rounded(px(6.))
             .border_1()
             .border_color(t.line)
