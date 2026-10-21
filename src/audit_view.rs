@@ -546,11 +546,11 @@ impl AuditView {
         .detach();
     }
 
-    pub fn take_up(&mut self, iid: u64, cx: &mut Context<Self>) {
+    pub fn take_up(&mut self, iid: u64, branch: String, cx: &mut Context<Self>) {
         self.gitlab(
             iid,
             format!("#{iid} em andamento com você de assignee"),
-            move |p| audit::start(p, iid),
+            move |p| audit::start(p, iid, &branch),
             |_, _| {},
             cx,
         );
@@ -566,7 +566,7 @@ impl AuditView {
             iid,
             format!("Corrigir #{iid} numa feature nova?"),
             format!(
-                "Cria a worktree {br}, põe o #{iid} em andamento com você de assignee e abre o Claude com ele como tarefa. Ele não commita nem abre MR sem você pedir."
+                "Cria a worktree {br}, comenta no #{iid} e põe em andamento com você de assignee, e abre o Claude com ele como tarefa. Quando o MR mergear, o #{iid} vai para Done e fecha. Ele não commita nem abre MR sem você pedir."
             ),
             br,
             format!(
@@ -1207,13 +1207,14 @@ impl AuditView {
             St::Dup(r) => (format!("já existe {r}"), t.muted),
             St::Created(i) => (format!("aberto #{i}"), t.ok),
             St::Wont(i) => (format!("won't do #{i}"), t.muted),
+            St::Done(i) => (format!("corrigido #{i}"), t.muted),
         };
         div()
             .px(px(7.))
             .py(px(1.))
             .rounded(px(10.))
             .border_1()
-            .border_color(if matches!(f.st, St::Dup(_) | St::Wont(_)) {
+            .border_color(if matches!(f.st, St::Dup(_) | St::Wont(_) | St::Done(_)) {
                 t.line
             } else {
                 c
@@ -1373,11 +1374,13 @@ impl AuditView {
     /// O work item aberto: texto do GitLab, comentários, rascunho do Claude e a caixa de comentar.
     fn wi_view(&self, i: usize, iid: u64, cx: &mut Context<Self>) -> Div {
         let t = self.theme.clone();
-        let wont = self
+        let st = self
             .report
             .as_ref()
             .and_then(|r| r.findings.get(i))
-            .is_some_and(|f| matches!(f.st, St::Wont(_)));
+            .map(|f| f.st.clone());
+        let done = matches!(st, Some(St::Done(_)));
+        let wont = done || matches!(st, Some(St::Wont(_)));
         let w = self.wis.get(&iid).cloned().flatten();
         let n = match &w {
             Some(Ok(w)) => w.notes.len(),
@@ -1388,7 +1391,9 @@ impl AuditView {
             Some(Err(_)) => "não deu para ler".into(),
             Some(Ok(w)) => format!(
                 "{} · {n} comentário{}",
-                if wont {
+                if done {
+                    "corrigido e fechado"
+                } else if wont {
                     "fechado como won't do"
                 } else if w.closed {
                     "fechado"

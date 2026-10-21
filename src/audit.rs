@@ -38,6 +38,8 @@ pub enum St {
     Created(u64),
     /// fechado como won't do pelo Maestro
     Wont(u64),
+    /// o MR da correção mergeou e o Maestro fechou
+    Done(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,12 +88,15 @@ impl Finding {
     }
 
     pub fn open(&self) -> bool {
-        !matches!(self.st, St::Dup(_) | St::Created(_) | St::Wont(_))
+        !matches!(
+            self.st,
+            St::Dup(_) | St::Created(_) | St::Wont(_) | St::Done(_)
+        )
     }
 
     pub fn iid(&self) -> Option<u64> {
         match self.st {
-            St::Created(i) | St::Wont(i) => Some(i),
+            St::Created(i) | St::Wont(i) | St::Done(i) => Some(i),
             _ => None,
         }
     }
@@ -973,16 +978,19 @@ pub fn reopen(project: &str, iid: u64) -> Result<(), String> {
 const START_Q: &str = "query($p:ID!,$iid:String!){currentUser{id} project(fullPath:$p){workItems(iids:[$iid]){nodes{id workItemType{widgetDefinitions{... on WorkItemWidgetDefinitionStatus{allowedStatuses{id category}}}}}}}}";
 const START_M: &str = "mutation($in:WorkItemUpdateInput!){workItemUpdate(input:$in){errors}}";
 
-/// "Corrigir em feature": o work item passa a ser seu e vai para o status de categoria `in_progress`.
+/// Status pela categoria (`in_progress`, `done`), não pelo nome: vale para status customizados.
 /// Sem o widget de status (GitLab Free), só o assignee muda.
-pub fn start(project: &str, iid: u64) -> Result<(), String> {
+fn set_wi(project: &str, iid: u64, category: &str, assign: bool) -> Result<(), String> {
     let v = mrs::write(
         "POST",
         "graphql",
         &json!({ "query": START_Q, "variables": { "p": project, "iid": iid.to_string() } }),
     )?;
-    let (me, wi, status) = start_ids(&v)?;
-    let mut input = json!({ "id": wi, "assigneesWidget": { "assigneeIds": [me] } });
+    let (me, wi, status) = start_ids(&v, category)?;
+    let mut input = json!({ "id": wi });
+    if assign {
+        input["assigneesWidget"] = json!({ "assigneeIds": [me] });
+    }
     if let Some(s) = status {
         input["statusWidget"] = json!({ "status": s });
     }
@@ -994,8 +1002,46 @@ pub fn start(project: &str, iid: u64) -> Result<(), String> {
     .map(|_| ())
 }
 
-/// (eu, o work item, o status "em andamento" se o tipo tiver status)
-pub fn start_ids(v: &Value) -> Result<(String, String, Option<String>), String> {
+/// "Corrigir em feature": comenta, põe você de assignee e o status em andamento.
+pub fn start(project: &str, iid: u64, branch: &str) -> Result<(), String> {
+    comment(
+        project,
+        iid,
+        &format!("Correção em andamento na branch `{branch}`, aberta pelo Maestro."),
+    )?;
+    set_wi(project, iid, "in_progress", true)
+}
+
+/// O MR da `fix/<iid>-…` de um achado aberto foi mergeado: comenta, status Done, fecha e
+/// marca o achado como corrigido no relatório. `None` se a branch não veio de um achado.
+pub fn finish_merged(repo: &Path, branch: &str, mr: u64) -> Result<Option<u64>, String> {
+    let Some(mut r) = latest(repo) else {
+        return Ok(None);
+    };
+    let Some(f) = r.findings.iter_mut().find(|f| match f.st {
+        St::Created(n) => fix_branch(n, &f.title) == branch,
+        _ => false,
+    }) else {
+        return Ok(None);
+    };
+    let St::Created(iid) = f.st else {
+        return Ok(None);
+    };
+    let project = project_of(repo).ok_or("o origin não é do GitLab")?;
+    comment(
+        &project,
+        iid,
+        &format!("Corrigido no !{mr}, mergeado. Fechado pelo Maestro."),
+    )?;
+    set_wi(&project, iid, "done", false)?;
+    put(&project, iid, json!({ "state_event": "close" }))?;
+    f.st = St::Done(iid);
+    save(repo, &r)?;
+    Ok(Some(iid))
+}
+
+/// (eu, o work item, o status da categoria se o tipo tiver status)
+pub fn start_ids(v: &Value, category: &str) -> Result<(String, String, Option<String>), String> {
     let d = &v["data"];
     let me = d["currentUser"]["id"]
         .as_str()
@@ -1008,7 +1054,7 @@ pub fn start_ids(v: &Value) -> Result<(String, String, Option<String>), String> 
         .flatten()
         .filter_map(|w| w["allowedStatuses"].as_array())
         .flatten()
-        .find(|s| s["category"] == "in_progress")
+        .find(|s| s["category"] == category)
         .and_then(|s| s["id"].as_str())
         .map(String::from);
     Ok((me.into(), wi.into(), status))
@@ -1239,7 +1285,7 @@ mod tests {
     fn em_andamento() {
         let v = json!({"data":{"currentUser":{"id":"gid://gitlab/User/1"},"project":{"workItems":{"nodes":[{"id":"gid://gitlab/WorkItem/9","workItemType":{"widgetDefinitions":[{},{"allowedStatuses":[{"id":"s1","category":"to_do"},{"id":"s2","category":"in_progress"}]}]}}]}}}});
         assert_eq!(
-            start_ids(&v).unwrap(),
+            start_ids(&v, "in_progress").unwrap(),
             (
                 "gid://gitlab/User/1".into(),
                 "gid://gitlab/WorkItem/9".into(),
@@ -1247,9 +1293,9 @@ mod tests {
             )
         );
         let free = json!({"data":{"currentUser":{"id":"u"},"project":{"workItems":{"nodes":[{"id":"w","workItemType":{"widgetDefinitions":[{}]}}]}}}});
-        assert_eq!(start_ids(&free).unwrap().2, None);
+        assert_eq!(start_ids(&free, "done").unwrap().2, None);
         let none = json!({"data":{"currentUser":{"id":"u"},"project":{"workItems":{"nodes":[]}}}});
-        assert!(start_ids(&none).is_err());
+        assert!(start_ids(&none, "done").is_err());
         assert_eq!(
             mrs::gql_ok(r#"{"data":{"workItemUpdate":{"errors":["sem permissão"]}}}"#),
             Err("sem permissão".into())

@@ -337,6 +337,7 @@ impl Shell {
                     SidebarEvent::OpenFile(p) => this.want_file = Some(p.clone()),
                     SidebarEvent::OpenFileAt(p, l) => this.want_file_at = Some((p.clone(), *l)),
                     SidebarEvent::Merged(wt, iid, branch) => {
+                        this.close_fixed(wt.clone(), *iid, branch.clone(), cx);
                         this.want_merged = Some((wt.clone(), *iid, branch.clone()))
                     }
                     SidebarEvent::Notify(n) => this.notify_note(n.clone(), cx),
@@ -1520,6 +1521,36 @@ impl Shell {
         cx.observe(&a, |_, _, cx| cx.notify()).detach();
         self.audit = Some(a.clone());
         a
+    }
+
+    /// O MR de uma `fix/<iid>-…` da auditoria mergeou: o work item vai para Done e fecha.
+    fn close_fixed(
+        &mut self,
+        wt: std::path::PathBuf,
+        mr: u64,
+        branch: String,
+        cx: &mut Context<Self>,
+    ) {
+        let repo = herdr::main_repo(&wt);
+        cx.spawn(async move |this, cx| {
+            let r = cx
+                .background_executor()
+                .spawn(async move { crate::audit::finish_merged(&repo, &branch, mr) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match r {
+                    Ok(Some(iid)) => {
+                        this.toast(format!("#{iid} corrigido no !{mr} e fechado no GitLab"), cx)
+                    }
+                    Ok(None) => return,
+                    Err(e) => this.toast(format!("Não deu para fechar o work item: {e}"), cx),
+                }
+                if let Some(au) = &this.audit {
+                    au.update(cx, |au, cx| au.refresh(cx));
+                }
+            });
+        })
+        .detach();
     }
 
     /// "Corrigir em feature": a worktree `fix/<iid>-slug` com o Claude e o work item como tarefa.
@@ -3698,7 +3729,7 @@ impl Render for Shell {
                 this.confirm = None;
                 if matches!(a, Answer::Ok) {
                     if let Some(au) = &this.audit {
-                        au.update(cx, |au, cx| au.take_up(iid, cx));
+                        au.update(cx, |au, cx| au.take_up(iid, branch.clone(), cx));
                     }
                     this.fix_in_feature(branch.clone(), prompt.clone(), cx);
                     window.focus(&this.terminal.read(cx).focus_handle(), cx);
