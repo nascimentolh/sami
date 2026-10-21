@@ -45,6 +45,8 @@ pub enum SidebarEvent {
     /// botão direito na aba Arquivos; o shell mexe no disco e nas abas do editor
     Fs(FsOp),
     Toast(String),
+    /// o × do card: remover a feature daquela worktree
+    Remove(PathBuf),
 }
 
 #[derive(Clone, Debug)]
@@ -244,6 +246,7 @@ struct Row {
     child: bool,
     /// linhas embaixo do card: os outros repos e a pílula da pilha
     extra: Vec<AnyElement>,
+    rm: Option<AnyElement>,
 }
 
 impl Sidebar {
@@ -1413,6 +1416,7 @@ impl Sidebar {
             dim: false,
             child: false,
             extra: Vec::new(),
+            rm: None,
         }
     }
 
@@ -1420,6 +1424,7 @@ impl Sidebar {
         let t = &self.theme;
         div()
             .id(SharedString::from(r.id))
+            .group("frow")
             .relative()
             .flex()
             .flex_col()
@@ -1485,7 +1490,8 @@ impl Sidebar {
                             .text_size(px(12.))
                             .text_color(t.muted)
                             .child(r.k),
-                    ),
+                    )
+                    .children(r.rm),
             )
             .child(
                 div()
@@ -2229,6 +2235,7 @@ impl Render for Sidebar {
                     dim: false,
                     child: false,
                     extra: Vec::new(),
+                    rm: None,
                 },
                 {
                     let this = this.clone();
@@ -2269,6 +2276,27 @@ impl Render for Sidebar {
                             .any(|x| self.inv_of(x).is_some_and(|i| i.id == p.id))
                     });
                 row.extra = self.feature_extra(a, cx);
+                row.rm = self.inv_of(a).and_then(|_| {
+                    let wt = herdr::repo_root(Path::new(&a.cwd))?.to_path_buf();
+                    Some(
+                        div()
+                            .id(SharedString::from(format!("rm:{}", wt.display())))
+                            .flex_none()
+                            .px(px(2.))
+                            .rounded(px(3.))
+                            .text_size(px(13.))
+                            .text_color(t.comment)
+                            .invisible()
+                            .group_hover("frow", |s| s.visible())
+                            .hover(|d| d.text_color(t.fg).bg(t.line))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.stop_propagation();
+                                cx.emit(SidebarEvent::Remove(wt.clone()));
+                            }))
+                            .child("×")
+                            .into_any_element(),
+                    )
+                });
                 list = list.child(self.row(row, move |cx| {
                     this.update(cx, |s, cx| s.pick(|s| s.focus(pane.clone()), cx))
                 }));
@@ -2348,6 +2376,7 @@ impl Render for Sidebar {
                 dim: false,
                 child: false,
                 extra: Vec::new(),
+                rm: None,
             };
             terms = terms.child(self.row(row, move |cx| {
                 this.update(cx, |s, cx| s.pick(|s| s.focus_workspace(id.clone()), cx))
