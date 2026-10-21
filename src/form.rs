@@ -159,15 +159,26 @@ impl Render for TextField {
         } else {
             let lines: Vec<&str> = self.value.split('\n').collect();
             let last = lines.len() - 1;
+            let wrap = self.multiline;
             for (i, line) in lines.into_iter().enumerate() {
-                body = body.child(
+                // o GPUI só quebra texto em bloco; o cursor vai como caractere no fim da linha
+                body = body.child(if wrap {
+                    div()
+                        .min_h(px(18.))
+                        .whitespace_normal()
+                        .child(if focused && i == last {
+                            format!("{line}▏")
+                        } else {
+                            line.to_string()
+                        })
+                } else {
                     div()
                         .flex()
                         .items_center()
                         .min_h(px(18.))
                         .child(line.to_string())
-                        .when(focused && i == last, |d| d.child(caret())),
-                );
+                        .when(focused && i == last, |d| d.child(caret()))
+                });
             }
         }
         div()
