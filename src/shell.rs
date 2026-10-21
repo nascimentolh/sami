@@ -1299,7 +1299,8 @@ impl Shell {
             r.update(cx, |r, cx| r.ensure_mr(cx));
         }
         let before = self.parked.len();
-        self.parked.retain(|r| repos.contains(&r.read(cx).root));
+        self.parked
+            .retain(|r| repos.contains(&r.read(cx).root) || r.read(cx).keep(cx));
         let Some(owner) = repos.first().cloned().filter(|_| repos.len() > 1) else {
             if self.parked.len() != before {
                 cx.notify();
@@ -2583,16 +2584,23 @@ impl Shell {
     /// A faixa de repos acima do painel quando a sessão mexeu em mais de um (extensão do protótipo).
     fn repo_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
         let active = self.review.as_ref()?;
-        if self.parked.is_empty() {
-            return None;
-        }
-        let t = &self.theme;
         let order = self
             .sidebar
             .as_ref()
             .map(|s| s.read(cx).session_repos())
             .unwrap_or_default();
-        let mut all: Vec<&Entity<Review>> = std::iter::once(active).chain(&self.parked).collect();
+        // os guardados de outras sessões (pré-voo rodando) não entram na faixa desta
+        let mut all: Vec<&Entity<Review>> = std::iter::once(active)
+            .chain(
+                self.parked
+                    .iter()
+                    .filter(|r| order.contains(&r.read(cx).root)),
+            )
+            .collect();
+        if all.len() < 2 {
+            return None;
+        }
+        let t = &self.theme;
         all.sort_by_key(|r| order.iter().position(|o| *o == r.read(cx).root));
         let mut strip = div()
             .flex()
