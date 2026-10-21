@@ -656,9 +656,10 @@ impl AuditView {
         crate::spawn_reaped(std::process::Command::new("xdg-open").arg(url));
     }
 
-    fn comment(&mut self, iid: u64, cx: &mut Context<Self>) {
+    fn comment(&mut self, iid: u64, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.note.read(cx).value.trim().to_string();
         if text.is_empty() {
+            window.focus(&self.note.read(cx).focus_handle(), cx);
             return;
         }
         self.gitlab(
@@ -670,13 +671,14 @@ impl AuditView {
         );
     }
 
-    fn iterate(&mut self, iid: u64, cx: &mut Context<Self>) {
+    fn iterate(&mut self, iid: u64, window: &mut Window, cx: &mut Context<Self>) {
         let ask = self.note.read(cx).value.trim().to_string();
         let (Some(repo), Some(Some(Ok(w)))) = (self.repo.clone(), self.wis.get(&iid).cloned())
         else {
             return;
         };
         if ask.is_empty() {
+            window.focus(&self.note.read(cx).focus_handle(), cx);
             return;
         }
         self.note.update(cx, |n, cx| n.set(String::new(), cx));
@@ -1560,11 +1562,14 @@ impl AuditView {
                         .child(
                             button(&t, ("au-cm", i), "Comentar", false)
                                 .when(busy, |d| d.opacity(0.5))
-                                .on_click(cx.listener(move |this, _, _, cx| this.comment(iid, cx))),
+                                .on_click(
+                                    cx.listener(move |this, _, w, cx| this.comment(iid, w, cx)),
+                                ),
                         )
                         .child(
-                            button(&t, ("au-it", i), "Iterar com o Claude", true)
-                                .on_click(cx.listener(move |this, _, _, cx| this.iterate(iid, cx))),
+                            button(&t, ("au-it", i), "Iterar com o Claude", true).on_click(
+                                cx.listener(move |this, _, w, cx| this.iterate(iid, w, cx)),
+                            ),
                         ),
                 );
         }
