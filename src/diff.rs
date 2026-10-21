@@ -237,10 +237,15 @@ pub fn affected_tests(root: &Path, files: &[String]) -> Option<String> {
         .map(|f| crate::feature::sh_quote(f))
         .collect::<Vec<_>>()
         .join(" ");
+    // só os testes do diff nunca batem o limite de cobertura global do repo; quem cobra é o CI
     if pkg.contains("\"vitest\"") {
-        Some(format!("npx vitest related --run {list}"))
+        Some(format!(
+            "npx vitest related --run --coverage.enabled=false {list}"
+        ))
     } else if pkg.contains("\"jest\"") {
-        Some(format!("npx jest --findRelatedTests {list}"))
+        Some(format!(
+            "npx jest --coverage=false --findRelatedTests {list}"
+        ))
     } else if root.join("Cargo.toml").exists() {
         Some("cargo test".into())
     } else {
@@ -444,7 +449,10 @@ mod tests {
         .unwrap();
         let cmd = affected_tests(&root, &["a'; touch x; '.ts".into()]).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
-        assert_eq!(cmd, r"npx vitest related --run 'a'\''; touch x; '\''.ts'");
+        assert_eq!(
+            cmd,
+            r"npx vitest related --run --coverage.enabled=false 'a'\''; touch x; '\''.ts'"
+        );
     }
 
     const DIFF: &str = "diff --git a/src/app.ts b/src/app.ts
