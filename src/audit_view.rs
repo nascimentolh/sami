@@ -164,6 +164,7 @@ impl AuditView {
         self.repo = repo;
         self.reload();
         self.phase = Phase::Cached;
+        self.sync_closed(cx);
         cx.notify();
     }
 
@@ -171,8 +172,54 @@ impl AuditView {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if !self.running() {
             self.reload();
+            self.sync_closed(cx);
             cx.notify();
         }
+    }
+
+    /// "aberto #N" que fechou no GitLab vira corrigido (ou won't do, pela label).
+    fn sync_closed(&mut self, cx: &mut Context<Self>) {
+        let iids: Vec<u64> = self
+            .report
+            .iter()
+            .flat_map(|r| &r.findings)
+            .filter_map(|f| match f.st {
+                St::Created(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        let Some(project) = self.project().filter(|_| !iids.is_empty()) else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            // ponytail: sem rede fica como está; a próxima abertura tenta de novo
+            let Ok(closed) = cx
+                .background_executor()
+                .spawn(async move { audit::closed(&project, &iids) })
+                .await
+            else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                let Some(r) = this.report.as_mut() else {
+                    return;
+                };
+                let mut changed = false;
+                for f in &mut r.findings {
+                    if let St::Created(n) = f.st
+                        && let Some((_, wont)) = closed.iter().find(|(i, _)| *i == n)
+                    {
+                        f.st = if *wont { St::Wont(n) } else { St::Done(n) };
+                        changed = true;
+                    }
+                }
+                if changed {
+                    this.save(cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn reload(&mut self) {

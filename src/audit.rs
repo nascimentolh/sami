@@ -1040,6 +1040,33 @@ pub fn finish_merged(repo: &Path, branch: &str, mr: u64) -> Result<Option<u64>, 
     Ok(Some(iid))
 }
 
+/// Os work items fechados no GitLab, por fora do Maestro também (`Closes #N` do MR, à mão):
+/// (iid, fechado como won't do).
+pub fn closed(project: &str, iids: &[u64]) -> Result<Vec<(u64, bool)>, String> {
+    let q: String = iids.iter().map(|i| format!("&iids[]={i}")).collect();
+    let v = mrs::read(
+        &format!(
+            "projects/{}/issues?state=closed&per_page=100{q}",
+            mrs::enc(project)
+        ),
+        true,
+    )?;
+    Ok(closed_of(&v))
+}
+
+pub fn closed_of(v: &Value) -> Vec<(u64, bool)> {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|i| {
+            let wont = i["labels"]
+                .as_array()
+                .is_some_and(|l| l.iter().any(|x| x == "wont-do"));
+            Some((i["iid"].as_u64()?, wont))
+        })
+        .collect()
+}
+
 /// (eu, o work item, o status da categoria se o tipo tiver status)
 pub fn start_ids(v: &Value, category: &str) -> Result<(String, String, Option<String>), String> {
     let d = &v["data"];
@@ -1279,6 +1306,14 @@ mod tests {
                 .any(|x| x.contains("gcloud"))
         );
         assert_eq!(parse_findings(&v)[0].title, "sec(logs): x");
+    }
+
+    #[test]
+    fn fechados_por_fora() {
+        assert_eq!(
+            closed_of(&json!([{"iid":3,"labels":["security"]},{"iid":4,"labels":["wont-do"]}])),
+            [(3, false), (4, true)]
+        );
     }
 
     #[test]
