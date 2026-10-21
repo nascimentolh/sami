@@ -66,6 +66,8 @@ pub struct Shell {
     want_review_at: Option<std::path::PathBuf>,
     /// a pílula da pilha na lateral: o diálogo abre no próximo render
     want_stack: Option<(std::path::PathBuf, feature::Stack)>,
+    /// o × do card da lateral
+    want_remove: Option<std::path::PathBuf>,
     /// a fila do mascote e o que está na tela: (pedido, sequência, saindo)
     mq: Vec<Note>,
     /// as permissões que aprendem: sugestões esperando o diálogo
@@ -351,6 +353,7 @@ impl Shell {
                     SidebarEvent::Stack(wt, st) => this.want_stack = Some((wt.clone(), *st)),
                     SidebarEvent::Fs(op) => this.want_fs = Some(op.clone()),
                     SidebarEvent::Toast(m) => this.toast(m.clone(), cx),
+                    SidebarEvent::Remove(wt) => this.want_remove = Some(wt.clone()),
                 }
                 cx.notify();
             })
@@ -428,6 +431,7 @@ impl Shell {
             want_merged: None,
             want_review_at: None,
             want_stack: None,
+            want_remove: None,
             mq: Vec::new(),
             learn: Vec::new(),
             choice: None,
@@ -3695,6 +3699,11 @@ impl Render for Shell {
             && let Some((wt, st)) = self.want_stack.take()
         {
             self.stack_dialog(wt, st, window, cx);
+        }
+        if self.confirm.is_none()
+            && let Some(wt) = self.want_remove.take()
+        {
+            self.remove_feature_at(Some(wt), None, window, cx);
         }
         let overlay = self.tour.and_then(|(steps, _, i)| {
             let root = self.anchors.borrow().get("root").copied()?;
