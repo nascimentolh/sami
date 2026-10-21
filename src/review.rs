@@ -361,6 +361,11 @@ impl Review {
         self.card.as_ref()
     }
 
+    /// Fora da sessão em foco, o painel só fica guardado se tiver pré-voo (rodando ou com resultado).
+    pub fn keep(&self, cx: &App) -> bool {
+        self.mr.as_ref().is_some_and(|m| m.read(cx).has_preflight())
+    }
+
     /// Lê o MR sem trocar de aba: a faixa de repos mostra o MR de cada um.
     pub fn ensure_mr(&mut self, cx: &mut Context<Self>) {
         if self.mr.is_none() {

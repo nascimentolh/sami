@@ -142,6 +142,10 @@ impl MrTab {
         cx.notify();
     }
 
+    pub fn has_preflight(&self) -> bool {
+        self.checks.is_some()
+    }
+
     fn done(&self) -> bool {
         self.checks
             .as_ref()
