@@ -17,7 +17,7 @@ pub enum Event {
     /// confirmação antes de abrir os work items: (título, texto)
     AskCreate(String, String),
     /// "Corrigir em feature": (título, texto, branch, prompt)
-    AskFix(String, String, String, String),
+    AskFix(u64, String, String, String, String),
     /// "Won't do": (achado, título, texto); o motivo vem do campo do diálogo
     AskWont(usize, String, String),
     /// fechado como won't do, com desfazer (reabre)
@@ -164,6 +164,7 @@ impl AuditView {
         self.repo = repo;
         self.reload();
         self.phase = Phase::Cached;
+        self.sync_closed(cx);
         cx.notify();
     }
 
@@ -171,8 +172,54 @@ impl AuditView {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if !self.running() {
             self.reload();
+            self.sync_closed(cx);
             cx.notify();
         }
+    }
+
+    /// "aberto #N" que fechou no GitLab vira corrigido (ou won't do, pela label).
+    fn sync_closed(&mut self, cx: &mut Context<Self>) {
+        let iids: Vec<u64> = self
+            .report
+            .iter()
+            .flat_map(|r| &r.findings)
+            .filter_map(|f| match f.st {
+                St::Created(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        let Some(project) = self.project().filter(|_| !iids.is_empty()) else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            // ponytail: sem rede fica como está; a próxima abertura tenta de novo
+            let Ok(closed) = cx
+                .background_executor()
+                .spawn(async move { audit::closed(&project, &iids) })
+                .await
+            else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                let Some(r) = this.report.as_mut() else {
+                    return;
+                };
+                let mut changed = false;
+                for f in &mut r.findings {
+                    if let St::Created(n) = f.st
+                        && let Some((_, wont)) = closed.iter().find(|(i, _)| *i == n)
+                    {
+                        f.st = if *wont { St::Wont(n) } else { St::Done(n) };
+                        changed = true;
+                    }
+                }
+                if changed {
+                    this.save(cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn reload(&mut self) {
@@ -546,6 +593,16 @@ impl AuditView {
         .detach();
     }
 
+    pub fn take_up(&mut self, iid: u64, branch: String, cx: &mut Context<Self>) {
+        self.gitlab(
+            iid,
+            format!("#{iid} em andamento com você de assignee"),
+            move |p| audit::start(p, iid, &branch),
+            |_, _| {},
+            cx,
+        );
+    }
+
     fn ask_fix(&mut self, i: usize, cx: &mut Context<Self>) {
         let Some(f) = self.report.as_ref().and_then(|r| r.findings.get(i)) else {
             return;
@@ -553,9 +610,10 @@ impl AuditView {
         let St::Created(iid) = f.st else { return };
         let br = audit::fix_branch(iid, &f.title);
         cx.emit(Event::AskFix(
+            iid,
             format!("Corrigir #{iid} numa feature nova?"),
             format!(
-                "Cria a worktree {br} e abre o Claude com o work item #{iid} como tarefa. Ele não commita nem abre MR sem você pedir."
+                "Cria a worktree {br}, comenta no #{iid} e põe em andamento com você de assignee, e abre o Claude com ele como tarefa. Quando o MR mergear, o #{iid} vai para Done e fecha. Ele não commita nem abre MR sem você pedir."
             ),
             br,
             format!(
@@ -1196,13 +1254,14 @@ impl AuditView {
             St::Dup(r) => (format!("já existe {r}"), t.muted),
             St::Created(i) => (format!("aberto #{i}"), t.ok),
             St::Wont(i) => (format!("won't do #{i}"), t.muted),
+            St::Done(i) => (format!("corrigido #{i}"), t.muted),
         };
         div()
             .px(px(7.))
             .py(px(1.))
             .rounded(px(10.))
             .border_1()
-            .border_color(if matches!(f.st, St::Dup(_) | St::Wont(_)) {
+            .border_color(if matches!(f.st, St::Dup(_) | St::Wont(_) | St::Done(_)) {
                 t.line
             } else {
                 c
@@ -1362,11 +1421,13 @@ impl AuditView {
     /// O work item aberto: texto do GitLab, comentários, rascunho do Claude e a caixa de comentar.
     fn wi_view(&self, i: usize, iid: u64, cx: &mut Context<Self>) -> Div {
         let t = self.theme.clone();
-        let wont = self
+        let st = self
             .report
             .as_ref()
             .and_then(|r| r.findings.get(i))
-            .is_some_and(|f| matches!(f.st, St::Wont(_)));
+            .map(|f| f.st.clone());
+        let done = matches!(st, Some(St::Done(_)));
+        let wont = done || matches!(st, Some(St::Wont(_)));
         let w = self.wis.get(&iid).cloned().flatten();
         let n = match &w {
             Some(Ok(w)) => w.notes.len(),
@@ -1377,7 +1438,9 @@ impl AuditView {
             Some(Err(_)) => "não deu para ler".into(),
             Some(Ok(w)) => format!(
                 "{} · {n} comentário{}",
-                if wont {
+                if done {
+                    "corrigido e fechado"
+                } else if wont {
                     "fechado como won't do"
                 } else if w.closed {
                     "fechado"

@@ -1800,7 +1800,7 @@ function wontDo(a){
 }
 function fixInFeature(a){
   const br=`fix/${a.iid}-${slug(a.title.replace(/^[^:]+:\s*/,'')).toLowerCase().slice(0,32).replace(/-+$/,'')}`;
-  confirmDlg(`Corrigir #${a.iid} numa feature nova?`,`Cria a worktree ${br} e abre o Claude com o work item #${a.iid} como tarefa. Ele não commita nem abre MR sem você pedir.`,'Criar feature',()=>{
+  confirmDlg(`Corrigir #${a.iid} numa feature nova?`,`Cria a worktree ${br}, comenta no #${a.iid} e põe em andamento com você de assignee, e abre o Claude com ele como tarefa. Quando o MR mergear, o #${a.iid} vai para Done e fecha. Ele não commita nem abre MR sem você pedir.`,'Criar feature',()=>{
     spawnFeature(br,'main',`Corrija o work item #${a.iid} (${a.title}). Leia o work item com glab antes. Não commite.`,true,true,true); });
 }
 

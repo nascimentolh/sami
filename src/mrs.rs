@@ -509,7 +509,29 @@ pub fn write(method: &str, endpoint: &str, body: &Value) -> Result<Value, String
             Err(String::from_utf8_lossy(&out.stderr).into())
         };
     }
+    if endpoint == "graphql" {
+        return gql_ok(&text);
+    }
     created_id(&text).map(|_| serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+/// O GraphQL responde 200 com `errors` no corpo, no topo ou dentro da mutation.
+pub fn gql_ok(out: &str) -> Result<Value, String> {
+    let v: Value = serde_json::from_str(out)
+        .map_err(|_| out.chars().take(200).collect::<String>().replace('\n', " "))?;
+    let top = v["errors"]
+        .as_array()
+        .and_then(|e| e.first())
+        .map(|e| e["message"].clone());
+    let inner = v["data"]
+        .as_object()
+        .into_iter()
+        .flat_map(|d| d.values())
+        .find_map(|m| m["errors"].as_array().and_then(|e| e.first()).cloned());
+    match top.or(inner) {
+        Some(e) => Err(e.as_str().map_or_else(|| e.to_string(), String::from)),
+        None => Ok(v),
+    }
 }
 
 pub fn me() -> Option<String> {
