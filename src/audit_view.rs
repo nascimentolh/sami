@@ -406,7 +406,7 @@ impl AuditView {
         r.findings
             .iter()
             .enumerate()
-            .filter(|(_, f)| !self.is_ignored(f))
+            .filter(|(_, f)| !self.is_ignored(f) && !matches!(f.st, St::Dup(_)))
             .collect()
     }
 
@@ -1704,7 +1704,25 @@ impl AuditView {
             }
         }
         let ign: Vec<&Finding> = r.findings.iter().filter(|f| self.is_ignored(f)).collect();
-        let mut summary = format!("{} descartados na verificação", r.dropped.len());
+        let dups: Vec<(&Finding, &String)> = r
+            .findings
+            .iter()
+            .filter_map(|f| match &f.st {
+                St::Dup(n) => Some((f, n)),
+                _ => None,
+            })
+            .collect();
+        let mut summary = format!(
+            "{} descartados na verificação",
+            r.dropped.len() + dups.len()
+        );
+        if !dups.is_empty() {
+            summary.push_str(&format!(
+                " · {} já existia{}",
+                dups.len(),
+                if dups.len() > 1 { "m" } else { "" }
+            ));
+        }
         if !ign.is_empty() {
             summary.push_str(&format!(" · {} marcados como “não é problema”", ign.len()));
         }
@@ -1725,6 +1743,9 @@ impl AuditView {
             let mut ul = div().flex().flex_col().gap(px(4.)).pt(px(6.)).pl(px(18.));
             for d in &r.dropped {
                 ul = ul.child(format!("• {d}"));
+            }
+            for (f, n) in &dups {
+                ul = ul.child(format!("• {}: já existe {n}", f.title));
             }
             for (k, f) in ign.iter().enumerate() {
                 let ig = Ignored {
