@@ -1324,7 +1324,7 @@ impl AuditView {
                         .on_click(cx.listener(move |this, _, _, cx| this.ask_fix(i, cx))),
                 )
             });
-        let mut el = div().border_b_1().border_color(t.line).child(row);
+        let mut el = div().min_w_0().border_b_1().border_color(t.line).child(row);
         if o && let Some(iid) = f.iid() {
             return el.child(
                 div()
@@ -1342,9 +1342,11 @@ impl AuditView {
                     Some((j, field)) if *j == i => div()
                         .flex()
                         .flex_col()
+                        .min_w_0()
                         .gap(px(8.))
                         .child(
                             div()
+                                .min_w_0()
                                 .min_h(px(220.))
                                 .text_size(px(13.5))
                                 .child(field.clone()),
@@ -1364,6 +1366,7 @@ impl AuditView {
                                 )),
                         ),
                     _ => div()
+                        .min_w_0()
                         .rounded(px(6.))
                         .border_1()
                         .border_color(t.line)
@@ -1397,6 +1400,7 @@ impl AuditView {
                         )
                         .child(
                             div()
+                                .min_w_0()
                                 .px(px(10.))
                                 .py(px(8.))
                                 .font_family(t.mono.clone())
@@ -1408,6 +1412,7 @@ impl AuditView {
                 };
             el = el.child(
                 div()
+                    .min_w_0()
                     .pl(px(42.))
                     .pr(px(12.))
                     .pb(px(12.))
