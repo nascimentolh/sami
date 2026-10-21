@@ -2128,7 +2128,7 @@ function pfCard(f){ const pf=S.pf&&S.pf[f.id]; if(!pf) return '';
   const done=pf.every(c=>c.st!=='run'), failed=pf.some(c=>c.st==='fail');
   return `<div class="card2" style="text-align:left;margin-top:8px"><h4>Pré-voo</h4>${rows}${done&&failed?`<div class="acts"><button class="btn pri" id="pfFix">Pedir ao Claude para corrigir</button><button class="btn" id="pfAgain">Rodar de novo</button><button class="btn danger" id="pfOver">Abrir mesmo assim</button></div><p class="muted" style="font-size:12px">O Claude recebe o comando que falhou e o fim da saída; o MR só abre quando você mandar.</p>`:''}</div>`; }
 function runPf(f){ S.pf=S.pf||{}; S.pf[f.id]=PF_ITEMS.map(()=>({st:'run',d:''})); renderRight();
-  const res=[['ok','em dia com origin/main'],['ok','npx vitest related --run src/slack.ts'],['fail',"npm run -s lint: src/slack.ts:2:11 'timeout' is assigned a value but never used"],['skip','nenhum arquivo que o Sonar analise'],['ok','nenhum token ou chave nas linhas novas'],['ok','sem .env, build ou node_modules']];
+  const res=[['ok','em dia com origin/main'],['ok','npx vitest related --run --coverage.enabled=false src/slack.ts'],['fail',"npm run -s lint: src/slack.ts:2:11 'timeout' is assigned a value but never used"],['skip','nenhum arquivo que o Sonar analise'],['ok','nenhum token ou chave nas linhas novas'],['ok','sem .env, build ou node_modules']];
   res.forEach((r,i)=>setTimeout(()=>{ if(!S.pf[f.id]) return; S.pf[f.id][i]={st:r[0],d:r[1]}; renderRight(); },300+i*250)); }
 function bindMRTab(el,f){
   const b=(id,fn)=>{ const e=el.querySelector('#'+id); if(e) e.onclick=fn; };
