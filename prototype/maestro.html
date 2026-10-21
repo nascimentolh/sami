@@ -93,6 +93,7 @@ body.resizing{cursor:col-resize;user-select:none}
 .feat .g{font:12px var(--mono);text-align:center}
 .feat .b{font:12.5px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .feat .k{font-size:11px;color:var(--muted)}
+.feat .rmx{visibility:hidden;margin-left:4px;padding:0 2px;border-radius:3px;color:var(--comment);font-size:12px}.feat:hover .rmx{visibility:visible}.feat .rmx:hover{color:var(--fg);background:#343746}
 .feat .m{grid-column:2/4;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .feat .m.blocked{color:var(--orange)}.feat .m.done{color:var(--ok)}
 .feat.unseen::after{content:"";position:absolute;left:2px;top:8px;bottom:8px;width:2px;border-radius:2px;background:currentColor;animation:pulse 1.2s infinite}
@@ -1006,10 +1007,11 @@ function featBtn(x){ const s=ST[x.st], i=FEATS.indexOf(x), ws=x.kind==='ws';
   const sub=(x.repos?`<span class="sub" title="feature multi-repo: mesma branch em cada repo">${x.repos.map(r=>`<span>${r.name}${r.files?` · ${r.files}`:''}</span>`).join('')}</span>`:'')
     +(x.stack==='rebase'?`<span class="stk" data-stk="${x.id}" role="button" title="feat/healthcheck ganhou 2 commits depois que esta foi criada">base mudou · Rebase</span>`:x.stack==='merged'?`<span class="stk mv" data-stk="${x.id}" role="button" title="A mãe (!146) foi mergeada em main: rebase --onto main e o MR passa a apontar para main">mergeada · Mover p/ main</span>`:'');
   return `<button class="feat ${x.parent?'child':''} ${x.id===S.fid&&S.mode==='feat'?'on':''} ${x.unseen?'unseen '+x.st:''}" data-f="${x.id}" role="option" aria-selected="${x.id===S.fid}" title="Ctrl+Shift+${i+1}${x.parent?` · em cima de ${feat(x.parent).branch}`:''}">
-    <span class="g ${ws?'cm':'st-'+x.st} ${x.st==='working'?'spin':''}">${ws?'$':s.g}</span><span class="b">${x.branch}${x.group?`<span class="grp">${x.model}</span>`:''}</span><span class="k">${ws?x.tabs.length+' aba'+(x.tabs.length>1?'s':''):x.ago}</span>
+    <span class="g ${ws?'cm':'st-'+x.st} ${x.st==='working'?'spin':''}">${ws?'$':s.g}</span><span class="b">${x.branch}${x.group?`<span class="grp">${x.model}</span>`:''}</span><span class="k">${ws?x.tabs.length+' aba'+(x.tabs.length>1?'s':''):x.ago}${ws||x.id==='main'?'':`<span class="rmx" data-rmf="${x.id}" role="button" aria-label="Remover a feature ${x.branch}" title="Remover a feature…">×</span>`}</span>
     <span class="m ${x.st}">${ws?'só terminal':(x.st==='blocked'||x.st==='done'?s.l+' · ':'')+esc(x.msg)}</span>${ws?'':`<span class="m2">:${x.port} · US$ ${x.cost.toFixed(2).replace('.',',')} · <span class="${x.ctx>=80?'w8':''}">ctx ${x.ctx}%${x.ctx>=80?' ⚠':''}</span>${mrSum(x.mr)}</span>`}${sub}</button>`; }
 function bindLeft(el){
   el.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>selectFeat(b.dataset.f));
+  el.querySelectorAll('[data-rmf]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); removeFeatureDlg(feat(b.dataset.rmf)); });
   el.querySelectorAll('[data-stk]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); stackAction(feat(b.dataset.stk)); });
   el.querySelectorAll('[data-lt]').forEach(b=>b.onclick=()=>{ S.ltab=b.dataset.lt; renderLeft(); });
   el.querySelectorAll('[data-ch]').forEach(b=>b.onclick=()=>openReview(b.dataset.ch));
