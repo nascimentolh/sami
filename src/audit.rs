@@ -970,6 +970,50 @@ pub fn reopen(project: &str, iid: u64) -> Result<(), String> {
     )
 }
 
+const START_Q: &str = "query($p:ID!,$iid:String!){currentUser{id} project(fullPath:$p){workItems(iids:[$iid]){nodes{id workItemType{widgetDefinitions{... on WorkItemWidgetDefinitionStatus{allowedStatuses{id category}}}}}}}}";
+const START_M: &str = "mutation($in:WorkItemUpdateInput!){workItemUpdate(input:$in){errors}}";
+
+/// "Corrigir em feature": o work item passa a ser seu e vai para o status de categoria `in_progress`.
+/// Sem o widget de status (GitLab Free), só o assignee muda.
+pub fn start(project: &str, iid: u64) -> Result<(), String> {
+    let v = mrs::write(
+        "POST",
+        "graphql",
+        &json!({ "query": START_Q, "variables": { "p": project, "iid": iid.to_string() } }),
+    )?;
+    let (me, wi, status) = start_ids(&v)?;
+    let mut input = json!({ "id": wi, "assigneesWidget": { "assigneeIds": [me] } });
+    if let Some(s) = status {
+        input["statusWidget"] = json!({ "status": s });
+    }
+    mrs::write(
+        "POST",
+        "graphql",
+        &json!({ "query": START_M, "variables": { "in": input } }),
+    )
+    .map(|_| ())
+}
+
+/// (eu, o work item, o status "em andamento" se o tipo tiver status)
+pub fn start_ids(v: &Value) -> Result<(String, String, Option<String>), String> {
+    let d = &v["data"];
+    let me = d["currentUser"]["id"]
+        .as_str()
+        .ok_or("sem usuário no glab")?;
+    let n = &d["project"]["workItems"]["nodes"][0];
+    let wi = n["id"].as_str().ok_or("work item não encontrado")?;
+    let status = n["workItemType"]["widgetDefinitions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|w| w["allowedStatuses"].as_array())
+        .flatten()
+        .find(|s| s["category"] == "in_progress")
+        .and_then(|s| s["id"].as_str())
+        .map(String::from);
+    Ok((me.into(), wi.into(), status))
+}
+
 /// Troca a descrição e comenta o que mudou.
 pub fn update_fix(project: &str, iid: u64, body: &str, note: &str) -> Result<(), String> {
     put(project, iid, json!({ "description": body }))?;
@@ -1189,6 +1233,29 @@ mod tests {
                 .any(|x| x.contains("gcloud"))
         );
         assert_eq!(parse_findings(&v)[0].title, "sec(logs): x");
+    }
+
+    #[test]
+    fn em_andamento() {
+        let v = json!({"data":{"currentUser":{"id":"gid://gitlab/User/1"},"project":{"workItems":{"nodes":[{"id":"gid://gitlab/WorkItem/9","workItemType":{"widgetDefinitions":[{},{"allowedStatuses":[{"id":"s1","category":"to_do"},{"id":"s2","category":"in_progress"}]}]}}]}}}});
+        assert_eq!(
+            start_ids(&v).unwrap(),
+            (
+                "gid://gitlab/User/1".into(),
+                "gid://gitlab/WorkItem/9".into(),
+                Some("s2".into())
+            )
+        );
+        let free = json!({"data":{"currentUser":{"id":"u"},"project":{"workItems":{"nodes":[{"id":"w","workItemType":{"widgetDefinitions":[{}]}}]}}}});
+        assert_eq!(start_ids(&free).unwrap().2, None);
+        let none = json!({"data":{"currentUser":{"id":"u"},"project":{"workItems":{"nodes":[]}}}});
+        assert!(start_ids(&none).is_err());
+        assert_eq!(
+            mrs::gql_ok(r#"{"data":{"workItemUpdate":{"errors":["sem permissão"]}}}"#),
+            Err("sem permissão".into())
+        );
+        assert!(mrs::gql_ok(r#"{"errors":[{"message":"x"}]}"#).is_err());
+        assert!(mrs::gql_ok(r#"{"data":{"workItemUpdate":{"errors":[]}}}"#).is_ok());
     }
 
     #[test]

@@ -94,7 +94,7 @@ pub struct Shell {
     in_audit: bool,
     want_audit: bool,
     want_create: Option<(String, String)>,
-    want_fix: Option<(String, String, String, String)>,
+    want_fix: Option<(u64, String, String, String, String)>,
     want_wont: Option<(usize, String, String)>,
     /// o `openHelp` do protótipo
     help: bool,
@@ -1502,8 +1502,8 @@ impl Shell {
                 audit_view::Event::AskCreate(a, b) => {
                     this.want_create = Some((a.clone(), b.clone()))
                 }
-                audit_view::Event::AskFix(a, b, c, d) => {
-                    this.want_fix = Some((a.clone(), b.clone(), c.clone(), d.clone()))
+                audit_view::Event::AskFix(iid, a, b, c, d) => {
+                    this.want_fix = Some((*iid, a.clone(), b.clone(), c.clone(), d.clone()))
                 }
                 audit_view::Event::AskWont(i, a, b) => {
                     this.want_wont = Some((*i, a.clone(), b.clone()))
@@ -3689,7 +3689,7 @@ impl Render for Shell {
             self.confirm = Some(c);
         }
         if self.confirm.is_none()
-            && let Some((title, text, branch, prompt)) = self.want_fix.take()
+            && let Some((iid, title, text, branch, prompt)) = self.want_fix.take()
         {
             let theme = self.theme.clone();
             let c =
@@ -3697,6 +3697,9 @@ impl Render for Shell {
             cx.subscribe_in(&c, window, move |this, _, a: &Answer, window, cx| {
                 this.confirm = None;
                 if matches!(a, Answer::Ok) {
+                    if let Some(au) = &this.audit {
+                        au.update(cx, |au, cx| au.take_up(iid, cx));
+                    }
                     this.fix_in_feature(branch.clone(), prompt.clone(), cx);
                     window.focus(&this.terminal.read(cx).focus_handle(), cx);
                 }

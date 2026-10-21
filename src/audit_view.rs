@@ -17,7 +17,7 @@ pub enum Event {
     /// confirmação antes de abrir os work items: (título, texto)
     AskCreate(String, String),
     /// "Corrigir em feature": (título, texto, branch, prompt)
-    AskFix(String, String, String, String),
+    AskFix(u64, String, String, String, String),
     /// "Won't do": (achado, título, texto); o motivo vem do campo do diálogo
     AskWont(usize, String, String),
     /// fechado como won't do, com desfazer (reabre)
@@ -546,6 +546,16 @@ impl AuditView {
         .detach();
     }
 
+    pub fn take_up(&mut self, iid: u64, cx: &mut Context<Self>) {
+        self.gitlab(
+            iid,
+            format!("#{iid} em andamento com você de assignee"),
+            move |p| audit::start(p, iid),
+            |_, _| {},
+            cx,
+        );
+    }
+
     fn ask_fix(&mut self, i: usize, cx: &mut Context<Self>) {
         let Some(f) = self.report.as_ref().and_then(|r| r.findings.get(i)) else {
             return;
@@ -553,9 +563,10 @@ impl AuditView {
         let St::Created(iid) = f.st else { return };
         let br = audit::fix_branch(iid, &f.title);
         cx.emit(Event::AskFix(
+            iid,
             format!("Corrigir #{iid} numa feature nova?"),
             format!(
-                "Cria a worktree {br} e abre o Claude com o work item #{iid} como tarefa. Ele não commita nem abre MR sem você pedir."
+                "Cria a worktree {br}, põe o #{iid} em andamento com você de assignee e abre o Claude com ele como tarefa. Ele não commita nem abre MR sem você pedir."
             ),
             br,
             format!(
