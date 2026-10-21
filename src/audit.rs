@@ -125,13 +125,33 @@ fn dir(repo: &Path) -> PathBuf {
     repo.join(".maestro")
 }
 
-/// O último relatório salvo. É só isto (e `since`) que roda ao abrir o projeto.
+/// O último relatório salvo, com os work items ainda abertos das auditorias anteriores.
+/// É só isto (e `since`) que roda ao abrir o projeto.
 pub fn latest(repo: &Path) -> Option<Report> {
-    std::fs::read_dir(dir(repo).join("audits"))
+    let mut all: Vec<Report> = std::fs::read_dir(dir(repo).join("audits"))
         .ok()?
         .flatten()
         .filter_map(|e| serde_json::from_slice::<Report>(&std::fs::read(e.path()).ok()?).ok())
-        .max_by_key(|r| r.at)
+        .collect();
+    all.sort_by_key(|r| r.at);
+    let mut r = all.pop()?;
+    carry(&mut r, &all);
+    Some(r)
+}
+
+/// Uma incremental só traz achados novos: o que já virou work item e segue aberto vem das
+/// anteriores (o estado mais recente de cada iid vale) e toma o lugar do "já existe #N".
+pub fn carry(r: &mut Report, older: &[Report]) {
+    let mut seen: std::collections::HashSet<u64> =
+        r.findings.iter().filter_map(Finding::iid).collect();
+    for f in older.iter().rev().flat_map(|o| &o.findings) {
+        let Some(n) = f.iid() else { continue };
+        if !seen.insert(n) || f.st != St::Created(n) {
+            continue;
+        }
+        r.findings.retain(|x| x.st != St::Dup(format!("#{n}")));
+        r.findings.push(f.clone());
+    }
 }
 
 /// `.maestro/` fica fora do `git status` pelo `info/exclude`, sem mexer no `.gitignore` do repo.
@@ -1313,6 +1333,50 @@ mod tests {
         assert_eq!(
             closed_of(&json!([{"iid":3,"labels":["security"]},{"iid":4,"labels":["wont-do"]}])),
             [(3, false), (4, true)]
+        );
+    }
+
+    #[test]
+    fn abertos_das_anteriores() {
+        let rep = |at, findings| Report {
+            sha: format!("s{at}"),
+            at,
+            date: String::new(),
+            kind: "inc".into(),
+            cost: 0.,
+            findings,
+            dropped: vec![],
+        };
+        let with = |t: &str, st| Finding { st, ..f(t) };
+        let a = rep(
+            1,
+            vec![
+                with("a", St::Created(3)),
+                with("b", St::Created(4)),
+                with("c", St::Created(5)),
+            ],
+        );
+        let b = rep(2, vec![with("b", St::Done(4)), with("c", St::Created(5))]);
+        let mut r = rep(
+            3,
+            vec![
+                with("novo", St::New),
+                with("c de novo", St::Dup("#5".into())),
+            ],
+        );
+        carry(&mut r, &[a, b]);
+        let got: Vec<_> = r
+            .findings
+            .iter()
+            .map(|x| (x.title.as_str(), x.st.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("novo", St::New),
+                ("c", St::Created(5)),
+                ("a", St::Created(3))
+            ]
         );
     }
 
