@@ -55,6 +55,8 @@ pub struct Shell {
     review: Option<Entity<Review>>,
     /// os outros repos da sessão: a faixa acima do painel troca entre eles sem perder rascunhos
     parked: Vec<Entity<Review>>,
+    /// a worktree em foco no último render: o painel aberto segue quando ela muda
+    last_top: Option<std::path::PathBuf>,
     /// o card do Jira de cada sessão (a worktree do Claude dela), comum a todos os repos
     cards: std::collections::HashMap<std::path::PathBuf, Entity<CardTab>>,
     want_review: Option<Option<String>>,
@@ -423,6 +425,7 @@ impl Shell {
             merge_dlg: None,
             review: None,
             parked: Vec::new(),
+            last_top: None,
             cards: Default::default(),
             want_review: None,
             want_file: None,
@@ -1199,6 +1202,32 @@ impl Shell {
             return self.toast("Abra um terminal num repositório para revisar".into(), cx);
         };
         self.open_review_at(root, path, window, cx)
+    }
+
+    /// Trocar de aba ou de feature troca o painel aberto, sem tirar o foco do terminal.
+    /// Só na mudança: o painel aberto pela fila ou pela faixa de outro repo da sessão fica.
+    fn follow_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.sidebar.clone() else {
+            return;
+        };
+        let top = s.read(cx).top_worktree();
+        if top == self.last_top {
+            return;
+        }
+        self.last_top = top.clone();
+        let (Some(top), Some(r)) = (top, &self.review) else {
+            return;
+        };
+        let owner = s.read(cx).session_repos().first().cloned();
+        let r = r.read(cx);
+        if r.root == top || Some(&r.owner) == owner.as_ref() {
+            return;
+        }
+        let focus = window.focused(cx);
+        self.open_review_at(top, None, window, cx);
+        if let Some(f) = focus {
+            window.focus(&f, cx);
+        }
     }
 
     /// O painel de uma worktree escolhida (a da fila, que pode ainda não estar em foco).
@@ -3691,6 +3720,7 @@ impl Render for Shell {
         if let Some(p) = self.want_review.take() {
             self.toggle_review(p, window, cx);
         }
+        self.follow_focus(window, cx);
         if let Some(p) = self.want_review_at.take() {
             self.leave_modes();
             self.open_review_at(p, None, window, cx);
