@@ -330,6 +330,17 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] Iterar com o Claude (só leitura) e Atualizar o work item (troca só a Correção sugerida e comenta)
 - [x] Teste no app com `glab` e `claude` falsos (Abrir no GitLab não clicado: abriria o navegador)
 
+## Nova feature redonda e Resumo do dia contido
+
+- [x] Protótipo: `@` menciona pasta/arquivo no prompt, link do Jira colado vira a chave, erro do Jira curto com ↻, prompt rola, rótulos quebram
+- [ ] `TextField` com o input do gpui-component: colar, copiar, selecionar, setas, Home/End, Ctrl+A (vale para todos os formulários)
+- [ ] Nova feature: nada passa da borda do modal (rótulos de "Ao criar", preview, altura máxima)
+- [ ] Nova feature: colar o link do Jira (`/browse/KEY`, `selectedIssue=`)
+- [ ] Nova feature: Jira indisponível tenta de novo uma vez e mostra uma linha com ↻
+- [ ] Nova feature: `@` menciona caminho do repo no prompt
+- [ ] Resumo do dia: título em uma linha curta, lista com altura máxima
+- [ ] Teste no app (sessão `maestro-test`, repo descartável)
+
 ## Backlog (não entra sem decisão)
 
 - Conflitos entre features (ripwire branch conflicts)
