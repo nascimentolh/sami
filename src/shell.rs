@@ -3092,6 +3092,9 @@ impl Shell {
             _ => today.clone(),
         };
         let mut list = div()
+            .id("brief-list")
+            .max_h(px(420.))
+            .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap(px(6.))

@@ -24,6 +24,20 @@ pub fn is_key(k: &str) -> bool {
         && n.chars().all(|c| c.is_ascii_digit())
 }
 
+/// A chave de `PROJ-123`, `proj-123` ou de um link (`…/browse/PROJ-123`, `…?selectedIssue=PROJ-123`).
+pub fn key_from(input: &str) -> Option<String> {
+    let s = input.trim();
+    let tail = ["/browse/", "selectedIssue="]
+        .iter()
+        .find_map(|m| s.split_once(m).map(|(_, t)| t))
+        .unwrap_or(s);
+    let key = tail
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .next()?
+        .to_uppercase();
+    is_key(&key).then_some(key)
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Card {
     pub key: String,
@@ -177,6 +191,17 @@ mod tests {
     fn chave_e_resposta() {
         assert!(is_key("PRD-171500"));
         assert!(!is_key("prd-1") && !is_key("PRD") && !is_key("PRD-x"));
+        assert_eq!(key_from(" prd-172747 ").as_deref(), Some("PRD-172747"));
+        assert_eq!(
+            key_from("https://x.atlassian.net/browse/PRD-172747?focused=1").as_deref(),
+            Some("PRD-172747")
+        );
+        assert_eq!(
+            key_from("https://x.atlassian.net/jira/software/projects/PRD/boards/7?selectedIssue=PRD-9&a=b")
+                .as_deref(),
+            Some("PRD-9")
+        );
+        assert_eq!(key_from("https://x.atlassian.net/jira/your-work"), None);
         let ok = "```json\n{\"type\":\"Story\",\"title\":\"Paginação\",\"criteria\":\"page e size\"}\n```";
         assert_eq!(parse::<Issue>(ok).unwrap().title, "Paginação");
         assert_eq!(

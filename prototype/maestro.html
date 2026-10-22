@@ -307,9 +307,13 @@ body.resizing{cursor:col-resize;user-select:none}
 .dlg .fld{display:grid;gap:4px}
 .dlg .fld > span{font-size:12px;color:var(--muted)}
 .dlg input[type=text],.dlg textarea,.dlg select{background:var(--win);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:13px var(--mono);padding:6px 8px;width:100%}
-.dlg textarea{font-family:var(--sans);min-height:64px;resize:vertical}
+.dlg textarea{font-family:var(--sans);min-height:64px;max-height:220px;overflow-y:auto;resize:vertical}
+.dlg{max-height:calc(100vh - 80px);overflow-y:auto}
+.dlg .atw{position:relative}
+.dlg .atw .cmpl{top:100%;left:0;margin-top:2px}
+.jira .retry{color:var(--accent);cursor:pointer;margin-left:6px}
 .dlg .row2{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:10px}
-.dlg .prev{font:12px var(--mono);color:var(--muted);background:var(--win);border-radius:5px;padding:6px 8px;overflow-x:auto;white-space:nowrap}
+.dlg .prev{font:12px var(--mono);color:var(--muted);background:var(--win);border-radius:5px;padding:6px 8px;white-space:normal;overflow-wrap:anywhere}
 .dlg .err{color:var(--bad);font-size:12px}
 label{display:flex;gap:8px;align-items:baseline;cursor:pointer}
 label.off{opacity:.5;cursor:default}
@@ -1153,7 +1157,7 @@ function newFeatureDlg(){
     <div class="row2"><label class="fld" style="display:grid"><span>Branch</span><input type="text" id="nfB" value="feat/" autocomplete="off"></label>
       <label class="fld" style="display:grid"><span>A partir de</span><select id="nfBase"><option>main</option><option>develop</option></select></label></div>
     <label class="fld" style="display:grid"><span>Em cima de (MRs empilhados: a base e o alvo do MR viram a branch da mãe)</span><select id="nfPar"><option value="">nenhuma: direto na base acima</option>${FEATS.filter(x=>x.kind!=='ws'&&x.id!=='main'&&!(x.mr&&x.mr.merged)).map(x=>`<option value="${x.id}">${esc(x.branch)}</option>`).join('')}</select></label>
-    <label class="fld" style="display:grid"><span>O que o Claude deve fazer (opcional)</span><textarea id="nfP" placeholder="ex.: adiciona paginação no GET /bots"></textarea></label>
+    <label class="fld" style="display:grid"><span>O que o Claude deve fazer (opcional · <span class="mono">@</span> menciona pasta ou arquivo)</span><span class="atw"><textarea id="nfP" placeholder="ex.: adiciona paginação no GET /bots em @src/routes/"></textarea><ul class="cmpl" id="nfAt" hidden></ul></span></label>
     <div class="row2"><label class="fld" style="display:grid"><span>Tentativas em paralelo</span><select id="nfN"><option value="1">1</option><option value="2">2 (comparar no fim)</option><option value="3">3 (comparar no fim)</option></select></label>
       <label class="fld" style="display:grid"><span>Modelos</span><select id="nfM"><option value="same">mesmo modelo</option><option value="mix">variar entre Opus e Sonnet</option></select></label></div>
     <div class="prev" id="nfPrev"></div>
@@ -1167,12 +1171,30 @@ function newFeatureDlg(){
     $('#nfBase').disabled=!!par;
     $('#nfPrev').textContent=`herdr worktree create --branch ${b.value||'…'}${n>1?` (×${n}: -a, -b${n>2?', -c':''})`:''} --base ${base}${rps.length?` + ${rps.join(', ')}`:''}${par?` · MR → ${base}`:''} · PORT=${nextPort()}${n>1?'…'+(nextPort()+n-1):''} · docker compose -p bots-api-${slug(b.value||'…')}`; $('#nfErr').textContent=''; };
   b.oninput=prev; $('#nfBase').onchange=prev; $('#nfN').onchange=prev; $('#nfPar').onchange=prev; document.querySelectorAll('[data-rp]').forEach(c=>c.onchange=prev); prev(); $('#nfJ').focus();
-  $('#nfJ').onchange=()=>{ const k=$('#nfJ').value.trim().toUpperCase(); if(!/^[A-Z][A-Z0-9]+-\d+$/.test(k)){ $('#nfJi').textContent=k?'Formato esperado: PROJ-123':''; return; }
-    $('#nfJi').textContent='buscando no Jira…'; setTimeout(()=>{ const J={'PRD-171500':{type:'Story',title:'Paginação no GET /bots',crit:'page e size na query (máx. 100) e o total no header X-Total-Count'}}, info=J[k]||{type:'Task',title:'Issue do Jira',crit:'os critérios de aceite da issue'};
+  atMention($('#nfP'),$('#nfAt'));
+  $('#nfJ').onchange=()=>{ const k=jiraKey($('#nfJ').value); if(k) $('#nfJ').value=k; if(!k){ $('#nfJi').textContent=$('#nfJ').value.trim()?'Formato esperado: PROJ-123 ou o link da issue':''; return; }
+    $('#nfJi').textContent='buscando no Jira…'; setTimeout(()=>{ if(k==='PRD-404'){ $('#nfJi').innerHTML='<span style="color:var(--muted)">Jira indisponível agora (MCP Atlassian)</span><span class="retry" id="nfJr">↻ tentar de novo</span>'; $('#nfJr').onclick=()=>$('#nfJ').onchange(); return; } const J={'PRD-171500':{type:'Story',title:'Paginação no GET /bots',crit:'page e size na query (máx. 100) e o total no header X-Total-Count'}}, info=J[k]||{type:'Task',title:'Issue do Jira',crit:'os critérios de aceite da issue'};
       NFJ={key:k,...info}; $('#nfJi').textContent=`✓ ${k} · ${info.type} · ${info.title} (MCP Atlassian)`; const s2=info.title.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
       if(!b.value||b.value==='feat/') b.value=`feat/${k}-${slug(s2).slice(0,28).replace(/-+$/,'')}`; if(!$('#nfP').value) $('#nfP').value=`Implementar ${k}: ${info.title}.\nCritérios: ${info.crit}.\nLeia a issue no Jira antes de começar e não commite.`; prev(); },500); };
   $('#nfNo').onclick=closeOverlay; $('#nf').onsubmit=e=>{ e.preventDefault(); createFeature(); };
 }
+// o link colado (…/browse/KEY ou ?selectedIssue=KEY) vira a chave
+function jiraKey(v){ v=v.trim(); const m=v.match(/(?:\/browse\/|selectedIssue=)([A-Za-z][A-Za-z0-9]+-\d+)/)||v.match(/^([A-Za-z][A-Za-z0-9]+-\d+)$/); return m?m[1].toUpperCase():null; }
+// @ no prompt: pastas primeiro, depois arquivos do repo; ↑↓ navegam, Enter/Tab inserem, Esc fecha
+function atMention(ta,ul){ let hits=[], i=0, tok=null;
+  const paths=()=>{ const ds=new Set(); Object.keys(F).forEach(p=>{ const a=p.split('/'); for(let k=1;k<a.length;k++) ds.add(a.slice(0,k).join('/')+'/'); }); return [...ds].sort().concat(Object.keys(F).sort()); };
+  // fora do repo: os outros repos primeiro; com / ou ~ navega no disco
+  const repos=()=>REPOS.filter(r=>r[0]!==REPO).map(r=>`${r[1]}/${r[0]}/`);
+  const disk=q=>{ const i=q.lastIndexOf('/'), dir=q.slice(0,i+1), rest=q.slice(i+1).toLowerCase(); const kids=dir==='~/'?['repos-ctbz/','test-repos/','Downloads/','.config/']:dir==='~/repos-ctbz/'?REPOS.filter(r=>r[1]==='~/repos-ctbz').map(r=>r[0]+'/'):dir==='/'?['etc/','home/','tmp/','usr/']:[];
+    return kids.filter(k=>k.toLowerCase().startsWith(rest)&&(rest.startsWith('.')||!k.startsWith('.'))).map(k=>dir+k); };
+  const close=()=>{ ul.hidden=true; hits=[]; };
+  const draw=()=>{ ul.innerHTML=hits.map((p,k)=>`<li class="${k===i?'on':''}" data-k="${k}"><span class="kd">${p.endsWith('/')?NF.dir:NF.ts}</span>${esc(p)}</li>`).join(''); ul.hidden=!hits.length; ul.querySelectorAll('li').forEach(li=>li.onmousedown=e=>{ e.preventDefault(); i=+li.dataset.k; pick(); }); };
+  const pick=()=>{ const p=hits[i], v=ta.value, a=tok.start, b=ta.selectionStart; ta.value=v.slice(0,a)+'@'+p+(p.endsWith('/')?'':' ')+v.slice(b); const c=a+1+p.length+(p.endsWith('/')?0:1); ta.setSelectionRange(c,c); close(); if(p.endsWith('/')) ta.oninput(); };
+  ta.oninput=()=>{ const pre=ta.value.slice(0,ta.selectionStart), m=pre.match(/(^|\s)@([^\s@]*)$/); if(!m){ close(); return; } tok={start:pre.length-m[2].length-1}; const q=m[2].toLowerCase();
+    hits=(/^[~\/]/.test(q)?disk(m[2]):[...repos().filter(p=>p.split('/').slice(-2,-1)[0].includes(q)).slice(0,3),...paths().filter(p=>p.toLowerCase().includes(q))]).slice(0,8); i=0; draw(); };
+  ta.addEventListener('keydown',e=>{ if(ul.hidden) return; if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); e.stopPropagation(); i=(i+(e.key==='ArrowDown'?1:hits.length-1))%hits.length; draw(); }
+    else if((e.key==='Enter'&&!e.ctrlKey)||e.key==='Tab'){ e.preventDefault(); e.stopPropagation(); pick(); } else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); } });
+  ta.onblur=()=>setTimeout(close,100); }
 function createFeature(){
   const br=$('#nfB').value.trim(), base=$('#nfBase').value, p=$('#nfP').value.trim(), env=$('#nfEnv').checked, ci=$('#nfCi').checked, cl=$('#nfCl').checked;
   if(!br || br.endsWith('/')){ $('#nfErr').textContent='Dê um nome à branch, ex.: feat/paginacao-bots'; return; }
