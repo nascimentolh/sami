@@ -50,6 +50,8 @@ pub struct NewFeature {
     /// o `@` do prompt: (início do `@`, caminhos, escolhido)
     at: Option<(usize, Vec<String>, usize)>,
     paths: Vec<String>,
+    /// os outros repos (caminho absoluto): o `@` mais comum
+    repos: Vec<String>,
     err: String,
     busy: bool,
     focus: FocusHandle,
@@ -98,13 +100,20 @@ impl NewFeature {
         cx.on_focus_out(&jf, window, |this, _, _, cx| this.lookup_jira(false, cx))
             .detach();
         window.focus(&jf, cx);
-        let r = repo.clone();
+        let (r, r2) = (repo.clone(), repo.clone());
         cx.spawn(async move |this, cx| {
             let ps = cx
                 .background_executor()
                 .spawn(async move { feature::paths(&r) })
                 .await;
-            let _ = this.update(cx, |this, _| this.paths = ps);
+            let rs = cx
+                .background_executor()
+                .spawn(async move { feature::repos(&crate::mrs::repos_root(), &r2) })
+                .await;
+            let _ = this.update(cx, |this, _| {
+                this.paths = ps;
+                this.repos = rs;
+            });
         })
         .detach();
         let parents = feature::inventories()
@@ -134,6 +143,7 @@ impl NewFeature {
             jira_failed: false,
             at: None,
             paths: Vec::new(),
+            repos: Vec::new(),
             err: String::new(),
             busy: false,
             focus: cx.focus_handle(),
@@ -355,14 +365,35 @@ impl NewFeature {
     fn update_at(&mut self, cx: &mut Context<Self>) {
         let f = self.prompt.read(cx);
         let before = f.value.get(..f.cursor(cx)).unwrap_or_default();
+        // o @ que abre a menção vem depois de espaço; o HOME pode ter @ no meio do caminho
         let at = before
-            .rfind('@')
-            .filter(|&i| before[..i].chars().last().is_none_or(char::is_whitespace))
+            .rmatch_indices('@')
+            .map(|(i, _)| i)
+            .find(|&i| before[..i].chars().last().is_none_or(char::is_whitespace))
             .filter(|&i| !before[i + 1..].contains(char::is_whitespace));
         self.at = at
             .map(|i| {
-                let hits = feature::matching(&self.paths, &before[i + 1..], 8);
-                (i, hits.into_iter().cloned().collect::<Vec<_>>(), 0)
+                let q = &before[i + 1..];
+                let hits: Vec<String> = if q.starts_with(['/', '~']) {
+                    feature::disk_matching(q, 8)
+                } else {
+                    let name = |p: &String| {
+                        p.trim_end_matches('/')
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or_default()
+                            .to_lowercase()
+                    };
+                    self.repos
+                        .iter()
+                        .filter(|p| name(p).contains(&q.to_lowercase()))
+                        .take(3)
+                        .chain(feature::matching(&self.paths, q, 8))
+                        .take(8)
+                        .cloned()
+                        .collect()
+                };
+                (i, hits, 0)
             })
             .filter(|(_, hits, _)| !hits.is_empty());
     }
@@ -748,8 +779,8 @@ impl Render for NewFeature {
                             .absolute()
                             .top_full()
                             .left_0()
+                            .right_0()
                             .mt(px(2.))
-                            .min_w(px(240.))
                             .py(px(3.))
                             .bg(t.raise)
                             .border_1()
@@ -784,7 +815,7 @@ impl Render for NewFeature {
                                             .text_color(t.accent)
                                             .child(if p.ends_with('/') { "▸" } else { "·" }),
                                     )
-                                    .child(p),
+                                    .child(div().min_w_0().truncate().child(tilde(&p))),
                             );
                         }
                         d.child(deferred(list).with_priority(1))

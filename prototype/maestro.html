@@ -1183,11 +1183,15 @@ function jiraKey(v){ v=v.trim(); const m=v.match(/(?:\/browse\/|selectedIssue=)(
 // @ no prompt: pastas primeiro, depois arquivos do repo; ↑↓ navegam, Enter/Tab inserem, Esc fecha
 function atMention(ta,ul){ let hits=[], i=0, tok=null;
   const paths=()=>{ const ds=new Set(); Object.keys(F).forEach(p=>{ const a=p.split('/'); for(let k=1;k<a.length;k++) ds.add(a.slice(0,k).join('/')+'/'); }); return [...ds].sort().concat(Object.keys(F).sort()); };
+  // fora do repo: os outros repos primeiro; com / ou ~ navega no disco
+  const repos=()=>REPOS.filter(r=>r[0]!==REPO).map(r=>`${r[1]}/${r[0]}/`);
+  const disk=q=>{ const i=q.lastIndexOf('/'), dir=q.slice(0,i+1), rest=q.slice(i+1).toLowerCase(); const kids=dir==='~/'?['repos-ctbz/','test-repos/','Downloads/','.config/']:dir==='~/repos-ctbz/'?REPOS.filter(r=>r[1]==='~/repos-ctbz').map(r=>r[0]+'/'):dir==='/'?['etc/','home/','tmp/','usr/']:[];
+    return kids.filter(k=>k.toLowerCase().startsWith(rest)&&(rest.startsWith('.')||!k.startsWith('.'))).map(k=>dir+k); };
   const close=()=>{ ul.hidden=true; hits=[]; };
   const draw=()=>{ ul.innerHTML=hits.map((p,k)=>`<li class="${k===i?'on':''}" data-k="${k}"><span class="kd">${p.endsWith('/')?NF.dir:NF.ts}</span>${esc(p)}</li>`).join(''); ul.hidden=!hits.length; ul.querySelectorAll('li').forEach(li=>li.onmousedown=e=>{ e.preventDefault(); i=+li.dataset.k; pick(); }); };
   const pick=()=>{ const p=hits[i], v=ta.value, a=tok.start, b=ta.selectionStart; ta.value=v.slice(0,a)+'@'+p+(p.endsWith('/')?'':' ')+v.slice(b); const c=a+1+p.length+(p.endsWith('/')?0:1); ta.setSelectionRange(c,c); close(); if(p.endsWith('/')) ta.oninput(); };
   ta.oninput=()=>{ const pre=ta.value.slice(0,ta.selectionStart), m=pre.match(/(^|\s)@([^\s@]*)$/); if(!m){ close(); return; } tok={start:pre.length-m[2].length-1}; const q=m[2].toLowerCase();
-    hits=paths().filter(p=>p.toLowerCase().includes(q)).slice(0,8); i=0; draw(); };
+    hits=(/^[~\/]/.test(q)?disk(m[2]):[...repos().filter(p=>p.split('/').slice(-2,-1)[0].includes(q)).slice(0,3),...paths().filter(p=>p.toLowerCase().includes(q))]).slice(0,8); i=0; draw(); };
   ta.addEventListener('keydown',e=>{ if(ul.hidden) return; if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); e.stopPropagation(); i=(i+(e.key==='ArrowDown'?1:hits.length-1))%hits.length; draw(); }
     else if((e.key==='Enter'&&!e.ctrlKey)||e.key==='Tab'){ e.preventDefault(); e.stopPropagation(); pick(); } else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); } });
   ta.onblur=()=>setTimeout(close,100); }

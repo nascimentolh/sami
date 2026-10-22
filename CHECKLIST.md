@@ -337,7 +337,7 @@ Verificado em 2026-10-15: incremental num clone do email-service desde `74cf8d2`
 - [x] Nova feature: nada passa da borda do modal (rótulos de "Ao criar", preview, altura máxima)
 - [x] Nova feature: colar o link do Jira (`/browse/KEY`, `selectedIssue=`)
 - [x] Nova feature: Jira indisponível tenta de novo uma vez e mostra uma linha com ↻
-- [x] Nova feature: `@` menciona caminho do repo no prompt
+- [x] Nova feature: `@` menciona caminho do repo no prompt, os outros repos (`MAESTRO_REPOS`) e qualquer caminho do disco com `/` ou `~`
 - [x] Resumo do dia: título em uma linha curta, retweet repetido sai, lista com altura máxima
 - [x] Teste no app (sessão `maestro-test`, repo descartável)
 - Desvios: o diálogo não ganhou rolagem própria (o prompt para em 10 linhas e cabe na tela); colar logo depois de um texto longo só rola até o cursor na próxima tecla (gpui-component)

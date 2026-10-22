@@ -230,6 +230,50 @@ pub fn matching<'a>(paths: &'a [String], q: &str, n: usize) -> Vec<&'a String> {
         .collect()
 }
 
+/// Os repos git em `root` (menos `except`), como `root/nome/`.
+pub fn repos(root: &Path, except: &Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join(".git").exists() && p != except)
+        .map(|p| format!("{}/", p.to_string_lossy()))
+        .collect();
+    out.sort();
+    out
+}
+
+/// Um `@` com `/` ou `~`: o que há na pasta até a última `/` e começa com o resto (pastas primeiro, sem ocultos).
+pub fn disk_matching(q: &str, n: usize) -> Vec<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let full = match q.strip_prefix('~') {
+        Some("") => format!("{home}/"),
+        Some(r) => format!("{home}{r}"),
+        None => q.to_string(),
+    };
+    let Some((dir, rest)) = full.rsplit_once('/') else {
+        return Vec::new();
+    };
+    let rest = rest.to_lowercase();
+    let mut out: Vec<String> = std::fs::read_dir(if dir.is_empty() { "/" } else { dir })
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let shown = rest.starts_with('.') || !name.starts_with('.');
+            (shown && name.to_lowercase().starts_with(&rest)).then(|| {
+                let slash = if e.path().is_dir() { "/" } else { "" };
+                format!("{dir}/{name}{slash}")
+            })
+        })
+        .collect();
+    out.sort_by_key(|p| (!p.ends_with('/'), p.clone()));
+    out.truncate(n);
+    out
+}
+
 /// Os `.env*` da raiz que o git ignora (os versionados já vêm com a worktree).
 pub fn env_files(repo: &Path) -> Vec<String> {
     git(
@@ -1598,6 +1642,14 @@ mod tests {
         assert!(ps[..first_file].contains(&"src/fixtures/tasks/".to_string()));
         assert!(ps[..first_file].contains(&"src/".to_string()));
         assert_eq!(matching(&ps, "FORM.R", 8), [&"src/form.rs".to_string()]);
+        let here = std::fs::canonicalize(".").unwrap();
+        let src = format!("{}/src", here.to_string_lossy());
+        let hits = disk_matching(&format!("{src}/F"), 8);
+        assert_eq!(hits[0], format!("{src}/fixtures/"));
+        assert!(hits.contains(&format!("{src}/form.rs")));
+        assert!(disk_matching("~", 50).iter().all(|p| !p.contains("/.")));
+        let parent = here.parent().unwrap();
+        assert!(!repos(parent, &here).contains(&format!("{}/", here.to_string_lossy())));
     }
 
     #[test]
