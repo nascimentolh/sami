@@ -1,6 +1,10 @@
 use std::ops::Range;
 
-use gpui_kit::{prelude::FluentBuilder, *};
+use gpui_kit::{
+    component::input::{Enter, Escape, Input, InputEvent, InputState, Textarea, TextareaState},
+    prelude::FluentBuilder,
+    *,
+};
 
 use crate::theme::Theme;
 
@@ -11,15 +15,23 @@ pub enum FieldEvent {
     Cancel,
 }
 
-/// Campo do `.dlg` do protótipo. O texto chega pelo input handler (acentos e teclas mortas funcionam).
-// ponytail: cursor sempre no fim (digitar e apagar); seleção e setas quando algum formulário pedir
+enum Inner {
+    Line(Entity<InputState>),
+    Area(Entity<TextareaState>),
+}
+
+/// Campo do `.dlg` do protótipo sobre o input do gpui-component (colar, selecionar, setas, desfazer).
 pub struct TextField {
     pub value: String,
     placeholder: &'static str,
     multiline: bool,
     mono: bool,
+    /// o foco de fora: quem chama foca este antes de o input existir, e o render passa para dentro
     focus: FocusHandle,
     theme: Theme,
+    // o input do gpui-component pede a Window, que boa parte dos construtores não tem: nasce no primeiro render
+    inner: Option<Inner>,
+    pending: Option<String>,
 }
 
 impl EventEmitter<FieldEvent> for TextField {}
@@ -40,6 +52,8 @@ impl TextField {
             mono,
             focus: cx.focus_handle(),
             theme,
+            inner: None,
+            pending: None,
         }
     }
 
@@ -49,176 +63,174 @@ impl TextField {
 
     pub fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
         self.placeholder = placeholder;
+        self.pending.get_or_insert_with(|| self.value.clone());
         cx.notify();
     }
 
     pub fn set(&mut self, value: String, cx: &mut Context<Self>) {
-        self.value = value;
+        self.value = value.clone();
+        self.pending = Some(value);
         cx.emit(FieldEvent::Changed);
         cx.notify();
     }
 
-    fn on_key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let k = &e.keystroke;
-        match k.key.as_str() {
-            "enter" if k.modifiers.control || !self.multiline => cx.emit(FieldEvent::Submit),
-            "enter" => {
-                self.value.push('\n');
-                cx.emit(FieldEvent::Changed);
-            }
-            "escape" => cx.emit(FieldEvent::Cancel),
-            "backspace" => {
-                self.value.pop();
-                cx.emit(FieldEvent::Changed);
-            }
-            _ => return,
+    /// O cursor, em bytes de `value`.
+    pub fn cursor(&self, cx: &App) -> usize {
+        match &self.inner {
+            Some(Inner::Line(s)) => s.read(cx).cursor(),
+            Some(Inner::Area(s)) => s.read(cx).cursor(),
+            None => self.value.len(),
         }
-        cx.stop_propagation();
-        cx.notify();
     }
-}
 
-impl EntityInputHandler for TextField {
-    fn text_for_range(
+    /// Troca `range` de `value` por `text` e põe o cursor logo depois.
+    pub fn splice(
         &mut self,
-        _: Range<usize>,
-        _: &mut Option<Range<usize>>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<String> {
-        None
-    }
-    fn selected_text_range(
-        &mut self,
-        _: bool,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<UTF16Selection> {
-        None
-    }
-    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        None
-    }
-    fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {}
-    fn replace_text_in_range(
-        &mut self,
-        _: Option<Range<usize>>,
+        range: Range<usize>,
         text: &str,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.value.push_str(text);
+        self.value.replace_range(range.clone(), text);
+        let at = range.start + text.len();
+        let v = self.value.clone();
+        match &self.inner {
+            Some(Inner::Line(s)) => s.update(cx, |s, cx| {
+                s.set_value(v, window, cx);
+                s.set_selected_range(at..at, cx);
+            }),
+            Some(Inner::Area(s)) => s.update(cx, |s, cx| {
+                s.set_value(v, window, cx);
+                s.set_selected_range(at..at, cx);
+            }),
+            None => self.pending = Some(v),
+        }
         cx.emit(FieldEvent::Changed);
         cx.notify();
     }
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        _: Option<Range<usize>>,
-        _: &str,
-        _: Option<Range<usize>>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) {
+
+    fn on_input(&mut self, e: &InputEvent, text: String, cx: &mut Context<Self>) {
+        if matches!(e, InputEvent::Change) {
+            self.value = text;
+            cx.emit(FieldEvent::Changed);
+        }
     }
-    fn bounds_for_range(
-        &mut self,
-        _: Range<usize>,
-        _: Bounds<Pixels>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        None
+
+    fn inner_focus(&self, cx: &App) -> Option<FocusHandle> {
+        match self.inner.as_ref()? {
+            Inner::Line(s) => Some(s.read(cx).focus_handle(cx)),
+            Inner::Area(s) => Some(s.read(cx).focus_handle(cx)),
+        }
     }
-    fn character_index_for_point(
-        &mut self,
-        _: Point<Pixels>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<usize> {
-        None
+
+    fn ensure_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.inner.is_none() {
+            let (v, ph) = (self.value.clone(), self.placeholder);
+            self.inner = Some(if self.multiline {
+                let s = cx.new(|cx| {
+                    TextareaState::new(window, cx)
+                        .auto_grow(3, 10)
+                        .placeholder(ph)
+                        .default_value(v)
+                });
+                cx.subscribe(&s, |this, s, e: &InputEvent, cx| {
+                    let text = s.read(cx).value().to_string();
+                    this.on_input(e, text, cx)
+                })
+                .detach();
+                Inner::Area(s)
+            } else {
+                let s = cx.new(|cx| InputState::new(window, cx).placeholder(ph).default_value(v));
+                cx.subscribe(&s, |this, s, e: &InputEvent, cx| {
+                    let text = s.read(cx).value().to_string();
+                    this.on_input(e, text, cx)
+                })
+                .detach();
+                Inner::Line(s)
+            });
+            self.pending = None;
+        }
+        if let Some(v) = self.pending.take() {
+            let ph = self.placeholder;
+            match &self.inner {
+                Some(Inner::Line(s)) => s.update(cx, |s, cx| {
+                    s.set_placeholder(ph, window, cx);
+                    s.set_value(v, window, cx);
+                }),
+                Some(Inner::Area(s)) => s.update(cx, |s, cx| {
+                    s.set_placeholder(ph, window, cx);
+                    s.set_value(v, window, cx);
+                }),
+                None => {}
+            }
+        }
     }
 }
 
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = &self.theme;
-        let focused = self.focus.is_focused(window);
-        let entity = cx.entity();
-        let focus = self.focus.clone();
-        let fg = t.fg;
-        let caret = move || div().w(px(1.)).h(px(15.)).bg(fg).flex_none();
-        let mut body = div().flex().flex_col().min_w_0();
-        if self.value.is_empty() {
-            body = body.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .when(focused, |d| d.child(caret()))
-                    .child(div().text_color(t.muted).child(self.placeholder)),
-            );
-        } else {
-            let lines: Vec<&str> = self.value.split('\n').collect();
-            let last = lines.len() - 1;
-            let wrap = self.multiline;
-            for (i, line) in lines.into_iter().enumerate() {
-                // o GPUI só quebra texto em bloco; o cursor vai como caractere no fim da linha
-                body = body.child(if wrap {
-                    div()
-                        .min_h(px(18.))
-                        .whitespace_normal()
-                        .child(if focused && i == last {
-                            format!("{line}▏")
-                        } else {
-                            line.to_string()
-                        })
-                } else {
-                    div()
-                        .flex()
-                        .items_center()
-                        .min_h(px(18.))
-                        .child(line.to_string())
-                        .when(focused && i == last, |d| d.child(caret()))
-                });
-            }
+        self.ensure_inner(window, cx);
+        if self.focus.is_focused(window) {
+            cx.defer_in(window, |this, window, cx| {
+                let end = this.value.len();
+                match &this.inner {
+                    Some(Inner::Line(s)) => {
+                        s.update(cx, |s, cx| s.set_selected_range(end..end, cx))
+                    }
+                    Some(Inner::Area(s)) => {
+                        s.update(cx, |s, cx| s.set_selected_range(end..end, cx))
+                    }
+                    None => {}
+                }
+                if let Some(f) = this.inner_focus(cx) {
+                    window.focus(&f, cx);
+                }
+            });
         }
+        let t = &self.theme;
+        let focused = self.focus.contains_focused(window, cx);
+        let font: SharedString = if self.mono {
+            t.mono.clone().into()
+        } else {
+            t.sans.into()
+        };
+        let input = match self.inner.as_ref() {
+            Some(Inner::Line(s)) => Input::new(s)
+                .appearance(false)
+                .font_family(font)
+                .text_size(px(14.))
+                .into_any_element(),
+            Some(Inner::Area(s)) => Textarea::new(s)
+                .appearance(false)
+                .font_family(font)
+                .text_size(px(14.))
+                .into_any_element(),
+            None => div().into_any_element(),
+        };
         div()
             .id("field")
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::on_key_down))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    window.focus(&this.focus, cx);
-                }),
-            )
-            .relative()
+            // as teclas do input viram ações dele antes de qualquer key_down: Enter e Esc são pegos na captura
+            .capture_action(cx.listener(|this, e: &Enter, _, cx| {
+                if e.secondary || !this.multiline {
+                    cx.emit(FieldEvent::Submit);
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|_, _: &Escape, _, cx| {
+                cx.emit(FieldEvent::Cancel);
+                cx.stop_propagation();
+            }))
             .w_full()
-            .px(px(8.))
-            .py(px(6.))
+            .min_w_0()
+            .px(px(4.))
+            .py(px(2.))
             .bg(t.win)
             .border_1()
             .border_color(if focused { t.accent } else { t.line })
             .rounded(px(5.))
-            .text_size(px(14.))
-            .font_family(if self.mono {
-                t.mono.clone()
-            } else {
-                t.sans.into()
-            })
-            .when(self.multiline, |d| d.min_h(px(64.)))
-            .child(
-                canvas(
-                    |_, _, _| {},
-                    move |bounds, _, window, cx| {
-                        window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
-                    },
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
-            )
-            .child(body)
+            .text_color(t.fg)
+            .child(input)
     }
 }
 

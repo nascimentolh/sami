@@ -837,9 +837,21 @@ impl AuditView {
 
     fn on_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing.is_some()
-            || self.budget.read(cx).focus_handle().is_focused(window)
-            || self.base.read(cx).focus_handle().is_focused(window)
-            || self.note.read(cx).focus_handle().is_focused(window)
+            || self
+                .budget
+                .read(cx)
+                .focus_handle()
+                .contains_focused(window, cx)
+            || self
+                .base
+                .read(cx)
+                .focus_handle()
+                .contains_focused(window, cx)
+            || self
+                .note
+                .read(cx)
+                .focus_handle()
+                .contains_focused(window, cx)
         {
             return;
         }

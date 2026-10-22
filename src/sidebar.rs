@@ -995,7 +995,7 @@ impl Sidebar {
         let typing = self
             .query
             .as_ref()
-            .is_some_and(|q| q.read(cx).focus_handle().is_focused(window));
+            .is_some_and(|q| q.read(cx).focus_handle().contains_focused(window, cx));
         if typing || self.naming.is_some() || self.menu.is_some() || self.searching() {
             return;
         }

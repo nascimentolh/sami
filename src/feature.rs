@@ -194,6 +194,42 @@ pub fn registry_auth(repo: &Path) -> Option<&'static str> {
         .map(|_| "npx -y google-artifactregistry-auth --repo-config .npmrc --credential-config ~/.npmrc")
 }
 
+/// Pastas (com `/` no fim) e depois arquivos do repo, para o `@` do prompt.
+pub fn paths(repo: &Path) -> Vec<String> {
+    let files = git(
+        repo,
+        &["ls-files", "--cached", "--others", "--exclude-standard"],
+    )
+    .unwrap_or_default();
+    let mut dirs = std::collections::BTreeSet::new();
+    for f in files.lines() {
+        let mut d = f;
+        while let Some((parent, _)) = d.rsplit_once('/') {
+            if !dirs.insert(format!("{parent}/")) {
+                break;
+            }
+            d = parent;
+        }
+    }
+    let mut files: Vec<String> = files
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect();
+    files.sort();
+    dirs.into_iter().chain(files).collect()
+}
+
+/// Os de `paths` que contêm `q` (sem caixa), no máximo `n`.
+pub fn matching<'a>(paths: &'a [String], q: &str, n: usize) -> Vec<&'a String> {
+    let q = q.to_lowercase();
+    paths
+        .iter()
+        .filter(|p| p.to_lowercase().contains(&q))
+        .take(n)
+        .collect()
+}
+
 /// Os `.env*` da raiz que o git ignora (os versionados já vêm com a worktree).
 pub fn env_files(repo: &Path) -> Vec<String> {
     git(
@@ -1553,6 +1589,15 @@ mod tests {
             let _ = std::fs::remove_file(data_dir().join(format!("{id}.json")));
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn caminhos_para_o_arroba() {
+        let ps = paths(Path::new("."));
+        let first_file = ps.iter().position(|p| !p.ends_with('/')).unwrap();
+        assert!(ps[..first_file].contains(&"src/fixtures/tasks/".to_string()));
+        assert!(ps[..first_file].contains(&"src/".to_string()));
+        assert_eq!(matching(&ps, "FORM.R", 8), [&"src/form.rs".to_string()]);
     }
 
     #[test]

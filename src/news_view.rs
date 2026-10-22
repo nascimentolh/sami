@@ -159,7 +159,17 @@ impl NewsView {
     pub fn brief(&self) -> Vec<(String, String)> {
         let mut xs: Vec<&Scored> = self.items.iter().collect();
         xs.sort_by_key(|s| s.aff.is_empty());
+        let mut seen = std::collections::HashSet::new();
         xs.into_iter()
+            // o retweet repete o post: um só
+            .filter(|s| {
+                let h = s.post.headline();
+                let h = match h.strip_prefix("RT @").and_then(|r| r.split_once(": ")) {
+                    Some((_, rest)) => rest.to_lowercase(),
+                    None => h.to_lowercase(),
+                };
+                seen.insert(h)
+            })
             .take(5)
             .map(|s| {
                 let why = if s.aff.is_empty() {
@@ -176,7 +186,7 @@ impl NewsView {
                         }
                     )
                 };
-                (s.post.title.clone(), why)
+                (s.post.headline(), why)
             })
             .collect()
     }
@@ -205,8 +215,8 @@ impl NewsView {
         let date = vault::today();
         let rel = format!("daily/{date}.md");
         let before = std::fs::read_to_string(vault::dir().join(&rel)).ok();
-        let text = news::with_link(before.as_deref(), &date, &p.title, &p.url);
-        let short: String = p.title.chars().take(40).collect();
+        let text = news::with_link(before.as_deref(), &date, &p.headline(), &p.url);
+        let short: String = p.headline().chars().take(40).collect();
         match vault::write(&rel, &text, format!("{rel} · link salvo: {short}…")) {
             Ok(w) => cx.emit(Event::Vault(w)),
             Err(e) => cx.emit(Event::Toast(format!("Não deu para salvar no vault: {e}"))),
@@ -652,7 +662,7 @@ impl NewsView {
                                 this.sel = i;
                                 this.open(i, cx);
                             }))
-                            .child(p.title.clone()),
+                            .child(p.headline()),
                     )
                     .child(meta)
                     .child(why)

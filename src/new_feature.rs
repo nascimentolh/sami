@@ -1,6 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use gpui_kit::{prelude::FluentBuilder, *};
+use gpui_kit::{
+    component::input::{Enter, Escape, IndentInline, MoveDown, MoveUp, OutdentInline},
+    prelude::FluentBuilder,
+    *,
+};
 
 use crate::{
     feature::{self, Inventory, Request},
@@ -10,8 +14,6 @@ use crate::{
     sidebar::tilde,
     theme::Theme,
 };
-
-actions!(new_feature, [NextField, PrevField]);
 
 pub enum Event {
     /// o aviso de alguma feature criada sem hooks
@@ -43,6 +45,11 @@ pub struct NewFeature {
     setup_cmd: Option<String>,
     registry_auth: bool,
     jira_info: Option<(String, bool)>,
+    /// a busca falhou: mostra "↻ tentar de novo"
+    jira_failed: bool,
+    /// o `@` do prompt: (início do `@`, caminhos, escolhido)
+    at: Option<(usize, Vec<String>, usize)>,
+    paths: Vec<String>,
     err: String,
     busy: bool,
     focus: FocusHandle,
@@ -76,18 +83,30 @@ impl NewFeature {
             cx.subscribe(f, |this, f, e: &FieldEvent, cx| match e {
                 FieldEvent::Changed => {
                     this.err.clear();
+                    if f == this.prompt {
+                        this.update_at(cx);
+                    }
                     cx.notify();
                 }
-                FieldEvent::Submit if f == this.jira => this.lookup_jira(cx),
+                FieldEvent::Submit if f == this.jira => this.lookup_jira(false, cx),
                 FieldEvent::Submit => this.create(cx),
                 FieldEvent::Cancel => cx.emit(Event::Done(None)),
             })
             .detach();
         }
         let jf = jira.read(cx).focus_handle();
-        cx.on_blur(&jf, window, |this, _, cx| this.lookup_jira(cx))
+        cx.on_focus_out(&jf, window, |this, _, _, cx| this.lookup_jira(false, cx))
             .detach();
         window.focus(&jf, cx);
+        let r = repo.clone();
+        cx.spawn(async move |this, cx| {
+            let ps = cx
+                .background_executor()
+                .spawn(async move { feature::paths(&r) })
+                .await;
+            let _ = this.update(cx, |this, _| this.paths = ps);
+        })
+        .detach();
         let parents = feature::inventories()
             .into_iter()
             .filter(|i| i.repo == repo && i.group.is_none() && i.worktrees[0].path.exists())
@@ -112,6 +131,9 @@ impl NewFeature {
             setup: true,
             claude: true,
             jira_info: None,
+            jira_failed: false,
+            at: None,
+            paths: Vec::new(),
             err: String::new(),
             busy: false,
             focus: cx.focus_handle(),
@@ -178,24 +200,41 @@ impl NewFeature {
         )
     }
 
-    fn lookup_jira(&mut self, cx: &mut Context<Self>) {
-        let key = self.jira.read(cx).value.trim().to_uppercase();
-        if key.is_empty() {
+    /// `retry`: a segunda tentativa, depois de o MCP do Atlassian falhar (ele às vezes ainda está conectando).
+    fn lookup_jira(&mut self, retry: bool, cx: &mut Context<Self>) {
+        let raw = self.jira.read(cx).value.clone();
+        if raw.trim().is_empty() {
             self.jira_info = None;
+            self.jira_failed = false;
             return cx.notify();
         }
-        if !jira::is_key(&key) {
-            self.jira_info = Some(("Formato esperado: PROJ-123".into(), false));
+        let Some(key) = jira::key_from(&raw) else {
+            self.jira_info = Some((
+                "Formato esperado: PROJ-123 ou o link da issue".into(),
+                false,
+            ));
             return cx.notify();
+        };
+        if raw != key {
+            self.jira.update(cx, |f, cx| f.set(key.clone(), cx));
         }
-        if matches!(&self.jira_info, Some((s, _)) if s.contains(&key)) {
+        if !retry && matches!(&self.jira_info, Some((s, _)) if s.contains(&key)) {
             return;
         }
+        self.jira_failed = false;
         self.jira_info = Some((format!("buscando {key} no Jira…"), false));
         cx.notify();
         let k = key.clone();
         cx.spawn(async move |this, cx| {
             let issue = cx.background_executor().spawn(async move { jira::fetch(&k) }).await;
+            if let Err(e) = &issue
+                && !retry
+                && unavailable(e)
+            {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+                let _ = this.update(cx, |this, cx| this.lookup_jira(true, cx));
+                return;
+            }
             let _ = this.update(cx, |this, cx| {
                 match issue {
                     Ok(i) => {
@@ -214,7 +253,17 @@ impl NewFeature {
                             this.prompt.update(cx, |f, cx| f.set(p, cx));
                         }
                     }
-                    Err(e) => this.jira_info = Some((format!("Jira: {e}"), false)),
+                    Err(e) => {
+                        this.jira_failed = true;
+                        this.jira_info = Some((
+                            if unavailable(&e) {
+                                format!("{key}: Jira indisponível agora (MCP Atlassian)")
+                            } else {
+                                format!("{key}: {}", e.lines().next().unwrap_or_default())
+                            },
+                            false,
+                        ));
+                    }
                 }
                 cx.notify();
             });
@@ -242,8 +291,7 @@ impl NewFeature {
             [None; 3]
         };
         let prompt = self.prompt.read(cx).value.clone();
-        let key = self.jira.read(cx).value.trim().to_uppercase();
-        let key = jira::is_key(&key).then_some(key);
+        let key = jira::key_from(&self.jira.read(cx).value);
         let reqs: Vec<Request> = (0..n)
             .map(|i| Request {
                 repo: self.repo.clone(),
@@ -294,15 +342,74 @@ impl NewFeature {
 
     fn cycle(&mut self, step: usize, window: &mut Window, cx: &mut Context<Self>) {
         let order = [&self.jira, &self.branch, &self.prompt].map(|f| f.read(cx).focus_handle());
-        let i = order.iter().position(|f| f.is_focused(window)).unwrap_or(0);
+        let i = order
+            .iter()
+            .position(|f| f.contains_focused(window, cx))
+            .unwrap_or(0);
         window.focus(&order[(i + step) % 3], cx);
         self.open = None;
         cx.notify();
     }
 
-    fn on_key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    /// O `@` que termina no cursor do prompt abre a lista de caminhos do repo.
+    fn update_at(&mut self, cx: &mut Context<Self>) {
+        let f = self.prompt.read(cx);
+        let before = f.value.get(..f.cursor(cx)).unwrap_or_default();
+        let at = before
+            .rfind('@')
+            .filter(|&i| before[..i].chars().last().is_none_or(char::is_whitespace))
+            .filter(|&i| !before[i + 1..].contains(char::is_whitespace));
+        self.at = at
+            .map(|i| {
+                let hits = feature::matching(&self.paths, &before[i + 1..], 8);
+                (i, hits.into_iter().cloned().collect::<Vec<_>>(), 0)
+            })
+            .filter(|(_, hits, _)| !hits.is_empty());
+    }
+
+    fn pick_at(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((start, hits, i)) = self.at.take() else {
+            return;
+        };
+        let p = &hits[i];
+        let text = if p.ends_with('/') {
+            format!("@{p}")
+        } else {
+            format!("@{p} ")
+        };
+        let end = self.prompt.read(cx).cursor(cx);
+        self.prompt
+            .update(cx, |f, cx| f.splice(start..end, &text, window, cx));
+    }
+
+    /// Ações do input focado (setas, Enter, Tab, Esc) passam aqui antes dele: o `@` e o Tab entre campos.
+    fn on_input_action(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((_, hits, i)) = &mut self.at {
+            let n = hits.len();
+            match key {
+                "down" => *i = (*i + 1) % n,
+                "up" => *i = (*i + n - 1) % n,
+                "enter" | "tab" => self.pick_at(window, cx),
+                "escape" => self.at = None,
+                _ => return,
+            }
+        } else {
+            match key {
+                "tab" => self.cycle(1, window, cx),
+                "shift-tab" => self.cycle(2, window, cx),
+                "escape" if self.open.is_some() => self.open = None,
+                "escape" => cx.emit(Event::Done(None)),
+                _ => return,
+            }
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         match k.key.as_str() {
+            "tab" => self.cycle(if k.modifiers.shift { 2 } else { 1 }, window, cx),
             "escape" if self.open.is_some() => self.open = None,
             "escape" => cx.emit(Event::Done(None)),
             "enter" if k.modifiers.control => self.create(cx),
@@ -419,7 +526,7 @@ impl NewFeature {
                 cx.notify();
             }))
             .child(checkbox(&self.theme, on && enabled))
-            .child(label)
+            .child(div().flex_1().min_w_0().child(label))
     }
 }
 
@@ -445,6 +552,7 @@ impl Render for NewFeature {
         let env_label = if self.env_files.is_empty() {
             div()
                 .flex()
+                .flex_wrap()
                 .gap(px(4.))
                 .child("Copiar")
                 .child(mono(".env".into()))
@@ -457,6 +565,7 @@ impl Render for NewFeature {
             let names = self.env_files.join(", ");
             div()
                 .flex()
+                .flex_wrap()
                 .gap(px(4.))
                 .child("Copiar")
                 .child(mono(names))
@@ -465,6 +574,7 @@ impl Render for NewFeature {
         let setup_label = match &self.setup_cmd {
             Some(c) => div()
                 .flex()
+                .flex_wrap()
                 .gap(px(4.))
                 .child("Rodar")
                 .child(mono(c.clone()))
@@ -473,11 +583,16 @@ impl Render for NewFeature {
                 } else {
                     "(setup do repo, vem do .maestro.toml)"
                 })),
-            None => div().flex().gap(px(4.)).child("Rodar o setup").child(
-                div()
-                    .text_color(t.muted)
-                    .child("(sem lockfile nem .maestro.toml)"),
-            ),
+            None => div()
+                .flex()
+                .flex_wrap()
+                .gap(px(4.))
+                .child("Rodar o setup")
+                .child(
+                    div()
+                        .text_color(t.muted)
+                        .child("(sem lockfile nem .maestro.toml)"),
+                ),
         };
         let bases = match self.mother() {
             Some(m) => vec![m.branch.clone()],
@@ -503,9 +618,30 @@ impl Render for NewFeature {
                     }
                 }),
             )
-            .on_action(cx.listener(|this, _: &NextField, w, cx| this.cycle(1, w, cx)))
-            .on_action(cx.listener(|this, _: &PrevField, w, cx| this.cycle(2, w, cx)))
-            // captura: Tab e Esc chegam aqui antes dos campos e da navegação de foco do GPUI
+            .capture_action(
+                cx.listener(|this, _: &MoveDown, w, cx| this.on_input_action("down", w, cx)),
+            )
+            .capture_action(
+                cx.listener(|this, _: &MoveUp, w, cx| this.on_input_action("up", w, cx)),
+            )
+            .capture_action(cx.listener(|this, e: &Enter, w, cx| {
+                if e.secondary {
+                    this.create(cx);
+                    cx.stop_propagation();
+                } else if !e.shift {
+                    this.on_input_action("enter", w, cx);
+                }
+            }))
+            .capture_action(
+                cx.listener(|this, _: &IndentInline, w, cx| this.on_input_action("tab", w, cx)),
+            )
+            .capture_action(cx.listener(|this, _: &OutdentInline, w, cx| {
+                this.on_input_action("shift-tab", w, cx)
+            }))
+            .capture_action(
+                cx.listener(|this, _: &Escape, w, cx| this.on_input_action("escape", w, cx)),
+            )
+            // fora de um campo (seletor, caixa) as teclas chegam cruas
             .capture_key_down(cx.listener(Self::on_key_down))
             .w(px(480.))
             .max_w_full()
@@ -535,9 +671,24 @@ impl Render for NewFeature {
                 d.child(
                     div()
                         .mt(px(-6.))
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(6.))
                         .text_size(px(13.))
                         .text_color(if ok { t.ok } else { t.muted })
-                        .child(s),
+                        .child(s)
+                        .when(self.jira_failed, |d| {
+                            d.child(
+                                div()
+                                    .id("jira-retry")
+                                    .cursor_pointer()
+                                    .text_color(t.accent)
+                                    .child("↻ tentar de novo")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.lookup_jira(true, cx)),
+                                    ),
+                            )
+                        }),
                 )
             })
             .child(row2(
@@ -560,8 +711,62 @@ impl Render for NewFeature {
                     .into_any_element(),
             ))
             .child(fld(
-                self.label("O que o Claude deve fazer (opcional)"),
-                self.prompt.clone().into_any_element(),
+                div()
+                    .flex()
+                    .gap(px(4.))
+                    .child(self.label("O que o Claude deve fazer (opcional ·"))
+                    .child(mono("@".into()).text_size(px(13.)).text_color(t.muted))
+                    .child(self.label("menciona pasta ou arquivo)")),
+                div()
+                    .relative()
+                    .child(self.prompt.clone())
+                    .when_some(self.at.clone(), |d, (_, hits, sel)| {
+                        let mut list = div()
+                            .absolute()
+                            .top_full()
+                            .left_0()
+                            .mt(px(2.))
+                            .min_w(px(240.))
+                            .py(px(3.))
+                            .bg(t.raise)
+                            .border_1()
+                            .border_color(t.line)
+                            .rounded(px(6.))
+                            .shadow_lg()
+                            .font_family(t.mono.clone())
+                            .text_size(px(12.5));
+                        for (i, p) in hits.into_iter().enumerate() {
+                            list = list.child(
+                                div()
+                                    .id(("at", i))
+                                    .flex()
+                                    .gap(px(10.))
+                                    .px(px(10.))
+                                    .cursor_pointer()
+                                    .when(i == sel, |d| d.bg(t.accent_soft))
+                                    .hover(|d| d.bg(t.accent_soft))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, window, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(a) = &mut this.at {
+                                                a.2 = i;
+                                            }
+                                            this.pick_at(window, cx);
+                                        }),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(14.))
+                                            .text_color(t.accent)
+                                            .child(if p.ends_with('/') { "▸" } else { "·" }),
+                                    )
+                                    .child(p),
+                            );
+                        }
+                        d.child(deferred(list).with_priority(1))
+                    })
+                    .into_any_element(),
             ))
             .child(row2(
                 fld(
@@ -594,7 +799,6 @@ impl Render for NewFeature {
                     .rounded(px(5.))
                     .px(px(8.))
                     .py(px(6.))
-                    .whitespace_nowrap()
                     .overflow_hidden()
                     .child(self.preview(cx)),
             )
@@ -641,6 +845,7 @@ impl Render for NewFeature {
                             self.claude,
                             div()
                                 .flex()
+                                .flex_wrap()
                                 .gap(px(4.))
                                 .child("Abrir o")
                                 .child(mono("claude".into()))
@@ -693,4 +898,12 @@ impl Render for NewFeature {
                     ),
             )
     }
+}
+
+/// O MCP do Atlassian fora do ar ou ainda conectando, não uma issue que não existe.
+fn unavailable(e: &str) -> bool {
+    let e = e.to_lowercase();
+    ["mcp", "atlassian", "conect", "connect", "oauth", "indispon"]
+        .iter()
+        .any(|w| e.contains(w))
 }

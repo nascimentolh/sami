@@ -71,6 +71,22 @@ pub struct Post {
     pub read_time: u32,
 }
 
+impl Post {
+    /// O título numa linha: posts que são tweets trazem o texto inteiro como título.
+    pub fn headline(&self) -> String {
+        let line = self
+            .title
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or_default();
+        match line.char_indices().nth(100) {
+            Some((i, _)) => format!("{}…", line[..i].trim_end()),
+            None => line.to_string(),
+        }
+    }
+}
+
 fn post(v: &Value) -> Option<Post> {
     let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
     Some(Post {
@@ -950,6 +966,17 @@ mod tests {
             decisions: vec!["node-24-dimensiona-a-heap-pelo-cgroup".into()],
             repo_notes: vec![],
         }
+    }
+
+    #[test]
+    fn titulo_de_tweet_vira_uma_linha() {
+        let mut p = Post {
+            title: "\n  this is why opus 5.5 is the best\n\nit rewrote".into(),
+            ..Default::default()
+        };
+        assert_eq!(p.headline(), "this is why opus 5.5 is the best");
+        p.title = "x".repeat(150);
+        assert_eq!(p.headline().chars().count(), 101);
     }
 
     #[test]
