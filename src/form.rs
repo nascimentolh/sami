@@ -32,6 +32,7 @@ pub struct TextField {
     // o input do gpui-component pede a Window, que boa parte dos construtores não tem: nasce no primeiro render
     inner: Option<Inner>,
     pending: Option<String>,
+    placeholder_changed: bool,
 }
 
 impl EventEmitter<FieldEvent> for TextField {}
@@ -54,6 +55,7 @@ impl TextField {
             theme,
             inner: None,
             pending: None,
+            placeholder_changed: false,
         }
     }
 
@@ -63,7 +65,7 @@ impl TextField {
 
     pub fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
         self.placeholder = placeholder;
-        self.pending.get_or_insert_with(|| self.value.clone());
+        self.placeholder_changed = true;
         cx.notify();
     }
 
@@ -91,6 +93,10 @@ impl TextField {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let ok = |o: usize| self.value.is_char_boundary(o);
+        if range.start > range.end || !ok(range.start) || !ok(range.end) {
+            return;
+        }
         self.value.replace_range(range.clone(), text);
         let at = range.start + text.len();
         let v = self.value.clone();
@@ -150,19 +156,24 @@ impl TextField {
             });
             self.pending = None;
         }
-        if let Some(v) = self.pending.take() {
-            let ph = self.placeholder;
-            match &self.inner {
-                Some(Inner::Line(s)) => s.update(cx, |s, cx| {
-                    s.set_placeholder(ph, window, cx);
-                    s.set_value(v, window, cx);
-                }),
-                Some(Inner::Area(s)) => s.update(cx, |s, cx| {
-                    s.set_placeholder(ph, window, cx);
-                    s.set_value(v, window, cx);
-                }),
-                None => {}
-            }
+        let ph = std::mem::take(&mut self.placeholder_changed).then_some(self.placeholder);
+        let v = self.pending.take();
+        macro_rules! apply {
+            ($s:expr) => {
+                $s.update(cx, |s, cx| {
+                    if let Some(ph) = ph {
+                        s.set_placeholder(ph, window, cx);
+                    }
+                    if let Some(v) = v {
+                        s.set_value(v, window, cx);
+                    }
+                })
+            };
+        }
+        match &self.inner {
+            Some(Inner::Line(s)) => apply!(s),
+            Some(Inner::Area(s)) => apply!(s),
+            None => {}
         }
     }
 }

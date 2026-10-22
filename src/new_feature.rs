@@ -384,6 +384,20 @@ impl NewFeature {
 
     /// Ações do input focado (setas, Enter, Tab, Esc) passam aqui antes dele: o `@` e o Tab entre campos.
     fn on_input_action(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // o cursor pode ter andado (Home, clique) ou o foco saído do prompt sem um Changed
+        let prompt_focused = self
+            .prompt
+            .read(cx)
+            .focus_handle()
+            .contains_focused(window, cx);
+        if let Some(sel) = self.at.take().map(|a| a.2)
+            && prompt_focused
+        {
+            self.update_at(cx);
+            if let Some(a) = &mut self.at {
+                a.2 = sel.min(a.1.len() - 1);
+            }
+        }
         if let Some((_, hits, i)) = &mut self.at {
             let n = hits.len();
             match key {
@@ -531,7 +545,16 @@ impl NewFeature {
 }
 
 impl Render for NewFeature {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.at.is_some()
+            && !self
+                .prompt
+                .read(cx)
+                .focus_handle()
+                .contains_focused(window, cx)
+        {
+            self.at = None;
+        }
         let t = self.theme.clone();
         let mono = |s: String| div().font_family(t.mono.clone()).child(s);
         let row2 = |a: Div, b: Div| {
