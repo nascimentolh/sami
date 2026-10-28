@@ -18,9 +18,12 @@ use serde_json::{Value, json};
 pub struct Server {
     pub lang: &'static str,
     pub id: &'static str,
-    /// (binário, argumentos), na ordem de preferência
+    /// (binário, argumentos), na ordem de preferência; `{data}` vira a pasta de cache desta worktree
     bins: &'static [(&'static str, &'static [&'static str])],
     pub install: &'static str,
+    /// Ajustes por seção, como o cliente do VS Code manda: respondem `workspace/configuration`
+    /// e vão no `didChangeConfiguration`. "" quando o padrão do servidor serve.
+    settings: &'static str,
 }
 
 const SERVERS: &[(&[&str], Server)] = &[
@@ -35,6 +38,7 @@ const SERVERS: &[(&[&str], Server)] = &[
                 ("tsc", &["--lsp", "--stdio"]),
             ],
             install: "npm i -g typescript-language-server typescript",
+            settings: "",
         },
     ),
     (
@@ -44,6 +48,7 @@ const SERVERS: &[(&[&str], Server)] = &[
             id: "rust",
             bins: &[("rust-analyzer", &[])],
             install: "rustup component add rust-analyzer",
+            settings: "",
         },
     ),
     (
@@ -53,6 +58,7 @@ const SERVERS: &[(&[&str], Server)] = &[
             id: "go",
             bins: &[("gopls", &[])],
             install: "go install golang.org/x/tools/gopls@latest",
+            settings: "",
         },
     ),
     (
@@ -65,6 +71,40 @@ const SERVERS: &[(&[&str], Server)] = &[
                 ("pyright-langserver", &["--stdio"]),
             ],
             install: "npm i -g pyright",
+            settings: "",
+        },
+    ),
+    (
+        &["java"],
+        Server {
+            lang: "Java",
+            id: "java",
+            // `-data` é o workspace importado (classpath, índice): um por worktree, como o
+            // `--system-path` do servidor da JetBrains. Sem isso duas features do mesmo repo brigam.
+            bins: &[("jdtls", &["-data", "{data}"])],
+            install: "mkdir -p ~/.local/jdtls ~/.local/bin && curl -L https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar xz -C ~/.local/jdtls && ln -sf ~/.local/jdtls/bin/jdtls ~/.local/bin/jdtls",
+            // o jdtls só importa Gradle/Maven e compila em segundo plano se o cliente pedir
+            settings: r#"{"java": {
+                "configuration": {"updateBuildConfiguration": "automatic"},
+                "import": {"gradle": {"enabled": true}, "maven": {"enabled": true}},
+                "autobuild": {"enabled": true},
+                "errors": {"incompleteClasspath": {"severity": "warning"}},
+                "maxConcurrentBuilds": 1
+            }}"#,
+        },
+    ),
+    (
+        &["kt", "kts"],
+        Server {
+            lang: "Kotlin",
+            id: "kotlin",
+            bins: &[
+                ("kotlin-lsp", &["--stdio"]),
+                ("kotlin-lsp.sh", &["--stdio"]),
+                ("kotlin-language-server", &[]),
+            ],
+            install: "curl -L https://github.com/fwcd/kotlin-language-server/releases/latest/download/server.zip -o /tmp/kls.zip && unzip -oq /tmp/kls.zip -d ~/.local/kotlin-ls && mkdir -p ~/.local/bin && ln -sf ~/.local/kotlin-ls/server/bin/kotlin-language-server ~/.local/bin/kotlin-language-server",
+            settings: "",
         },
     ),
     (
@@ -74,6 +114,7 @@ const SERVERS: &[(&[&str], Server)] = &[
             id: "json",
             bins: &[("vscode-json-language-server", &["--stdio"])],
             install: "npm i -g vscode-langservers-extracted",
+            settings: "",
         },
     ),
 ];
@@ -95,6 +136,8 @@ pub fn language_id(path: &str) -> &'static str {
         Some("jsx") => "javascriptreact",
         Some("rs") => "rust",
         Some("go") => "go",
+        Some("java") => "java",
+        Some("kt" | "kts") => "kotlin",
         Some("py") => "python",
         Some("json") => "json",
         _ => "plaintext",
@@ -108,6 +151,7 @@ fn find(bin: &str) -> Option<PathBuf> {
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
     dirs.push(home.join(".local/share/nvim/mason/bin"));
+    dirs.push(home.join(".local/bin"));
     dirs.push(home.join(".cargo/bin"));
     dirs.push(home.join(".local/go/packages/bin"));
     dirs.push(home.join("go/bin"));
@@ -117,6 +161,22 @@ fn find(bin: &str) -> Option<PathBuf> {
         dirs.extend(v.into_iter().rev());
     }
     dirs.into_iter().map(|d| d.join(bin)).find(|p| p.is_file())
+}
+
+/// A pasta de cache deste servidor nesta worktree (o `{data}` dos argumentos): o jdtls guarda aí
+/// o projeto importado, e duas worktrees do mesmo repo têm o mesmo nome de pasta.
+fn data_dir(root: &Path, server: &Server) -> PathBuf {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in root.to_string_lossy().bytes() {
+        h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".cache"))
+        .join("maestro")
+        .join(server.id)
+        .join(format!("{h:016x}"))
 }
 
 pub fn file_uri(path: &Path) -> String {
@@ -179,6 +239,14 @@ pub fn read_message(r: &mut impl BufRead) -> io::Result<Value> {
     serde_json::from_slice(&body).map_err(io::Error::other)
 }
 
+/// O pedaço dos ajustes que o `workspace/configuration` pediu: "java.import" desce pelos pontos.
+fn section(settings: &Value, section: Option<&str>) -> Value {
+    match section {
+        None => settings.clone(),
+        Some(s) => s.split('.').fold(settings, |v, k| &v[k]).clone(),
+    }
+}
+
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>;
 
 pub struct Client {
@@ -192,6 +260,10 @@ pub struct Client {
     pub server: &'static Server,
     /// o binário que subiu, para a barra de status
     pub bin: String,
+    /// o que o servidor está fazendo agora ("Importando projeto Gradle"), vazio quando está livre
+    status: Arc<Mutex<String>>,
+    /// `Server::settings` já em JSON
+    settings: Value,
     /// o servidor só entrega diagnóstico quando pedido (`textDocument/diagnostic`), como o TS 7
     pull: AtomicBool,
 }
@@ -204,6 +276,11 @@ impl Client {
             .filter(|(b, _)| usable(root, b))
             .find_map(|(b, a)| Some((find(b)?, *a)))
             .ok_or_else(|| format!("{} não encontrado", server.bins[0].0))?;
+        let data = data_dir(root, server);
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.replace("{data}", &data.to_string_lossy()))
+            .collect();
         let mut cmd = Command::new(&bin);
         // o node do nvm precisa estar no PATH do servidor de TypeScript
         if let Some(dir) = bin.parent() {
@@ -235,15 +312,27 @@ impl Client {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             pull: AtomicBool::new(false),
+            status: Arc::default(),
+            settings: serde_json::from_str(server.settings).unwrap_or(Value::Null),
         });
         let weak = Arc::downgrade(&client);
-        let (pending, diagnostics, generation) = (
+        let (pending, diagnostics, generation, status, settings) = (
             client.pending.clone(),
             client.diagnostics.clone(),
             client.generation.clone(),
+            client.status.clone(),
+            client.settings.clone(),
         );
         std::thread::spawn(move || {
             let mut r = BufReader::new(stdout);
+            // a barra de status lê por `generation`, a mesma que os diagnósticos usam para repintar
+            let set_status = |s: &str| {
+                let mut cur = status.lock().unwrap();
+                if *cur != s {
+                    *cur = s.to_string();
+                    generation.fetch_add(1, Ordering::Relaxed);
+                }
+            };
             while let Ok(msg) = read_message(&mut r) {
                 let id = msg["id"].as_i64();
                 match (id, msg["method"].as_str()) {
@@ -264,15 +353,34 @@ impl Client {
                         diagnostics.lock().unwrap().insert(uri, list);
                         generation.fetch_add(1, Ordering::Relaxed);
                     }
+                    // Gradle/Maven levam minutos: o editor mostra o que o servidor está fazendo
+                    (_, Some("$/progress")) => {
+                        let v = &msg["params"]["value"];
+                        match v["kind"].as_str() {
+                            Some("begin") => set_status(v["title"].as_str().unwrap_or_default()),
+                            Some("end") => set_status(""),
+                            _ => {}
+                        }
+                    }
+                    // o jdtls não usa `$/progress` para o import: manda isto
+                    (_, Some("language/status")) => {
+                        let p = &msg["params"];
+                        let done = matches!(p["type"].as_str(), Some("ServiceReady" | "Started"));
+                        let m = p["message"].as_str().unwrap_or_default();
+                        set_status(if done { "" } else { m });
+                    }
                     (_, Some(method)) if !msg["id"].is_null() => {
                         // pedidos do servidor: responde o mínimo para ele não travar esperando
                         let result = match method {
-                            "workspace/configuration" => {
-                                json!(vec![
-                                    Value::Null;
-                                    msg["params"]["items"].as_array().map_or(0, Vec::len)
-                                ])
-                            }
+                            "workspace/configuration" => Value::Array(
+                                msg["params"]["items"]
+                                    .as_array()
+                                    .map(Vec::as_slice)
+                                    .unwrap_or_default()
+                                    .iter()
+                                    .map(|i| section(&settings, i["section"].as_str()))
+                                    .collect(),
+                            ),
                             _ => Value::Null,
                         };
                         if let Some(c) = weak.upgrade() {
@@ -327,8 +435,8 @@ impl Client {
                 "publishDiagnostics": {"relatedInformation": false},
                 "diagnostic": {"dynamicRegistration": false}
             },
-            "workspace": {"configuration": true, "workspaceFolders": true},
-            "window": {"workDoneProgress": false}
+            "workspace": {"configuration": true, "workspaceFolders": true, "didChangeConfiguration": {"dynamicRegistration": false}},
+            "window": {"workDoneProgress": true}
         });
         let rx = self.request(
             "initialize",
@@ -346,7 +454,20 @@ impl Client {
             Ordering::Relaxed,
         );
         self.notify("initialized", json!({}));
+        // uns servidores puxam a configuração, outros só esperam ela chegar: manda dos dois jeitos
+        if !self.settings.is_null() {
+            self.notify(
+                "workspace/didChangeConfiguration",
+                json!({"settings": self.settings.clone()}),
+            );
+        }
         Ok(())
+    }
+
+    /// O que o servidor está fazendo agora, para a barra de status.
+    pub fn status(&self) -> Option<String> {
+        let s = self.status.lock().unwrap();
+        (!s.is_empty()).then(|| s.clone())
     }
 
     pub fn did_open(self: &Arc<Self>, path: &Path, text: &str) {
@@ -426,6 +547,12 @@ fn registry() -> &'static Mutex<HashMap<Key, Arc<Client>>> {
 /// O servidor desta worktree e linguagem, iniciado na primeira vez. Bloqueia no `initialize`: chamar fora da thread de UI.
 pub fn client(root: &Path, server: &'static Server) -> Result<Arc<Client>, String> {
     let key = (root.to_path_buf(), server.id);
+    if let Some(c) = registry().lock().unwrap().get(&key) {
+        return Ok(c.clone());
+    }
+    // um de cada vez: abrir dois arquivos juntos subia dois servidores (o jdtls come 1 GB cada)
+    static START: Mutex<()> = Mutex::new(());
+    let _one = START.lock().unwrap();
     if let Some(c) = registry().lock().unwrap().get(&key) {
         return Ok(c.clone());
     }
@@ -532,7 +659,7 @@ mod tests {
         c.did_open(&dir.join(f), t);
         let uri = file_uri(&dir.join(f));
         let t0 = std::time::Instant::now();
-        while c.diagnostics(&uri).is_empty() && t0.elapsed().as_secs() < 90 {
+        while c.diagnostics(&uri).is_empty() && t0.elapsed().as_secs() < 240 {
             std::thread::sleep(std::time::Duration::from_millis(300));
         }
         let d = c.diagnostics(&uri);
@@ -557,6 +684,40 @@ mod tests {
         );
     }
 
+    /// Precisa do jdtls e de um JDK 21+: `cargo test -- --ignored java`
+    #[test]
+    #[ignore]
+    fn java_de_verdade() {
+        diagnostico_real(
+            "java",
+            &[
+                (
+                    "pom.xml",
+                    "<project><modelVersion>4.0.0</modelVersion><groupId>x</groupId><artifactId>x</artifactId><version>1</version></project>\n",
+                ),
+                (
+                    "src/main/java/Main.java",
+                    "public class Main {\n    void m() {\n        String s = 1;\n    }\n}\n",
+                ),
+            ],
+            2,
+        );
+    }
+
+    /// Precisa do kotlin-language-server (ou do kotlin-lsp): `cargo test -- --ignored kotlin`
+    #[test]
+    #[ignore]
+    fn kotlin_de_verdade() {
+        diagnostico_real(
+            "kotlin",
+            &[(
+                "src/main/kotlin/Main.kt",
+                "fun main() {\n    val s: String = 1\n}\n",
+            )],
+            1,
+        );
+    }
+
     #[test]
     #[ignore]
     fn rust_de_verdade() {
@@ -574,12 +735,30 @@ mod tests {
     }
 
     #[test]
+    fn secao_da_configuracao() {
+        let s: Value = serde_json::from_str(server_for("A.java").unwrap().settings).unwrap();
+        assert_eq!(section(&s, Some("java.import.gradle.enabled")), json!(true));
+        assert_eq!(section(&s, Some("java"))["autobuild"]["enabled"], json!(true));
+        assert_eq!(section(&s, Some("java.nada")), Value::Null);
+        assert_eq!(section(&s, None), s);
+        // worktrees diferentes do mesmo repo não podem dividir o workspace do jdtls
+        let j = server_for("A.java").unwrap();
+        assert_ne!(
+            data_dir(Path::new("/f/a/app"), j),
+            data_dir(Path::new("/f/b/app"), j)
+        );
+    }
+
+    #[test]
     fn uri_de_arquivo() {
         let p = Path::new("/home/a.b@X.COM/repo com espaço/a.ts");
         let u = file_uri(p);
         assert_eq!(u, "file:///home/a.b@X.COM/repo%20com%20espa%C3%A7o/a.ts");
         assert_eq!(uri_path(&u).unwrap(), p);
         assert_eq!(server_for("src/a.tsx").unwrap().id, "typescript");
+        assert_eq!(server_for("Main.java").unwrap().id, "java");
+        assert_eq!(server_for("build.gradle.kts").unwrap().id, "kotlin");
+        assert_eq!(language_id("A.kt"), "kotlin");
         assert!(server_for("README.md").is_none());
     }
 }

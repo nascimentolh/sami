@@ -57,6 +57,8 @@ O dia a dia é o Claude Code no terminal. O editor serve para **revisar depois**
 - **Servidores de linguagem:**
   - TypeScript/JavaScript: segue a versão do projeto, ou usa o TS 7 nativo;
   - Rust, Go, Python e JSON;
+  - Java e Kotlin: o projeto Gradle/Maven é importado pelo servidor, com uma pasta de
+    cache por worktree, e a barra mostra o andamento ("Importando projeto Gradle");
   - quando falta um servidor, aparece uma faixa com o comando de instalação.
 - **Blame e Histórico:** blame no fim da linha, com o MR que trouxe a mudança, e aba **Histórico** do arquivo.
 - **Abas e colunas:** abas com ×, com aviso se houver alteração não salva, e colunas redimensionáveis com o mouse.
@@ -142,6 +144,16 @@ npm i -g typescript-language-server     # usa o TypeScript do projeto quando há
 rustup component add rust-analyzer
 go install golang.org/x/tools/gopls@latest
 npm i -g pyright
+
+# Java (jdtls, precisa de um JDK 21+)
+mkdir -p ~/.local/jdtls ~/.local/bin
+curl -L https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar xz -C ~/.local/jdtls
+ln -sf ~/.local/jdtls/bin/jdtls ~/.local/bin/jdtls
+
+# Kotlin (kotlin-language-server; se tiver o kotlin-lsp da JetBrains no PATH, ele vem primeiro)
+curl -L https://github.com/fwcd/kotlin-language-server/releases/latest/download/server.zip -o /tmp/kls.zip
+unzip -oq /tmp/kls.zip -d ~/.local/kotlin-ls
+ln -sf ~/.local/kotlin-ls/server/bin/kotlin-language-server ~/.local/bin/kotlin-language-server
 ```
 
 **News (opcional):** gere um token pessoal em [daily.dev/settings/api](https://daily.dev/settings/api) e salve:

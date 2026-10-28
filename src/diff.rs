@@ -333,6 +333,22 @@ const KW: &[&str] = &[
     "struct",
     "enum",
     "match",
+    "package",
+    "public",
+    "protected",
+    "static",
+    "final",
+    "extends",
+    "implements",
+    "else",
+    "while",
+    "fun",
+    "val",
+    "var",
+    "when",
+    "object",
+    "suspend",
+    "override",
 ];
 
 pub fn highlight(line: &str) -> Vec<(std::ops::Range<usize>, Tok)> {

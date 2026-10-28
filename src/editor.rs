@@ -602,7 +602,12 @@ impl FileEditor {
             _ => s.lang,
         };
         match &self.lsp {
-            Lsp::Ready(d) => Some(format!("{} · {}", short(d.client.server), d.client.bin)),
+            // enquanto o servidor importa o projeto (Gradle, Maven), mostra o que ele está fazendo
+            Lsp::Ready(d) => Some(format!(
+                "{} · {}",
+                short(d.client.server),
+                d.client.status().unwrap_or_else(|| d.client.bin.clone())
+            )),
             Lsp::Starting(s) => Some(format!("{}: iniciando…", short(s))),
             Lsp::Missing(s) => Some(format!("{}: sem servidor", s.lang)),
             Lsp::Failed(s, _) => Some(format!("{}: servidor falhou", short(s))),
