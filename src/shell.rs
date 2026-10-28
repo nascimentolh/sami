@@ -1190,11 +1190,45 @@ impl Shell {
     }
 
     /// Painel "Revisar" da feature em foco (`Ctrl+Shift+E`); com `path`, abre já nesse arquivo.
-    fn toggle_review(&mut self, path: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        let root = self
-            .sidebar
+    /// O repo em que o editor e a revisão trabalham: o da lateral, e sem lateral (sem herdr, que é
+    /// o caso no Windows) o repo da pasta em que o Maestro foi aberto.
+    pub fn raiz(&self, cx: &App) -> Option<std::path::PathBuf> {
+        self.sidebar
             .as_ref()
-            .and_then(|s| s.read(cx).top_worktree());
+            .and_then(|s| s.read(cx).top_worktree())
+            .or_else(|| {
+                let cwd = std::env::current_dir().ok()?;
+                crate::herdr::repo_root(&cwd).map(std::path::Path::to_path_buf)
+            })
+    }
+
+    /// `maestro <arquivo>`: abre o editor já nele, relativo à raiz.
+    pub fn abrir_arquivo(
+        &mut self,
+        arquivo: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(raiz) = self.raiz(cx) else {
+            return self.toast(
+                format!("{} não está num repositório", arquivo.display()),
+                cx,
+            );
+        };
+        let abs = match arquivo.is_absolute() {
+            true => arquivo.to_path_buf(),
+            false => std::env::current_dir().unwrap_or_default().join(arquivo),
+        };
+        let rel = abs
+            .strip_prefix(&raiz)
+            .unwrap_or(&abs)
+            .to_string_lossy()
+            .replace('\\', "/");
+        self.run(Cmd::OpenFile(rel), window, cx);
+    }
+
+    fn toggle_review(&mut self, path: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.raiz(cx);
         if path.is_none() && self.review.take().is_some() {
             window.focus(&self.terminal.read(cx).focus_handle(), cx);
             return cx.notify();
@@ -1979,11 +2013,7 @@ impl Shell {
 
     /// "Arquivo: Abrir…": os arquivos da worktree em foco, na mesma paleta.
     fn open_file_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(root) = self
-            .sidebar
-            .as_ref()
-            .and_then(|s| s.read(cx).top_worktree())
-        else {
+        let Some(root) = self.raiz(cx) else {
             return self.toast(
                 "Abra um terminal num repositório para abrir arquivos".into(),
                 cx,

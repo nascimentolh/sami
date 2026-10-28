@@ -1,0 +1,8 @@
+# pack nativo js-ts. O repo acrescenta as suas em .maestro/regras/ e nunca precisa mexer aqui.
+regra sem-any
+severidade aviso
+quando no declaracao-de-campo
+proibido tipo any any[] Array<any>
+porque O `any` desliga a checagem justamente no ponto em que ela pegaria o erro: o campo passa a aceitar qualquer coisa e o defeito reaparece em runtime, longe daqui.
+errado dados: any
+certo dados: unknown

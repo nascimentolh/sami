@@ -451,6 +451,8 @@ impl FileEditor {
         cx.notify();
     }
 
+    // a engine de regras do Maestro não desenha no arquivo: ela vive na aba Problemas, que é do
+    // repo inteiro. Aqui fica só o que o servidor de linguagem disser deste buffer.
     fn apply_diagnostics(&mut self, cx: &mut Context<Self>) {
         let Lsp::Ready(doc) = &self.lsp else { return };
         self.diag_gen = doc.client.generation.load(Ordering::Relaxed);
