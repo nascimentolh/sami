@@ -467,7 +467,7 @@ impl CardTab {
             .when_some(url, |d, url| {
                 d.child(
                     button(&t, "cj-web", "Abrir no Jira", false).on_click(move |_, _, _| {
-                        crate::spawn_reaped(std::process::Command::new("xdg-open").arg(&url));
+                        crate::abrir_no_sistema(url.as_ref());
                     }),
                 )
             })

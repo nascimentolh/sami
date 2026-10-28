@@ -291,7 +291,12 @@ impl AskView {
             let root = match (root, mr) {
                 (Some(r), _) => r,
                 (None, Some((path, iid, target))) => {
-                    match crate::mrs::worktree(&path, iid, &target) {
+                    // o Ask só sabe do MR aberto: a forja vem do repo em que o Maestro está
+                    let f = std::env::current_dir()
+                        .ok()
+                        .and_then(|d| crate::forja::Forja::de(&d))
+                        .unwrap_or(crate::forja::Forja::GitLab);
+                    match crate::mrs::worktree(f, &path, iid, &target) {
                         Ok(r) => r,
                         Err(e) => return drop(tx.unbounded_send(Ev::Failed(e))),
                     }

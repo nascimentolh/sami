@@ -130,6 +130,7 @@ mod tests {
 
     fn row(iid: u64, notes: u64) -> Row {
         Row {
+            forja: crate::forja::Forja::GitLab,
             path: "g/bots-api".into(),
             iid,
             title: format!("MR {iid}"),

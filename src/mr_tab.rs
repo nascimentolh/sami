@@ -418,10 +418,15 @@ impl MrTab {
                     .relative()
                     .child(tour::anchor(&self.anchors, "mrcard"))
                     .child(
-                        self.h4(format!("!{} · {} → {}", m.iid, self.branch, m.target))
+                        self.h4(format!(
+                            "{} · {} → {}",
+                            m.etiqueta(),
+                            self.branch,
+                            m.target
+                        ))
                             .child(div().flex_1())
-                            .child(button(&t, "mr-web", "Abrir no GitLab", false).on_click(move |_, _, _| {
-                                crate::spawn_reaped(std::process::Command::new("xdg-open").arg(&url));
+                            .child(button(&t, "mr-web", &format!("Abrir no {}", m.forja.nome()), false).on_click(move |_, _, _| {
+                                crate::abrir_no_sistema(url.as_ref());
                             })),
                     )
                     .when(m.merged, |d| {
@@ -500,14 +505,27 @@ impl Render for MrTab {
         let t = self.theme.clone();
         let body = match self.fetch.clone() {
             None => div().p(px(24.)).text_color(t.muted).child("Lendo o MR…"),
-            Some(Fetch::NoGitlab) => self.empty(
-                "Sem GitLab neste repositório".into(),
-                "O remoto origin não é do GitLab: aqui não há MR, pipeline nem Sonar para mostrar."
-                    .into(),
-            ),
-            Some(Fetch::NoAuth) => self.empty(
-                "GitLab sem login".into(),
-                "Rode glab auth login no terminal; a aba atualiza sozinha.".into(),
+            Some(Fetch::SemForja) => {
+                let g = crate::forja::so_git(&self.root);
+                let onde = match (&g.upstream, g.a_frente, g.atras) {
+                    (None, _, _) => format!("{} não tem upstream.", g.branch),
+                    (Some(u), 0, 0) => format!("{} está igual a {u}.", g.branch),
+                    (Some(u), f, 0) => format!("{} está {f} commit(s) à frente de {u}.", g.branch),
+                    (Some(u), 0, a) => format!("{} está {a} commit(s) atrás de {u}.", g.branch),
+                    (Some(u), f, a) => {
+                        format!("{} está {f} à frente e {a} atrás de {u}.", g.branch)
+                    }
+                };
+                self.empty(
+                    "Sem forja neste repositório".into(),
+                    format!(
+                        "O remoto origin não é do GitLab nem do GitHub: não há MR, PR nem pipeline para mostrar. {onde}"
+                    ),
+                )
+            }
+            Some(Fetch::NoAuth(f)) => self.empty(
+                format!("{} sem login", f.nome()),
+                format!("Rode {} no terminal; a aba atualiza sozinha.", f.login()),
             ),
             Some(Fetch::Err(e)) => self.empty("Não deu para ler o MR".into(), e),
             Some(Fetch::NoMr) => {
