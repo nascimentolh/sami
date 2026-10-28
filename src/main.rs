@@ -18,6 +18,7 @@ mod graph;
 mod herdr;
 mod jira;
 mod keys;
+mod lint;
 mod lsp;
 mod lsp_editor;
 mod mascot;
@@ -97,6 +98,10 @@ fn main() {
         }
         return;
     }
+    // `maestro lint <arquivo>`: a engine de regras pelo hook do agente, pelo pre-commit e pelo CI
+    if args.get(1).map(String::as_str) == Some("lint") {
+        std::process::exit(lint::cli(&args[2..]));
+    }
     // `maestro perm <id>`: o hook PermissionRequest só anota o pedido (as permissões que aprendem)
     if args.get(1).map(String::as_str) == Some("perm") {
         let mut stdin = String::new();
@@ -111,6 +116,11 @@ fn main() {
         // SAFETY: ainda não há outras threads
         unsafe { std::env::remove_var(key) };
     }
+    // `maestro <arquivo>`: a janela abre com o editor nele (e a engine de regras já apontando o que há)
+    let arquivo = args
+        .get(1)
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file());
     let herdr = Herdr::from_env().map(Arc::new);
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
@@ -200,7 +210,11 @@ fn main() {
             let sidebar =
                 herdr.map(|h| cx.new(|cx| Sidebar::new(h, theme.clone(), anchors.clone(), cx)));
             window.focus(&terminal.read(cx).focus_handle(), cx);
-            cx.new(|cx| Shell::new(sidebar, terminal, theme, font, anchors, cx))
+            let shell = cx.new(|cx| Shell::new(sidebar, terminal, theme, font, anchors, cx));
+            if let Some(a) = &arquivo {
+                shell.update(cx, |s, cx| s.abrir_arquivo(a, window, cx));
+            }
+            shell
         })
         .expect("abrir a janela");
     });

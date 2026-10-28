@@ -113,6 +113,8 @@ pub struct Review {
     card: Option<Entity<CardTab>>,
     /// os erros da última execução de cada tarefa (a aba Problemas junta com os do LSP)
     task_probs: Vec<(String, crate::tasks::Problem)>,
+    /// o que a engine de regras achou no repo, relido ao abrir a aba Problemas
+    regras_probs: Vec<(String, bool, String, String, u32)>,
     /// `S.rtab` do protótipo
     tab: Tab,
     focus: FocusHandle,
@@ -218,6 +220,7 @@ impl Review {
             mr: None,
             card: None,
             task_probs: Vec::new(),
+            regras_probs: Vec::new(),
             tab: Tab::Review,
             focus: cx.focus_handle(),
             theme,
@@ -427,7 +430,34 @@ impl Review {
 
     pub fn show_problems(&mut self, cx: &mut Context<Self>) {
         self.tab = Tab::Prob;
+        self.regras_probs = self.checa_o_repo();
         cx.notify();
+    }
+
+    /// A engine de regras no repo inteiro (os arquivos que o git enxerga).
+    // ponytail: varre ao abrir a aba — 0,2 ms por arquivo; vira tarefa de fundo quando o repo for
+    // grande o bastante para a abertura demorar
+    fn checa_o_repo(&self) -> Vec<(String, bool, String, String, u32)> {
+        let mut motor = crate::lint::Motor::nativo();
+        let _ = motor.carregar(&self.root);
+        crate::changes::files(&self.root)
+            .into_iter()
+            .filter(|p| !p.ends_with('/'))
+            .filter_map(|rel| {
+                let fonte = std::fs::read_to_string(self.root.join(&rel)).ok()?;
+                Some(motor.checar(std::path::Path::new(&rel), &fonte))
+            })
+            .flatten()
+            .map(|d| {
+                (
+                    "regras do repo".to_string(),
+                    d.severidade == crate::lint::regra::Severidade::Bloqueio,
+                    format!("{}: {}", d.regra, d.porque),
+                    d.caminho,
+                    d.linha as u32,
+                )
+            })
+            .collect()
     }
 
     /// Diagnósticos do LSP e erros das tarefas: (grupo, erro?, mensagem, arquivo relativo, linha).
@@ -450,6 +480,7 @@ impl Review {
                 (String::new(), err, d.message, file, d.range.start.line + 1)
             })
             .collect();
+        out.extend(self.regras_probs.iter().cloned());
         out.extend(self.task_probs.iter().map(|(t, p)| {
             (
                 t.clone(),
@@ -1707,9 +1738,9 @@ impl Render for Review {
                         )
                     })
                     .on_click(cx.listener(|this, _, w, cx| {
-                        this.tab = Tab::Prob;
+                        // pelo `show_problems`: é ele que relê o repo com a engine de regras
+                        this.show_problems(cx);
                         w.focus(&this.focus, cx);
-                        cx.notify();
                     }))
             })
             .child(div().flex_1())
@@ -1723,6 +1754,37 @@ impl Render for Review {
                     .child("×"),
             );
         if self.tab == Tab::Prob {
+            let para_ia = texto_para_ia(&probs);
+            let barra = div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .px(px(12.))
+                .py(px(6.))
+                .border_b_1()
+                .border_color(t.line)
+                .child(
+                    div()
+                        .text_color(t.muted)
+                        .text_size(px(12.))
+                        .child(match probs.len() {
+                            0 => "Nenhum problema".to_string(),
+                            1 => "1 problema".to_string(),
+                            n => format!("{n} problemas"),
+                        }),
+                )
+                .when(!probs.is_empty(), |d| {
+                    d.child(button(&t, "prob-copy", "Copiar para a IA", false).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(para_ia.clone()));
+                            cx.emit(Event::Toast(
+                                "Problemas copiados: arquivo, linha e motivo".into(),
+                                None,
+                            ));
+                            let _ = this;
+                        }),
+                    ))
+                });
             return div()
                 .track_focus(&self.focus)
                 .size_full()
@@ -1733,6 +1795,7 @@ impl Render for Review {
                 .font_family(t.sans)
                 .text_size(px(14.))
                 .child(tabs)
+                .child(barra)
                 .child(self.problems_list(probs, cx));
         }
         let card_body = self.card.clone().filter(|_| self.tab == Tab::Card);
@@ -1998,6 +2061,28 @@ pub fn for_repo(text: &str, root: &std::path::Path, owner: &std::path::Path) -> 
         }
         None => format!("No repositório {at}:\n{text}"),
     }
+}
+
+/// O bloco que vai para a IA: arquivo, linha e motivo de cada problema, numa colagem só.
+fn texto_para_ia(probs: &[(String, bool, String, String, u32)]) -> String {
+    let mut s = String::from(
+        "Problemas apontados pelo Maestro (arquivo:linha). Corrija cada um pelo motivo, não pelo sintoma:
+
+",
+    );
+    for (grupo, erro, msg, file, line) in probs {
+        let marca = if *erro { "erro" } else { "aviso" };
+        let de = if grupo.is_empty() {
+            String::new()
+        } else {
+            format!(" [{grupo}]")
+        };
+        s.push_str(&format!(
+            "- {file}:{line} {marca}{de}: {msg}
+"
+        ));
+    }
+    s
 }
 
 #[cfg(test)]
