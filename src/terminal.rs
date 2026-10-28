@@ -26,6 +26,25 @@ impl EventListener for Listener {
     }
 }
 
+/// A área PRIMARY (copy-on-select, colar com o botão do meio) é do X11/Wayland: no Windows e no mac não existe.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn write_primary(cx: &mut Context<TerminalView>, text: String) {
+    cx.write_to_primary(ClipboardItem::new_string(text));
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn write_primary(_: &mut Context<TerminalView>, _: String) {}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn read_primary(cx: &mut Context<TerminalView>) -> Option<String> {
+    cx.read_from_primary().and_then(|i| i.text())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn read_primary(_: &mut Context<TerminalView>) -> Option<String> {
+    None
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct GridSize {
     cols: usize,
@@ -131,6 +150,8 @@ impl TerminalView {
             working_directory: None,
             drain_on_exit: true,
             env,
+            #[cfg(windows)]
+            escape_args: true,
         };
         let pty = tty::new(&options, window_size(grid, px(0.), px(0.)), 0).expect("abrir o PTY");
         let event_loop =
@@ -218,9 +239,7 @@ impl TerminalView {
             TermEvent::ClipboardStore(ClipboardType::Clipboard, text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text))
             }
-            TermEvent::ClipboardStore(ClipboardType::Selection, text) => {
-                cx.write_to_primary(ClipboardItem::new_string(text))
-            }
+            TermEvent::ClipboardStore(ClipboardType::Selection, text) => write_primary(cx, text),
             _ => {}
         }
     }
@@ -355,7 +374,7 @@ impl TerminalView {
                 cx.notify();
             }
             MouseButton::Middle => {
-                if let Some(text) = cx.read_from_primary().and_then(|i| i.text()) {
+                if let Some(text) = read_primary(cx) {
                     self.paste(&text);
                 }
             }
@@ -415,7 +434,7 @@ impl TerminalView {
         if e.button == MouseButton::Left
             && let Some(text) = selected.filter(|t| !t.is_empty())
         {
-            cx.write_to_primary(ClipboardItem::new_string(text));
+            write_primary(cx, text);
         }
     }
 

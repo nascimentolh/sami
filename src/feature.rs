@@ -252,6 +252,9 @@ pub fn disk_matching(q: &str, n: usize) -> Vec<String> {
         Some(r) => format!("{home}{r}"),
         None => q.to_string(),
     };
+    // no Windows o caminho digitado vem com `\`; o resto do `@` fala em `/`, que o Windows também aceita
+    #[cfg(windows)]
+    let full = full.replace('\\', "/");
     let Some((dir, rest)) = full.rsplit_once('/') else {
         return Vec::new();
     };
@@ -329,6 +332,7 @@ fn git(repo: &Path, args: &[&str]) -> Option<String> {
     // leitura de fundo não pega o index.lock: um rebase ou commit no terminal ao mesmo tempo não quebra
     let out = Command::new("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .args(crate::RAW_EOL)
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -341,6 +345,7 @@ fn git(repo: &Path, args: &[&str]) -> Option<String> {
 
 fn git_err(repo: &Path, args: &[&str]) -> Result<(), String> {
     let out = Command::new("git")
+        .args(crate::RAW_EOL)
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -664,6 +669,7 @@ pub fn snapshot(root: &Path) -> Result<String, String> {
     let _ = std::fs::remove_file(&index);
     let run = |args: &[&str]| -> Result<String, String> {
         let o = Command::new("git")
+            .args(crate::RAW_EOL)
             .arg("-C")
             .arg(root)
             .args(args)
@@ -1642,8 +1648,9 @@ mod tests {
         assert!(ps[..first_file].contains(&"src/fixtures/tasks/".to_string()));
         assert!(ps[..first_file].contains(&"src/".to_string()));
         assert_eq!(matching(&ps, "FORM.R", 8), [&"src/form.rs".to_string()]);
-        let here = std::fs::canonicalize(".").unwrap();
-        let src = format!("{}/src", here.to_string_lossy());
+        // sem `canonicalize`: no Windows ele devolve o prefixo `\\?\`, que não aceita `/`
+        let here = std::env::current_dir().unwrap();
+        let src = format!("{}/src", here.to_string_lossy().replace('\\', "/"));
         let hits = disk_matching(&format!("{src}/F"), 8);
         assert_eq!(hits[0], format!("{src}/fixtures/"));
         assert!(hits.contains(&format!("{src}/form.rs")));

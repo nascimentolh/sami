@@ -1161,6 +1161,8 @@ mod tests {
     }
 
     /// O `glab` falso grava cada escrita (argumentos e corpo); um corpo com "FALHA" volta 400 sem `.id`.
+    // o `glab` falso é um script `sh`, que o Windows não executa
+    #[cfg(unix)]
     #[test]
     fn publica_como_uma_review() {
         let dir = std::env::temp_dir().join(format!("maestro-glab-{}", std::process::id()));

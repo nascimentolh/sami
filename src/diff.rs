@@ -182,6 +182,7 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
     // leitura de fundo não pega o index.lock: um rebase ou commit no terminal ao mesmo tempo não quebra
     let out = Command::new("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .args(crate::RAW_EOL)
         .arg("-C")
         .arg(root)
         .args(args)
@@ -218,6 +219,7 @@ pub fn worktree(root: &Path) -> Option<(String, Vec<FileDiff>)> {
     for path in git(root, &["ls-files", "--others", "--exclude-standard"])?.lines() {
         // `--no-index` sai com 1 quando há diferença: o diff vem no stdout mesmo assim
         let out = Command::new("git")
+            .args(crate::RAW_EOL)
             .arg("-C")
             .arg(root)
             .args(["diff", "--no-color", "--no-index", "--", "/dev/null", path])
@@ -262,7 +264,7 @@ pub fn between(root: &Path, a: &str, b: &str) -> Vec<FileDiff> {
 pub fn apply(root: &Path, patch: &str, reverse: bool) -> Result<(), String> {
     use std::io::Write;
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(root).arg("apply");
+    cmd.args(crate::RAW_EOL).arg("-C").arg(root).arg("apply");
     if reverse {
         cmd.arg("-R");
     }

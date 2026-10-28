@@ -1,5 +1,6 @@
-//! Bancos: os túneis (`cloud-sql-proxy`, `kubectl port-forward`) que já são aliases no zsh do usuário.
-//! O zsh continua sendo a fonte; aqui só se lê, liga e desliga.
+//! Bancos: os túneis (`cloud-sql-proxy`, `kubectl port-forward`) que já são aliases no shell do usuário
+//! (no Windows, as funções e aliases do perfil do pwsh). O shell continua sendo a fonte; aqui só se lê,
+//! liga e desliga.
 
 use std::{
     collections::HashMap,
@@ -45,21 +46,38 @@ pub enum State {
     Down(String),
 }
 
+/// Grupo de processos próprio: o túnel é do PC, fechar o Maestro não derruba.
+#[cfg(unix)]
+fn own_group(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
+}
+
+#[cfg(windows)]
+fn own_group(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+}
+
 fn log_dir() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cache/sql-proxy")
 }
 
 /// `nome\tvalor` por alias: o zsh imprime cru, sem as aspas do `alias`.
+#[cfg(not(windows))]
 const LIST: &str = r#"for k v in ${(kv)aliases}; do print -r -- "$k"$'\t'"$v"; done"#;
 
-/// Lê os aliases do zsh interativo (~0,5 s): rodar fora da thread da UI.
+/// No pwsh o túnel com argumentos é uma função do perfil: o corpo dela é o comando (numa linha).
+#[cfg(windows)]
+const LIST: &str = r#"Get-Command -CommandType Alias,Function | ForEach-Object { "$($_.Name)`t$($_.Definition -replace '[\r\n]+',' ')" }"#;
+
+/// Lê os aliases do shell do usuário (~0,5 s, com o perfil): rodar fora da thread da UI.
 pub fn load() -> Vec<Tunnel> {
-    let out = Command::new("zsh")
-        .args(["-ic", LIST])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    out.map(|o| parse(&String::from_utf8_lossy(&o.stdout)))
+    crate::sh::capped(&mut crate::sh::login(LIST), 20)
+        .ok()
+        .flatten()
+        .map(|o| parse(&String::from_utf8_lossy(&o.stdout)))
         .unwrap_or_default()
 }
 
@@ -67,7 +85,8 @@ pub fn parse(text: &str) -> Vec<Tunnel> {
     let mut xs: Vec<Tunnel> = text
         .lines()
         .filter_map(|l| {
-            let (name, cmd) = l.split_once('\t')?;
+            // o pwsh termina a linha com \r
+            let (name, cmd) = l.trim_end().split_once('\t')?;
             if !cmd.contains("cloud-sql-proxy") && !cmd.contains("port-forward") {
                 return None;
             }
@@ -132,18 +151,21 @@ impl Procs {
 
     /// Grupo de processos próprio: o túnel é do PC, fechar o Maestro não derruba.
     pub fn start(&self, t: &Tunnel) -> Result<(), String> {
-        use std::os::unix::process::CommandExt;
         std::fs::create_dir_all(log_dir()).map_err(|e| e.to_string())?;
         let log = std::fs::File::create(t.log()).map_err(|e| e.to_string())?;
         let err = log.try_clone().map_err(|e| e.to_string())?;
-        let mut child = Command::new("zsh")
-            .args(["-c", &t.cmd])
-            .process_group(0)
+        if let Some(aviso) = crate::sh::missing() {
+            return Err(aviso.into());
+        }
+        // com o perfil: o corpo da função/alias pode chamar outras coisas que vivem lá
+        let mut cmd = crate::sh::login(&t.cmd);
+        own_group(&mut cmd);
+        let mut child = cmd
             .stdin(Stdio::null())
             .stdout(log)
             .stderr(err)
             .spawn()
-            .map_err(|e| format!("zsh: {e}"))?;
+            .map_err(|e| format!("{}: {e}", crate::sh::SHELL))?;
         self.0.lock().unwrap().insert(t.name.clone(), None);
         let (procs, name) = (self.0.clone(), t.name.clone());
         std::thread::spawn(move || {
@@ -158,21 +180,56 @@ impl Procs {
     /// Mata quem escuta na porta (vale para o túnel aberto pelo `sql_up` no terminal também).
     pub fn stop(&self, t: &Tunnel) -> Result<(), String> {
         self.0.lock().unwrap().remove(&t.name);
-        let out = Command::new("ss")
-            .args(["-ltnpH", &format!("sport = :{}", t.port)])
-            .output()
-            .map_err(|e| format!("ss: {e}"))?;
-        let pids = pids(&String::from_utf8_lossy(&out.stdout));
+        let pids = listeners(t.port)?;
         if pids.is_empty() {
             return Err(format!("nenhum processo seu escutando em :{}", t.port));
         }
         for p in pids {
-            let _ = Command::new("kill").arg(p.to_string()).status();
+            let _ = kill(p);
         }
         Ok(())
     }
 }
 
+/// Os PIDs que escutam na porta.
+#[cfg(not(windows))]
+fn listeners(port: u16) -> Result<Vec<u32>, String> {
+    let out = Command::new("ss")
+        .args(["-ltnpH", &format!("sport = :{port}")])
+        .output()
+        .map_err(|e| format!("ss: {e}"))?;
+    Ok(pids(&String::from_utf8_lossy(&out.stdout)))
+}
+
+#[cfg(windows)]
+fn listeners(port: u16) -> Result<Vec<u32>, String> {
+    let line = format!(
+        "(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue).OwningProcess"
+    );
+    let out = crate::sh::capped(&mut crate::sh::cmd(&line), 20)
+        .map_err(|e| format!("Get-NetTCPConnection: {e}"))?
+        .ok_or("Get-NetTCPConnection: passou do tempo")?;
+    let mut v: Vec<u32> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .collect();
+    v.dedup();
+    Ok(v)
+}
+
+#[cfg(not(windows))]
+fn kill(pid: u32) -> std::io::Result<std::process::ExitStatus> {
+    Command::new("kill").arg(pid.to_string()).status()
+}
+
+#[cfg(windows)]
+fn kill(pid: u32) -> std::io::Result<std::process::ExitStatus> {
+    Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status()
+}
+
+#[cfg(not(windows))]
 fn pids(ss: &str) -> Vec<u32> {
     let mut v: Vec<u32> = ss
         .split("pid=")
@@ -220,8 +277,10 @@ mod tests {
                 ("sql_b_prd", 5450, "proj-prd:us-central1:b", "prd"),
             ]
         );
+        // o `ss` (e o seu parse) só existe no Unix; no Windows quem lista é o Get-NetTCPConnection
+        #[cfg(not(windows))]
         assert_eq!(
-            pids(
+            super::pids(
                 r#"LISTEN 0 4096 127.0.0.1:5433 0.0.0.0:* users:(("cloud-sql-proxy",pid=4242,fd=7),("x",pid=4242,fd=8))"#
             ),
             [4242]

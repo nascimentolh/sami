@@ -415,11 +415,11 @@ mod tests {
                 .unwrap();
         }
         std::fs::create_dir_all(&b).unwrap();
+        // pelo serde: no Windows o caminho tem `\`, que escrito à mão quebraria o JSON
         let edit = |tool: &str, p: &Path| {
-            format!(
-                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"{tool}","input":{{"file_path":"{}"}}}}]}}}}"#,
-                p.display()
-            )
+            serde_json::json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":tool,"input":{"file_path":p.display().to_string()}}]}})
+            .to_string()
         };
         let mut lines = lines.to_vec();
         lines.push(edit("Edit", &b.join("x.ts")));
