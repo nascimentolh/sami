@@ -81,6 +81,8 @@ struct Drawer {
 /// O modo MRs do protótipo: inbox (`renderInbox`), o MR com threads e rascunhos (`renderMR`) e o revisor.
 pub struct MrsView {
     me: Option<String>,
+    /// a forja desta aba: a do repo em que o Maestro foi aberto
+    forja: crate::forja::Forja,
     lists: [Option<Result<Vec<Row>, String>>; 3],
     ci: HashMap<String, Status>,
     /// o seu estado de revisor no GitLab, por MR de "Para revisar"
@@ -215,6 +217,10 @@ impl MrsView {
         });
         Self {
             me: None,
+            forja: std::env::current_dir()
+                .ok()
+                .and_then(|d| crate::forja::Forja::de(&d))
+                .unwrap_or(crate::forja::Forja::GitLab),
             lists: [None, None, None],
             ci: HashMap::new(),
             states: HashMap::new(),
@@ -290,15 +296,16 @@ impl MrsView {
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let me = self.me.clone();
+        let f = self.forja;
         cx.spawn(async move |this, cx| {
             let (me, lists) = cx
                 .background_executor()
                 .spawn(async move {
-                    let Some(me) = me.or_else(mrs::me) else {
-                        let e = Err("glab sem login: rode glab auth login".to_string());
+                    let Some(me) = me.or_else(|| mrs::me(f)) else {
+                        let e = Err(format!("{} sem login: rode {}", f.nome(), f.login()));
                         return (None, [e.clone(), e.clone(), e]);
                     };
-                    let l = mrs::inbox(&me, &mrs::group());
+                    let l = mrs::inbox(f, &me, &mrs::group(f));
                     (Some(me), l)
                 })
                 .await;
@@ -356,25 +363,26 @@ impl MrsView {
                 let (path, iid, key) = (r.path.clone(), r.iid, r.key());
                 // em "Para revisar", também o seu estado de revisor (a lista não traz)
                 let ask = review.contains(&key).then(|| me_name.clone());
-                let (ci, state) = cx
+                let linha = r.clone();
+                let (ci, state, completa) = cx
                     .background_executor()
-                    .spawn(async move {
-                        let base = format!("projects/{}/merge_requests/{iid}", mrs::enc(&path));
-                        let ci = mrs::read(&base, false).map(|d| mrs::ci_of(&d));
-                        let state = ask.and_then(|me| {
-                            mrs::read(&format!("{base}/reviewers"), false)
-                                .ok()
-                                .and_then(|v| mrs::my_review_state(&v, &me))
-                        });
-                        (ci, state)
-                    })
+                    .spawn(async move { mrs::detalhe_da_linha(&linha, ask.as_deref()) })
                     .await;
+                let _ = (&path, iid);
                 let alive = this.update(cx, |this, cx| {
                     if let Ok(ci) = ci {
                         this.ci.insert(key.clone(), ci);
                     }
                     if let Some(s) = state {
-                        this.states.insert(key, s);
+                        this.states.insert(key.clone(), s);
+                    }
+                    // a linha do GitHub nasce sem sha e sem destino: o detalhe completa
+                    if let Some(c) = completa {
+                        for l in this.lists.iter_mut().flatten().flatten() {
+                            for x in l.iter_mut().filter(|x| x.key() == key) {
+                                *x = c.clone();
+                            }
+                        }
                     }
                     cx.notify();
                 });
@@ -428,7 +436,7 @@ impl MrsView {
     fn act(
         &mut self,
         ok: String,
-        f: impl FnOnce(&str, u64, &str) -> Result<(), String> + Send + 'static,
+        f: impl FnOnce(&Row, &str) -> Result<(), String> + Send + 'static,
         cx: &mut Context<Self>,
     ) {
         let Some((row, _)) = self.open.clone() else {
@@ -438,10 +446,10 @@ impl MrsView {
         self.busy = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let (path, iid) = (row.path.clone(), row.iid);
+            let linha = row.clone();
             let r = cx
                 .background_executor()
-                .spawn(async move { f(&path, iid, &head) })
+                .spawn(async move { f(&linha, &head) })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
@@ -463,15 +471,19 @@ impl MrsView {
         let Some((row, Some(Ok(o)))) = &self.open else {
             return;
         };
-        let name = format!("{} !{}", row.proj(), row.iid);
+        let name = format!("{} {}{}", row.proj(), row.forja.marca(), row.iid);
         if o.approvals["user_has_approved"] == true {
             self.act(
                 format!("Aprovação removida de {name}"),
-                |p, i, _| mrs::unapprove(p, i),
+                |r, _| mrs::unapprove(r.forja, &r.path, r.iid),
                 cx,
             );
         } else {
-            self.act(format!("Você aprovou {name}"), mrs::approve, cx);
+            self.act(
+                format!("Você aprovou {name}"),
+                |r, h| mrs::approve(r.forja, &r.path, r.iid, h),
+                cx,
+            );
         }
     }
 
@@ -484,7 +496,7 @@ impl MrsView {
             let iid = row.iid;
             return self.act(
                 format!("Merge agendado de !{iid} cancelado"),
-                |p, i, _| mrs::cancel_auto_merge(p, i),
+                |r, _| mrs::cancel_auto_merge(r.forja, &r.path, r.iid),
                 cx,
             );
         }
@@ -525,7 +537,11 @@ impl MrsView {
                 }
             )
         };
-        self.act(ok, move |p, i, h| mrs::merge(p, i, h, &o), cx);
+        self.act(
+            ok,
+            move |r, h| mrs::merge(r.forja, &r.path, r.iid, h, &o),
+            cx,
+        );
     }
 
     fn resolve(&mut self, id: String, resolved: bool, cx: &mut Context<Self>) {
@@ -536,13 +552,7 @@ impl MrsView {
         };
         self.act(
             ok.into(),
-            move |p, iid, _| {
-                let ep = format!(
-                    "projects/{}/merge_requests/{iid}/discussions/{id}",
-                    mrs::enc(p)
-                );
-                mrs::write("PUT", &ep, &serde_json::json!({ "resolved": !resolved })).map(drop)
-            },
+            move |r, _| mrs::resolve(r.forja, &r.path, r.iid, &id, !resolved),
             cx,
         );
     }
@@ -661,7 +671,7 @@ impl MrsView {
     }
 
     pub fn open_row(&mut self, r: Row, cx: &mut Context<Self>) {
-        let (path, iid) = (r.path.clone(), r.iid);
+        let (path, iid, forja) = (r.path.clone(), r.iid, r.forja);
         self.replied.remove(&r.key());
         // reabrir o mesmo MR (depois de aprovar, resolver…) mantém a tela até o novo chegar
         let same = self.open.as_ref().is_some_and(|(o, _)| o.key() == r.key());
@@ -679,7 +689,7 @@ impl MrsView {
         cx.spawn(async move |this, cx| {
             let o = cx
                 .background_executor()
-                .spawn(async move { mrs::open(&path, iid) })
+                .spawn(async move { mrs::open(forja, &path, iid) })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if let Some((row, slot)) = this.open.as_mut()
@@ -793,7 +803,7 @@ impl MrsView {
     }
 
     fn open_gitlab(&self, r: &Row) {
-        crate::spawn_reaped(std::process::Command::new("xdg-open").arg(&r.web_url));
+        crate::abrir_no_sistema(r.web_url.as_ref());
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -912,27 +922,29 @@ impl MrsView {
         let state = o.detail["state"].as_str().unwrap_or_default();
         if !mrs::can_publish(state) {
             return cx.emit(Event::Toast(format!(
-                "O MR está {state}: os rascunhos ficam só aqui (ninguém lê comentário em MR fechado)"
+                "O {termo} está {state}: os rascunhos ficam só aqui (ninguém lê comentário em {termo} fechado)",
+                termo = row.forja.termo()
             )));
         }
         let (path, iid) = (row.path.clone(), row.iid);
         let ours: Vec<u64> = self.pending().iter().filter_map(|d| d.gitlab_id).collect();
-        let foreign = mrs::foreign_drafts(&path, iid, &ours);
+        let foreign = mrs::foreign_drafts(row.forja, &path, iid, &ours);
         let extra = if foreign > 0 {
             format!(
-                " Atenção: você tem {foreign} rascunho{} seu{} neste MR feito{} fora do Maestro; o GitLab publica junto.",
-                if foreign > 1 { "s" } else { "" },
-                if foreign > 1 { "s" } else { "" },
-                if foreign > 1 { "s" } else { "" }
+                " Atenção: você tem {foreign} rascunho{p} seu{p} neste {termo} feito{p} fora do Maestro; o {nome} publica junto.",
+                p = if foreign > 1 { "s" } else { "" },
+                termo = row.forja.termo(),
+                nome = row.forja.nome()
             )
         } else {
             String::new()
         };
         cx.emit(Event::AskPublish(
             format!(
-                "Publicar {n} comentário{} em {} !{iid}?",
+                "Publicar {n} comentário{} em {} {marca}{iid}?",
                 if n > 1 { "s" } else { "" },
-                row.proj()
+                row.proj(),
+                marca = row.forja.marca()
             ),
             format!(
                 "Sai como uma review só: {} recebe 1 notificação.{extra}",
@@ -954,7 +966,7 @@ impl MrsView {
             let (r, drafts) = cx
                 .background_executor()
                 .spawn(async move {
-                    let r = mrs::publish(&row.path, row.iid, &o, &mut drafts);
+                    let r = mrs::publish(row.forja, &row.path, row.iid, &o, &mut drafts);
                     (r, drafts)
                 })
                 .await;
@@ -1013,7 +1025,7 @@ impl MrsView {
 
     fn discard_all(&mut self, cx: &mut Context<Self>) {
         let Some((row, _)) = &self.open else { return };
-        let (path, iid, key) = (row.path.clone(), row.iid, row.key());
+        let (path, iid, key, forja) = (row.path.clone(), row.iid, row.key(), row.forja);
         let ids: Vec<u64> = self.pending().iter().filter_map(|d| d.gitlab_id).collect();
         let gone: Vec<(usize, Draft)> = self
             .mr_drafts()
@@ -1029,7 +1041,7 @@ impl MrsView {
             if n > 1 { "s" } else { "" }
         )));
         // o que já tinha ido como draft note sai do GitLab também
-        std::thread::spawn(move || mrs::discard_remote(&path, iid, &ids));
+        std::thread::spawn(move || mrs::discard_remote(forja, &path, iid, &ids));
         cx.notify();
     }
 
@@ -1084,6 +1096,7 @@ impl MrsView {
             let notes =
                 mrs::read(&format!("{base}/notes?per_page=100"), true).unwrap_or(Value::Null);
             mrs::review(
+                row.forja,
                 &row.path,
                 row.iid,
                 &row.title,
@@ -1348,7 +1361,7 @@ impl MrsView {
                         .child(n),
                 )
         };
-        let group = mrs::group();
+        let group = mrs::group(self.forja);
         let bar = div()
             .flex()
             .flex_wrap()
@@ -2793,11 +2806,12 @@ impl MrsView {
         let ci = Self::ci_label(self.ci.get(&row.key()).copied(), &t);
         let o = opened.as_ref().and_then(|o| o.as_ref().ok());
         let detail = o.map(|o| &o.detail);
-        let merged = detail.is_some_and(|d| d["state"] == "merged");
+        // "merged" no GitLab; no GitHub o PR fica "closed" com `merged: true`
+        let merged = detail.is_some_and(|d| d["state"] == "merged" || d["merged"] == true);
         let scheduled = detail.is_some_and(|d| d["merge_when_pipeline_succeeds"] == true);
         let approved = o.is_some_and(|o| o.approvals["user_has_approved"] == true);
         let can_approve = o.is_some_and(|o| o.approvals["user_can_approve"] == true) || approved;
-        let blocker = detail.and_then(mrs::merge_blocker);
+        let blocker = detail.and_then(|d| mrs::merge_blocker(row.forja, d));
         let busy = self.busy;
         let header = div()
             .flex()
@@ -2823,7 +2837,7 @@ impl MrsView {
                         div()
                             .font_family(t.mono.clone())
                             .text_color(t.muted)
-                            .child(format!("{} !{}", row.proj(), row.iid)),
+                            .child(format!("{} {}{}", row.proj(), row.forja.marca(), row.iid)),
                     )
                     .child(div().text_color(t.muted).child(row.who.clone()))
                     .child(div().text_color(ci.1).child(ci.0))
@@ -3373,12 +3387,9 @@ impl MrsView {
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child("Revisão Claude"),
                         )
-                        .child(
-                            div()
-                                .font_family(t.mono.clone())
-                                .text_color(t.muted)
-                                .child(format!("{} !{}", d.row.proj(), d.row.iid)),
-                        )
+                        .child(div().font_family(t.mono.clone()).text_color(t.muted).child(
+                            format!("{} {}{}", d.row.proj(), d.row.forja.marca(), d.row.iid),
+                        ))
                         .child(div().flex_1())
                         .child(
                             div()

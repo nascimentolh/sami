@@ -8,12 +8,15 @@ use std::{
 
 use serde_json::{Value, json};
 
+use crate::forja::Forja;
+
 use crate::mr::Status;
 
 /// Uma linha da inbox (o `MRS` do protótipo).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Row {
-    /// `ctbz/experts/bots-api`
+    pub forja: crate::forja::Forja,
+    /// `ctbz/experts/bots-api` no GitLab, `dono/repo` no GitHub
     pub path: String,
     pub iid: u64,
     pub title: String,
@@ -34,7 +37,7 @@ impl Row {
         self.path.rsplit('/').next().unwrap_or(&self.path)
     }
     pub fn key(&self) -> String {
-        format!("{}!{}", self.path, self.iid)
+        format!("{}{}{}", self.path, self.forja.marca(), self.iid)
     }
 }
 
@@ -43,6 +46,7 @@ pub fn rows(list: &Value) -> Vec<Row> {
         .into_iter()
         .flatten()
         .map(|m| Row {
+            forja: crate::forja::Forja::GitLab,
             path: m["references"]["full"]
                 .as_str()
                 .unwrap_or_default()
@@ -156,9 +160,14 @@ pub fn created_id(out: &str) -> Result<String, String> {
 }
 
 /// 4. `refs/merge-requests/N/head` existe mesmo se a branch de origem já foi apagada.
-pub fn refspecs(iid: u64, target: &str) -> Vec<String> {
+pub fn refspecs(f: Forja, iid: u64, target: &str) -> Vec<String> {
+    // a ref da cabeça do MR/PR tem nome diferente em cada forja
+    let cabeca = match f {
+        Forja::GitLab => format!("merge-requests/{iid}/head"),
+        Forja::GitHub => format!("pull/{iid}/head"),
+    };
     vec![
-        format!("+refs/merge-requests/{iid}/head:refs/mr/{iid}"),
+        format!("+refs/{cabeca}:refs/mr/{iid}"),
         format!("+refs/heads/{target}:refs/remotes/origin/{target}"),
     ]
 }
@@ -380,6 +389,86 @@ pub fn seen(state: &str, path: &str, iid: u64, sha: &str) -> bool {
 }
 
 /// O seu estado de revisor no GitLab (`reviewed`, `approved`, `requested_changes`, `unreviewed`…).
+/// O que a fila não traz: o estado do CI e, quando `me`, o seu estado de revisor
+/// (`approved`/`reviewed`, como o GitLab fala — é o que a tela sabe ler).
+pub fn detalhe_da_linha(
+    r: &Row,
+    me: Option<&str>,
+) -> (Result<Status, String>, Option<String>, Option<Row>) {
+    detalhe_e_linha(r, me)
+}
+
+fn detalhe_e_linha(
+    r: &Row,
+    me: Option<&str>,
+) -> (Result<Status, String>, Option<String>, Option<Row>) {
+    match r.forja {
+        Forja::GitLab => {
+            let base = format!("projects/{}/merge_requests/{}", enc(&r.path), r.iid);
+            let ci = read(&base, false).map(|d| ci_of(Forja::GitLab, &d));
+            let state = me.and_then(|me| {
+                read(&format!("{base}/reviewers"), false)
+                    .ok()
+                    .and_then(|v| my_review_state(&v, me))
+            });
+            (ci, state, None)
+        }
+        Forja::GitHub => {
+            let f = Forja::GitHub;
+            let base = crate::github::base(&r.path, r.iid);
+            // a busca não traz branch nem sha: vêm deste mesmo detalhe
+            let mut completa = None;
+            let ci = f.read(None, &base, false).map(|mut d| {
+                let mut linha = r.clone();
+                crate::github::completa(&mut linha, &d);
+                completa = Some(linha);
+                let sha = d["head"]["sha"].as_str().unwrap_or_default().to_string();
+                if let Ok(c) = f.read(
+                    None,
+                    &format!("repos/{}/commits/{sha}/check-runs?per_page=100", r.path),
+                    false,
+                ) {
+                    d["maestro_checks"] = c["check_runs"].clone();
+                }
+                ci_of(f, &d)
+            });
+            let state = me.and_then(|me| {
+                let reviews = f
+                    .read(None, &format!("{base}/reviews?per_page=100"), true)
+                    .ok()?;
+                let minha = reviews
+                    .as_array()?
+                    .iter()
+                    .rev()
+                    .find(|v| v["user"]["login"].as_str() == Some(me))?;
+                Some(match minha["state"].as_str().unwrap_or_default() {
+                    "APPROVED" => "approved".to_string(),
+                    "PENDING" => return None,
+                    _ => "reviewed".to_string(),
+                })
+            });
+            (ci, state, completa)
+        }
+    }
+}
+
+/// Resolver (ou reabrir) uma conversa. A REST do GitHub não resolve thread: só o GraphQL, e por
+/// ora o Maestro diz isso em vez de fingir que resolveu.
+pub fn resolve(f: Forja, path: &str, iid: u64, id: &str, resolvido: bool) -> Result<(), String> {
+    match f {
+        Forja::GitLab => {
+            let ep = format!(
+                "projects/{}/merge_requests/{iid}/discussions/{id}",
+                enc(path)
+            );
+            write("PUT", &ep, &json!({ "resolved": resolvido })).map(drop)
+        }
+        Forja::GitHub => {
+            Err("resolver conversa no GitHub só pelo site por enquanto (a REST não resolve)".into())
+        }
+    }
+}
+
 pub fn my_review_state(reviewers: &Value, me: &str) -> Option<String> {
     reviewers
         .as_array()?
@@ -448,32 +537,7 @@ pub fn general_body(body: &str, file: &str, line: Option<u32>) -> String {
 // ---------- acesso ao GitLab ----------
 
 pub fn read(endpoint: &str, paginate: bool) -> Result<Value, String> {
-    let mut c = Command::new("glab");
-    c.arg("api");
-    if paginate {
-        c.arg("--paginate");
-    }
-    let out = c.arg(endpoint).output().map_err(|e| format!("glab: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .next()
-            .unwrap_or("glab falhou")
-            .into());
-    }
-    join_pages(&out.stdout)
-}
-
-/// `--paginate` cola os arrays das páginas (`[..][..]`): lidos em sequência e achatados.
-fn join_pages(raw: &[u8]) -> Result<Value, String> {
-    let mut all = Vec::new();
-    for v in serde_json::Deserializer::from_slice(raw).into_iter::<Value>() {
-        match v.map_err(|e| e.to_string())? {
-            Value::Array(a) => all.extend(a),
-            other => return Ok(other),
-        }
-    }
-    Ok(Value::Array(all))
+    crate::forja::Forja::GitLab.read(None, endpoint, paginate)
 }
 
 /// Toda escrita no GitLab passa por aqui (e só aqui): POST/PUT/DELETE com o header certo e o `.id` conferido.
@@ -534,8 +598,12 @@ pub fn gql_ok(out: &str) -> Result<Value, String> {
     }
 }
 
-pub fn me() -> Option<String> {
-    read("user", false).ok()?["username"]
+pub fn me(f: Forja) -> Option<String> {
+    let campo = match f {
+        Forja::GitLab => "username",
+        Forja::GitHub => "login",
+    };
+    f.read(None, "user", false).ok()?[campo]
         .as_str()
         .map(String::from)
 }
@@ -555,7 +623,14 @@ pub fn seen_file() -> PathBuf {
 }
 
 /// As três abas da inbox: para revisar, meus e o grupo.
-pub fn inbox(me: &str, group: &str) -> [Result<Vec<Row>, String>; 3] {
+pub fn inbox(f: Forja, me: &str, group: &str) -> [Result<Vec<Row>, String>; 3] {
+    match f {
+        Forja::GitLab => inbox_gitlab(me, group),
+        Forja::GitHub => inbox_github(me, group),
+    }
+}
+
+fn inbox_gitlab(me: &str, group: &str) -> [Result<Vec<Row>, String>; 3] {
     let q = "state=opened&per_page=100";
     [
         read(
@@ -577,16 +652,67 @@ pub fn inbox(me: &str, group: &str) -> [Result<Vec<Row>, String>; 3] {
     ]
 }
 
-pub fn group() -> String {
-    std::env::var("MAESTRO_MR_GROUP").unwrap_or_else(|_| "ctbz/experts".into())
+/// No GitHub quem responde "quem me pediu revisão" é a busca; o grupo vira a organização.
+fn inbox_github(me: &str, org: &str) -> [Result<Vec<Row>, String>; 3] {
+    // a busca vai por `-f q=...`: no endereço, o `gh` desfaz o escape e manda espaço cru no HTTP/2
+    let busca = |q: &str| -> Result<Vec<Row>, String> {
+        let out = Command::new("gh")
+            .args(["api", "-X", "GET", "search/issues"])
+            .args(["-f", &format!("q={q}"), "-f", "per_page=100"])
+            .output()
+            .map_err(|e| format!("gh: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("gh falhou")
+                .trim()
+                .to_string());
+        }
+        let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+        Ok(crate::github::rows(&v))
+    };
+    [
+        busca(&format!("is:open is:pr review-requested:{me}")),
+        busca(&format!("is:open is:pr author:{me}")),
+        busca(&format!("is:open is:pr org:{org} -author:{me}")),
+    ]
 }
 
-pub fn ci_of(detail: &Value) -> Status {
-    match detail["head_pipeline"]["status"].as_str().unwrap_or("") {
-        "success" | "manual" | "skipped" => Status::Ok,
-        "failed" | "canceled" => Status::Fail,
-        "" => Status::None,
-        _ => Status::Running,
+/// O grupo do GitLab, ou a organização do GitHub. Sem `MAESTRO_MR_GROUP`, no GitHub vale o dono
+/// do repositório em que o Maestro foi aberto.
+pub fn group(f: Forja) -> String {
+    if let Ok(g) = std::env::var("MAESTRO_MR_GROUP") {
+        return g;
+    }
+    match f {
+        Forja::GitLab => "ctbz/experts".into(),
+        Forja::GitHub => std::env::current_dir()
+            .ok()
+            .and_then(|d| crate::forja::projeto(&d))
+            .and_then(|p| p.split('/').next().map(String::from))
+            .unwrap_or_default(),
+    }
+}
+
+pub fn ci_of(f: Forja, detail: &Value) -> Status {
+    match f {
+        Forja::GitLab => match detail["head_pipeline"]["status"].as_str().unwrap_or("") {
+            "success" | "manual" | "skipped" => Status::Ok,
+            "failed" | "canceled" => Status::Fail,
+            "" => Status::None,
+            _ => Status::Running,
+        },
+        // no GitHub o estado do CI vem dos check runs, que `open` guarda no detalhe
+        Forja::GitHub => {
+            crate::mr::parse_github(
+                detail,
+                &detail["maestro_checks"],
+                &Value::Null,
+                &Value::Null,
+            )
+            .pipe
+        }
     }
 }
 
@@ -604,7 +730,14 @@ pub struct Opened {
     pub generated: Vec<String>,
 }
 
-pub fn open(path: &str, iid: u64) -> Result<Opened, String> {
+pub fn open(f: Forja, path: &str, iid: u64) -> Result<Opened, String> {
+    match f {
+        Forja::GitLab => open_gitlab(path, iid),
+        Forja::GitHub => open_github(path, iid),
+    }
+}
+
+fn open_gitlab(path: &str, iid: u64) -> Result<Opened, String> {
     let base = format!("projects/{}/merge_requests/{iid}", enc(path));
     let detail = read(&base, false)?;
     let diffs = read(&format!("{base}/diffs?per_page=100"), true)?;
@@ -645,14 +778,119 @@ pub fn open(path: &str, iid: u64) -> Result<Opened, String> {
     })
 }
 
-pub fn approve(path: &str, iid: u64, sha: &str) -> Result<(), String> {
-    let base = format!("projects/{}/merge_requests/{iid}", enc(path));
-    write("POST", &format!("{base}/approve"), &json!({ "sha": sha })).map(drop)
+fn open_github(path: &str, iid: u64) -> Result<Opened, String> {
+    let f = Forja::GitHub;
+    let base = crate::github::base(path, iid);
+    let le = |e: &str, pag: bool| f.read(None, e, pag);
+    let mut detail = le(&base, false)?;
+    let files = le(&format!("{base}/files?per_page=100"), true)?;
+    let linha = le(&format!("{base}/comments?per_page=100"), true)?;
+    let gerais = le(
+        &format!("repos/{path}/issues/{iid}/comments?per_page=100"),
+        true,
+    )?;
+    let reviews = le(&format!("{base}/reviews?per_page=100"), true)?;
+    // o CI do GitHub não vem no detalhe: fica guardado nele para o `ci_of` e a tela lerem depois
+    let sha = detail["head"]["sha"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    if let Ok(c) = le(
+        &format!("repos/{path}/commits/{sha}/check-runs?per_page=100"),
+        false,
+    ) {
+        detail["maestro_checks"] = c["check_runs"].clone();
+    }
+    let eu = me(f).unwrap_or_default();
+    // o resto do Maestro lê a cabeça por `diff_refs`, que é forma do GitLab: preenchida aqui
+    detail["diff_refs"] = json!({
+        "head_sha": sha,
+        "base_sha": detail["base"]["sha"],
+        "start_sha": detail["base"]["sha"],
+    });
+    let (raw, patch) = crate::github::arquivos(&files);
+    Ok(Opened {
+        files: crate::diff::parse(&patch),
+        detail,
+        raw,
+        discussions: crate::github::discussoes(&linha, &gerais),
+        approvals: crate::github::aprovacoes(&reviews, &eu),
+        // o GitHub não marca arquivo gerado
+        generated: Vec::new(),
+    })
 }
 
-pub fn unapprove(path: &str, iid: u64) -> Result<(), String> {
-    let base = format!("projects/{}/merge_requests/{iid}", enc(path));
-    write("POST", &format!("{base}/unapprove"), &json!({})).map(drop)
+pub fn approve(f: Forja, path: &str, iid: u64, sha: &str) -> Result<(), String> {
+    match f {
+        Forja::GitLab => {
+            let base = format!("projects/{}/merge_requests/{iid}", enc(path));
+            write("POST", &format!("{base}/approve"), &json!({ "sha": sha })).map(drop)
+        }
+        Forja::GitHub => {
+            let e = format!("{}/reviews", crate::github::base(path, iid));
+            gh_write("POST", &e, &json!({"commit_id": sha, "event": "APPROVE"})).map(drop)
+        }
+    }
+}
+
+/// O GitHub não tem "desaprovar": o que existe é descartar a minha review aprovada.
+pub fn unapprove(f: Forja, path: &str, iid: u64) -> Result<(), String> {
+    match f {
+        Forja::GitLab => {
+            let base = format!("projects/{}/merge_requests/{iid}", enc(path));
+            write("POST", &format!("{base}/unapprove"), &json!({})).map(drop)
+        }
+        Forja::GitHub => {
+            let base = crate::github::base(path, iid);
+            let eu = me(f).ok_or("não deu para saber quem é você no GitHub")?;
+            let reviews = f.read(None, &format!("{base}/reviews?per_page=100"), true)?;
+            let id = crate::github::minha_aprovacao(&reviews, &eu)
+                .ok_or("você não tem aprovação neste PR")?;
+            gh_write(
+                "PUT",
+                &format!("{base}/reviews/{id}/dismissals"),
+                &json!({"message": "retirado pelo Maestro"}),
+            )
+            .map(drop)
+        }
+    }
+}
+
+/// Escrita no GitHub: o `gh` sai com erro de verdade em 4xx, então basta olhar o status.
+pub fn gh_write(method: &str, endpoint: &str, body: &Value) -> Result<Value, String> {
+    use std::io::Write;
+    let mut child = Command::new("gh")
+        .args([
+            "api",
+            "-X",
+            method,
+            "-H",
+            "Content-Type: application/json",
+            "--input",
+            "-",
+            endpoint,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("gh: {e}"))?;
+    child
+        .stdin
+        .take()
+        .map(|mut s| s.write_all(body.to_string().as_bytes()))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("gh falhou")
+            .trim()
+            .to_string());
+    }
+    Ok(serde_json::from_slice(&out.stdout).unwrap_or(Value::Null))
 }
 
 /// As opções do diálogo de merge; os valores iniciais vêm do MR.
@@ -673,54 +911,121 @@ impl MergeOpts {
     }
 }
 
-/// `sha` trava o merge no commit que você revisou: se entrou outro, o GitLab recusa.
-pub fn merge(path: &str, iid: u64, sha: &str, o: &MergeOpts) -> Result<(), String> {
-    let base = format!("projects/{}/merge_requests/{iid}", enc(path));
-    let body = json!({
-        "sha": sha,
-        "squash": o.squash,
-        "should_remove_source_branch": o.remove_branch,
-        "merge_when_pipeline_succeeds": o.when_pipeline_succeeds,
-    });
-    write("PUT", &format!("{base}/merge"), &body).map(drop)
-}
-
-pub fn cancel_auto_merge(path: &str, iid: u64) -> Result<(), String> {
-    let base = format!("projects/{}/merge_requests/{iid}", enc(path));
-    write(
-        "POST",
-        &format!("{base}/cancel_merge_when_pipeline_succeeds"),
-        &json!({}),
-    )
-    .map(drop)
-}
-
-/// Por que o Merge está apagado (`detailed_merge_status` do GitLab); `None` quando dá para mergear.
-pub fn merge_blocker(detail: &Value) -> Option<&'static str> {
-    if detail["state"] != "opened" {
-        return Some("o MR não está aberto");
+/// `sha` trava o merge no commit que você revisou: se entrou outro, a forja recusa.
+pub fn merge(f: Forja, path: &str, iid: u64, sha: &str, o: &MergeOpts) -> Result<(), String> {
+    match f {
+        Forja::GitLab => {
+            let base = format!("projects/{}/merge_requests/{iid}", enc(path));
+            let body = json!({
+                "sha": sha,
+                "squash": o.squash,
+                "should_remove_source_branch": o.remove_branch,
+                "merge_when_pipeline_succeeds": o.when_pipeline_succeeds,
+            });
+            write("PUT", &format!("{base}/merge"), &body).map(drop)
+        }
+        Forja::GitHub => merge_github(path, iid, sha, o),
     }
-    Some(
-        match detail["detailed_merge_status"].as_str().unwrap_or_default() {
-            "mergeable" | "" => return None,
-            "not_approved" => "precisa de aprovação",
-            "draft_status" => "o MR é rascunho",
-            "discussions_not_resolved" => "há discussões não resolvidas",
-            // pipeline rodando: dá para agendar ("merge quando o pipeline passar")
-            "ci_still_running" => return None,
-            "ci_must_pass" => "o pipeline precisa passar",
-            "conflict" | "need_rebase" => "conflito com a branch de destino",
-            "blocked_status" => "bloqueado por outro MR",
-            "checking" | "unchecked" | "preparing" | "approvals_syncing" => {
-                "o GitLab ainda está checando"
+}
+
+/// O "merge quando o CI passar" do GitHub é o auto-merge, que só existe no GraphQL: quem já sabe
+/// falar com ele é o próprio `gh pr merge --auto`. Apagar a branch também é um passo à parte.
+fn merge_github(path: &str, iid: u64, sha: &str, o: &MergeOpts) -> Result<(), String> {
+    if o.when_pipeline_succeeds {
+        let mut c = Command::new("gh");
+        c.args(["pr", "merge", &iid.to_string(), "-R", path, "--auto"]);
+        c.arg(if o.squash { "--squash" } else { "--merge" });
+        if o.remove_branch {
+            c.arg("--delete-branch");
+        }
+        let out = c.output().map_err(|e| format!("gh: {e}"))?;
+        return match out.status.success() {
+            true => Ok(()),
+            false => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        };
+    }
+    let base = crate::github::base(path, iid);
+    gh_write(
+        "PUT",
+        &format!("{base}/merge"),
+        &crate::github::merge_body(sha, o.squash),
+    )?;
+    if o.remove_branch {
+        let detalhe = Forja::GitHub.read(None, &base, false)?;
+        if let Some(b) = detalhe["head"]["ref"].as_str() {
+            // a branch pode estar protegida: não poder apagar não desfaz o merge
+            let _ = gh_write(
+                "DELETE",
+                &format!("repos/{path}/git/refs/heads/{b}"),
+                &json!({}),
+            );
+        }
+    }
+    Ok(())
+}
+
+pub fn cancel_auto_merge(f: Forja, path: &str, iid: u64) -> Result<(), String> {
+    match f {
+        Forja::GitLab => {
+            let base = format!("projects/{}/merge_requests/{iid}", enc(path));
+            write(
+                "POST",
+                &format!("{base}/cancel_merge_when_pipeline_succeeds"),
+                &json!({}),
+            )
+            .map(drop)
+        }
+        Forja::GitHub => {
+            let out = Command::new("gh")
+                .args([
+                    "pr",
+                    "merge",
+                    &iid.to_string(),
+                    "-R",
+                    path,
+                    "--disable-auto",
+                ])
+                .output()
+                .map_err(|e| format!("gh: {e}"))?;
+            match out.status.success() {
+                true => Ok(()),
+                false => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
             }
-            _ => "o GitLab não permite o merge agora",
-        },
-    )
+        }
+    }
+}
+
+/// Por que o Merge está apagado; `None` quando dá para mergear.
+pub fn merge_blocker(f: Forja, detail: &Value) -> Option<&'static str> {
+    match f {
+        Forja::GitHub => crate::github::merge_blocker(detail),
+        Forja::GitLab => {
+            if detail["state"] != "opened" {
+                return Some("o MR não está aberto");
+            }
+            Some(
+                match detail["detailed_merge_status"].as_str().unwrap_or_default() {
+                    "mergeable" | "" => return None,
+                    "not_approved" => "precisa de aprovação",
+                    "draft_status" => "o MR é rascunho",
+                    "discussions_not_resolved" => "há discussões não resolvidas",
+                    // pipeline rodando: dá para agendar ("merge quando o pipeline passar")
+                    "ci_still_running" => return None,
+                    "ci_must_pass" => "o pipeline precisa passar",
+                    "conflict" | "need_rebase" => "conflito com a branch de destino",
+                    "blocked_status" => "bloqueado por outro MR",
+                    "checking" | "unchecked" | "preparing" | "approvals_syncing" => {
+                        "o GitLab ainda está checando"
+                    }
+                    _ => "o GitLab não permite o merge agora",
+                },
+            )
+        }
+    }
 }
 
 /// A worktree persistente do MR (`~/.cache/maestro/wt/<path>/<iid>`), no sha da cabeça.
-pub fn worktree(path: &str, iid: u64, target: &str) -> Result<PathBuf, String> {
+pub fn worktree(f: Forja, path: &str, iid: u64, target: &str) -> Result<PathBuf, String> {
     let git = |dir: &Path, args: &[&str]| -> Result<String, String> {
         let o = Command::new("git")
             .arg("-C")
@@ -749,7 +1054,7 @@ pub fn worktree(path: &str, iid: u64, target: &str) -> Result<PathBuf, String> {
             return Err(String::from_utf8_lossy(&o.stderr).trim().into());
         }
     }
-    let specs = refspecs(iid, target);
+    let specs = refspecs(f, iid, target);
     let mut fetch = vec!["fetch", "-q", "origin"];
     fetch.extend(specs.iter().map(String::as_str));
     git(&dir, &fetch)?;
@@ -802,7 +1107,25 @@ pub struct Draft {
 
 /// Publica como uma review só: cada rascunho vira draft note e um `bulk_publish` solta tudo junto.
 /// Se algum não entrar, nada é publicado; os que entraram guardam o id e não são reenviados na próxima tentativa.
-pub fn publish(path: &str, iid: u64, opened: &Opened, drafts: &mut [Draft]) -> Result<(), String> {
+pub fn publish(
+    f: Forja,
+    path: &str,
+    iid: u64,
+    opened: &Opened,
+    drafts: &mut [Draft],
+) -> Result<(), String> {
+    match f {
+        Forja::GitLab => publish_gitlab(path, iid, opened, drafts),
+        Forja::GitHub => publish_github(path, iid, opened, drafts),
+    }
+}
+
+fn publish_gitlab(
+    path: &str,
+    iid: u64,
+    opened: &Opened,
+    drafts: &mut [Draft],
+) -> Result<(), String> {
     let base = format!("projects/{}/merge_requests/{iid}", enc(path));
     let head_now = read(&base, false)?["diff_refs"]["head_sha"]
         .as_str()
@@ -859,6 +1182,72 @@ pub fn publish(path: &str, iid: u64, opened: &Opened, drafts: &mut [Draft]) -> R
     Ok(())
 }
 
+/// No GitHub a review é uma chamada só com todos os comentários de linha dentro — já é tudo ou
+/// nada, como o `bulk_publish`. Resposta em thread não cabe nela e vai por fora, depois.
+fn publish_github(
+    path: &str,
+    iid: u64,
+    _opened: &Opened,
+    drafts: &mut [Draft],
+) -> Result<(), String> {
+    let base = crate::github::base(path, iid);
+    let head_now = Forja::GitHub.read(None, &base, false)?["head"]["sha"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let mut comentarios = Vec::new();
+    let mut geral = String::new();
+    let mut respostas = Vec::new();
+    let mut falhou = 0;
+    for d in drafts.iter_mut().filter(|d| d.gitlab_id.is_none()) {
+        let body = match (&d.label, &d.sev) {
+            (Some(l), Some(s)) if !l.is_empty() => format!("**{l}** ({s}): {}", d.body),
+            _ => d.body.clone(),
+        };
+        let inline = !d.general && (d.line.is_some() || d.old.is_some()) && d.reply_to.is_none();
+        if inline && d.head != head_now {
+            d.error = Some("O PR recebeu um commit novo depois deste rascunho; a linha pode ter mudado de lugar.".into());
+            falhou += 1;
+            continue;
+        }
+        match (&d.reply_to, inline) {
+            (Some(id), _) => respostas.push((id.clone(), body, d.id)),
+            (None, true) => {
+                comentarios.push(crate::github::comentario(&d.file, d.line, d.old, &body))
+            }
+            (None, false) => {
+                if !geral.is_empty() {
+                    geral.push_str("\n\n---\n\n");
+                }
+                geral.push_str(&general_body(&body, &d.file, d.line));
+            }
+        }
+    }
+    if falhou > 0 {
+        return Err(format!(
+            "{falhou} comentário{} ficou para trás: o PR mudou",
+            if falhou > 1 { "s" } else { "" }
+        ));
+    }
+    if !comentarios.is_empty() || !geral.is_empty() {
+        let corpo = crate::github::review_body(&head_now, &geral, comentarios);
+        gh_write("POST", &format!("{base}/reviews"), &corpo)?;
+    }
+    for (raiz, body, _) in respostas {
+        gh_write(
+            "POST",
+            &format!("{base}/comments/{raiz}/replies"),
+            &json!({"body": body}),
+        )?;
+    }
+    // publicou: nenhum rascunho fica pendente de reenvio
+    for d in drafts.iter_mut() {
+        d.gitlab_id = d.gitlab_id.or(Some(0));
+        d.error = None;
+    }
+    Ok(())
+}
+
 /// O que o revisor manda para a tela enquanto roda.
 #[derive(Debug)]
 pub enum Run {
@@ -872,6 +1261,7 @@ pub enum Run {
 /// O `review()` do script: worktree, prompt com dedup, `claude -p` em stream-json. Roda numa thread.
 #[allow(clippy::too_many_arguments)]
 pub fn review(
+    f: Forja,
     path: &str,
     iid: u64,
     title: &str,
@@ -882,7 +1272,7 @@ pub fn review(
     send: impl Fn(Run),
 ) {
     use std::io::{BufRead, Write};
-    let wt = match worktree(path, iid, target) {
+    let wt = match worktree(f, path, iid, target) {
         Ok(w) => w,
         Err(e) => return send(Run::Failed(format!("worktree: {e}"))),
     };
@@ -1001,7 +1391,23 @@ pub fn mark_seen(path: &str, iid: u64, sha: &str) {
 }
 
 /// Rascunhos seus no GitLab neste MR que não vieram do Maestro: o `bulk_publish` levaria junto.
-pub fn foreign_drafts(path: &str, iid: u64, ours: &[u64]) -> usize {
+/// Rascunho que não é desta sessão: no GitLab é draft note de outro, no GitHub é uma review
+/// pendente — que ali é sempre sua, então o que conta é ter uma esquecida.
+pub fn foreign_drafts(f: Forja, path: &str, iid: u64, ours: &[u64]) -> usize {
+    if f == Forja::GitHub {
+        return f
+            .read(
+                None,
+                &format!("{}/reviews?per_page=100", crate::github::base(path, iid)),
+                true,
+            )
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r["state"] == "PENDING")
+            .count();
+    }
     read(
         &format!("projects/{}/merge_requests/{iid}/draft_notes", enc(path)),
         false,
@@ -1015,7 +1421,21 @@ pub fn foreign_drafts(path: &str, iid: u64, ours: &[u64]) -> usize {
 }
 
 /// Desistir: apaga do GitLab os draft notes que o Maestro já criou.
-pub fn discard_remote(path: &str, iid: u64, ids: &[u64]) {
+pub fn discard_remote(f: Forja, path: &str, iid: u64, ids: &[u64]) {
+    if f == Forja::GitHub {
+        let base = crate::github::base(path, iid);
+        let pendentes = f
+            .read(None, &format!("{base}/reviews?per_page=100"), true)
+            .unwrap_or(Value::Null);
+        for r in pendentes.as_array().into_iter().flatten() {
+            if r["state"] == "PENDING"
+                && let Some(id) = r["id"].as_u64()
+            {
+                let _ = gh_write("DELETE", &format!("{base}/reviews/{id}"), &Value::Null);
+            }
+        }
+        return;
+    }
     for id in ids {
         let _ = write(
             "DELETE",
@@ -1049,6 +1469,42 @@ mod viewed_tests {
 mod tests {
     use super::*;
 
+    /// De verdade, contra o GitHub: `cargo test --release -- --ignored github_de_verdade`.
+    #[test]
+    #[ignore]
+    fn github_de_verdade() {
+        let f = Forja::GitHub;
+        let eu = me(f).expect("gh auth login");
+        println!("eu: {eu}");
+        let o = open(f, "nascimentolh/sami", 2).expect("abrir o PR 2");
+        assert_eq!(o.detail["number"], 2);
+        assert!(!o.files.is_empty(), "o PR 2 mexeu em arquivo");
+        assert!(
+            o.detail["diff_refs"]["head_sha"].is_string(),
+            "head_sha preenchido"
+        );
+        assert_eq!(merge_blocker(f, &o.detail), Some("o PR não está aberto"));
+        let linha = Row {
+            forja: f,
+            path: "nascimentolh/sami".into(),
+            iid: 2,
+            ..Default::default()
+        };
+        let (ci, _estado, completa) = detalhe_da_linha(&linha, Some(&eu));
+        println!("ci: {ci:?}");
+        let c = completa.expect("o detalhe completa a linha");
+        assert_eq!(c.target, "main");
+        assert!(!c.sha.is_empty());
+        let fila = inbox(f, &eu, &group(f));
+        println!(
+            "fila: {:?}",
+            fila.iter()
+                .map(|l| l.as_ref().map(Vec::len))
+                .collect::<Vec<_>>()
+        );
+        assert!(fila.iter().all(|l| l.is_ok()), "as três buscas respondem");
+    }
+
     const DIFF: &str = "@@ -10,4 +10,5 @@ fn a()\n ctx10\n-old11\n+new11\n+new12\n ctx13\n\\ No newline at end of file\n";
 
     #[test]
@@ -1069,7 +1525,7 @@ mod tests {
         assert_eq!(created_id(r#"{"id": 9}"#).as_deref(), Ok("9"));
         // 4
         assert_eq!(
-            refspecs(7, "main")[0],
+            refspecs(Forja::GitLab, 7, "main")[0],
             "+refs/merge-requests/7/head:refs/mr/7"
         );
         // 5
@@ -1136,7 +1592,7 @@ mod tests {
         assert!(seen(st, "g/p", 3, "bbb") && !seen(st, "g/p", 3, "ccc"));
         assert_eq!(last_seen(st, "g/p", 3).as_deref(), Some("bbb"));
         assert_eq!(
-            join_pages(br#"[{"d":"a[0][1]"}][{"d":"b"}]"#).unwrap(),
+            crate::forja::junta_paginas(br#"[{"d":"a[0][1]"}][{"d":"b"}]"#).unwrap(),
             json!([{"d": "a[0][1]"}, {"d": "b"}])
         );
         // 11
@@ -1277,18 +1733,18 @@ mod tests {
     #[test]
     fn motivo_do_merge_apagado() {
         let st = |s: &str| json!({"state": "opened", "detailed_merge_status": s});
-        assert_eq!(merge_blocker(&st("mergeable")), None);
+        assert_eq!(merge_blocker(Forja::GitLab, &st("mergeable")), None);
         assert_eq!(
-            merge_blocker(&st("not_approved")),
+            merge_blocker(Forja::GitLab, &st("not_approved")),
             Some("precisa de aprovação")
         );
-        assert_eq!(merge_blocker(&st("ci_still_running")), None);
+        assert_eq!(merge_blocker(Forja::GitLab, &st("ci_still_running")), None);
         assert_eq!(
-            merge_blocker(&st("ci_must_pass")),
+            merge_blocker(Forja::GitLab, &st("ci_must_pass")),
             Some("o pipeline precisa passar")
         );
         assert_eq!(
-            merge_blocker(&json!({"state": "merged"})),
+            merge_blocker(Forja::GitLab, &json!({"state": "merged"})),
             Some("o MR não está aberto")
         );
     }

@@ -451,9 +451,7 @@ impl TunnelsView {
                     .when(matches!(s, State::Down(_)), |d| {
                         d.child(button(t, ("dblog", i), "Ver log", false).on_click(
                             move |_, _, _| {
-                                crate::spawn_reaped(
-                                    std::process::Command::new("xdg-open").arg(&log),
-                                );
+                                crate::abrir_no_sistema(log.as_os_str());
                             },
                         ))
                     })

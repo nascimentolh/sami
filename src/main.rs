@@ -12,8 +12,10 @@ mod confirm;
 mod diff;
 mod editor;
 mod feature;
+mod forja;
 mod form;
 mod ghostty;
+mod github;
 mod graph;
 mod herdr;
 mod jira;
@@ -63,6 +65,22 @@ use theme::Theme;
 /// a foto do turno e o aceitar/desfazer do diff são byte a byte. Vai nas chamadas do Maestro, não no
 /// terminal, que segue com a config de quem usa.
 pub const RAW_EOL: [&str; 2] = ["-c", "core.autocrlf=false"];
+
+/// Abre um link ou arquivo no que o sistema usa para ele.
+pub fn abrir_no_sistema(alvo: &std::ffi::OsStr) {
+    let mut c = if cfg!(windows) {
+        // o `start` é do shell, não um executável; o primeiro argumento dele é o título da janela
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    c.arg(alvo);
+    spawn_reaped(&mut c);
+}
 
 /// `spawn` sem `wait` deixa zumbi até o app fechar: a espera fica numa thread.
 pub fn spawn_reaped(c: &mut std::process::Command) {

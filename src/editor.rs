@@ -857,7 +857,12 @@ impl FileEditor {
                             .flex()
                             .gap(px(8.))
                             .when_some(mr, |d, row| {
-                                let label = format!("Abrir MR !{}", row.iid);
+                                let label = format!(
+                                    "Abrir {} {}{}",
+                                    row.forja.termo(),
+                                    row.forja.marca(),
+                                    row.iid
+                                );
                                 d.child(button(&t, "blame-mr", &label, false).on_click(
                                     cx.listener(move |this, _, _, cx| {
                                         this.blame_pop = false;

@@ -400,8 +400,8 @@ impl Review {
             .map_or(String::new(), |f| format!(" · {} arq", f.len()));
         let mr = match self.mr.as_ref().and_then(|m| m.read(cx).fetch.clone()) {
             Some(crate::mr::Fetch::Mr(m)) => format!(
-                " · !{} {}",
-                m.iid,
+                " · {} {}",
+                m.etiqueta(),
                 match m.pipe {
                     crate::mr::Status::Ok => "✓",
                     crate::mr::Status::Fail => "✗",
@@ -409,7 +409,7 @@ impl Review {
                     crate::mr::Status::None => "",
                 }
             ),
-            Some(crate::mr::Fetch::NoMr) => " · sem MR".into(),
+            Some(crate::mr::Fetch::NoMr) => format!(" · sem {}", self.termo_da_forja()),
             _ => String::new(),
         };
         format!("{files}{mr}")
@@ -426,6 +426,11 @@ impl Review {
         self.task_probs
             .extend(probs.into_iter().map(|p| (task.clone(), p)));
         cx.notify();
+    }
+
+    /// Como a forja deste repo chama o que o Maestro mostra na aba: MR no GitLab, PR no GitHub.
+    fn termo_da_forja(&self) -> &'static str {
+        crate::forja::Forja::de(&self.root).map_or("MR", |f| f.termo())
     }
 
     pub fn show_problems(&mut self, cx: &mut Context<Self>) {
@@ -1664,8 +1669,8 @@ impl Render for Review {
             })
             .collect();
         let mr_label = match self.mr.as_ref().and_then(|m| m.read(cx).fetch.clone()) {
-            Some(crate::mr::Fetch::Mr(m)) => format!("MR !{}", m.iid),
-            _ => "MR".into(),
+            Some(crate::mr::Fetch::Mr(m)) => m.titulo_curto(),
+            _ => self.termo_da_forja().to_string(),
         };
         let tabs = div()
             .flex()

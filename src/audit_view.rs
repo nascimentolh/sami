@@ -711,7 +711,7 @@ impl AuditView {
                 None => return,
             },
         };
-        crate::spawn_reaped(std::process::Command::new("xdg-open").arg(url));
+        crate::abrir_no_sistema(url.as_ref());
     }
 
     fn comment(&mut self, iid: u64, window: &mut Window, cx: &mut Context<Self>) {

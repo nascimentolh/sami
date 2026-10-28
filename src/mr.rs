@@ -1,10 +1,14 @@
-use std::{path::Path, process::Command};
+use std::path::Path;
 
 use serde_json::Value;
 
-/// O `f.mr` do protótipo, lido do GitLab pelo `glab api` (que já tem o seu login).
+use crate::forja::Forja;
+
+/// O `f.mr` do protótipo: o MR do GitLab ou o PR do GitHub, lido pela CLI da forja (que já tem o
+/// seu login). O modelo é um só; o que muda é de onde ele vem.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mr {
+    pub forja: Forja,
     pub iid: u64,
     pub merged: bool,
     pub closed: bool,
@@ -35,10 +39,23 @@ pub struct Comment {
     pub body: String,
 }
 
+impl Mr {
+    /// `!7` no GitLab, `#7` no GitHub.
+    pub fn etiqueta(&self) -> String {
+        format!("{}{}", self.forja.marca(), self.iid)
+    }
+
+    /// `MR !7` / `PR #7`.
+    pub fn titulo_curto(&self) -> String {
+        format!("{} {}", self.forja.termo(), self.etiqueta())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fetch {
-    NoGitlab,
-    NoAuth,
+    /// o remoto não é de GitLab nem de GitHub: só o git responde
+    SemForja,
+    NoAuth(Forja),
     NoMr,
     Mr(Box<Mr>),
     Err(String),
@@ -123,6 +140,7 @@ pub fn parse(detail: &Value, jobs: &Value, discussions: &Value) -> Mr {
     let state = detail["state"].as_str().unwrap_or_default();
     let pipe = status(detail["head_pipeline"]["status"].as_str().unwrap_or(""));
     Mr {
+        forja: Forja::GitLab,
         iid: detail["iid"].as_u64().unwrap_or_default(),
         merged: state == "merged",
         closed: state == "closed",
@@ -139,45 +157,46 @@ pub fn parse(detail: &Value, jobs: &Value, discussions: &Value) -> Mr {
     }
 }
 
-fn glab(root: &Path, endpoint: &str) -> Result<Value, Fetch> {
-    let out = Command::new("glab")
-        .args(["api", endpoint])
-        .current_dir(root)
-        .output()
-        .map_err(|e| Fetch::Err(format!("glab: {e}")))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(
-            // sem token, o GitLab responde 404 (não 401) para projeto privado
-            if err.contains("401")
-                || err.contains("auth login")
-                || err.contains("authenticat")
-                || (err.contains("404") && !logged_in())
-            {
-                Fetch::NoAuth
-            } else {
-                Fetch::Err(err.lines().next().unwrap_or("glab falhou").into())
-            },
-        );
-    }
-    serde_json::from_slice(&out.stdout).map_err(|e| Fetch::Err(e.to_string()))
-}
-
-fn logged_in() -> bool {
-    Command::new("glab")
-        .args(["api", "user"])
-        .output()
-        .is_ok_and(|o| o.status.success())
+/// Uma chamada de leitura na forja, com o erro traduzido para o estado da aba.
+fn api(f: Forja, root: &Path, endpoint: &str) -> Result<Value, Fetch> {
+    f.read(Some(root), endpoint, false).map_err(|e| {
+        // sem token, o GitLab responde 404 (não 401) para projeto privado
+        let auth = e.contains("401")
+            || e.contains("auth login")
+            || e.contains("authenticat")
+            || (e.contains("404") && !f.logado());
+        match auth {
+            true => Fetch::NoAuth(f),
+            false => Fetch::Err(e),
+        }
+    })
 }
 
 /// "Mover p/ main" da pilha: o alvo do MR muda no GitLab (só depois da confirmação, pelo `mrs::write`).
 pub fn retarget(m: &Mr, branch: &str) -> Result<(), String> {
-    crate::mrs::write(
-        "PUT",
-        &retarget_endpoint(m).ok_or("o MR não tem link do GitLab")?,
-        &serde_json::json!({ "target_branch": branch }),
-    )
-    .map(drop)
+    match m.forja {
+        Forja::GitLab => crate::mrs::write(
+            "PUT",
+            &retarget_endpoint(m).ok_or("o MR não tem link do GitLab")?,
+            &serde_json::json!({ "target_branch": branch }),
+        )
+        .map(drop),
+        // `dono/repo` sai do próprio link do PR
+        Forja::GitHub => {
+            let proj = m
+                .web_url
+                .split_once(".com/")
+                .and_then(|(_, r)| r.split_once("/pull/"))
+                .map(|(p, _)| p)
+                .ok_or("o PR não tem link do GitHub")?;
+            crate::mrs::gh_write(
+                "PATCH",
+                &crate::github::base(proj, m.iid),
+                &serde_json::json!({ "base": branch }),
+            )
+            .map(drop)
+        }
+    }
 }
 
 /// `https://gitlab.com/g/p/-/merge_requests/7` → `projects/g%2Fp/merge_requests/7`.
@@ -193,19 +212,20 @@ fn retarget_endpoint(m: &Mr) -> Option<String> {
     Some(format!("projects/{}/merge_requests/{}", enc(path), m.iid))
 }
 
-/// O MR mais recente da branch. Só lê: o que escreve no GitLab são as skills (`/mr`, `/comentario`).
+/// O MR (ou PR) mais recente da branch. Só lê: o que escreve na forja são as skills.
 pub fn fetch(root: &Path, branch: &str) -> Fetch {
-    let remote = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(root)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
-    if !remote.contains("gitlab") {
-        return Fetch::NoGitlab;
+    match Forja::de(root) {
+        None => Fetch::SemForja,
+        Some(Forja::GitLab) => do_gitlab(root, branch),
+        Some(Forja::GitHub) => do_github(root, branch),
     }
+}
+
+fn do_gitlab(root: &Path, branch: &str) -> Fetch {
+    let f = Forja::GitLab;
     let run = || -> Result<Fetch, Fetch> {
-        let list = glab(
+        let list = api(
+            f,
             root,
             &format!(
                 "projects/:id/merge_requests?source_branch={}&state=all&order_by=created_at&per_page=1",
@@ -215,15 +235,17 @@ pub fn fetch(root: &Path, branch: &str) -> Fetch {
         let Some(iid) = list[0]["iid"].as_u64() else {
             return Ok(Fetch::NoMr);
         };
-        let detail = glab(root, &format!("projects/:id/merge_requests/{iid}"))?;
+        let detail = api(f, root, &format!("projects/:id/merge_requests/{iid}"))?;
         let jobs = match detail["head_pipeline"]["id"].as_u64() {
-            Some(p) => glab(
+            Some(p) => api(
+                f,
                 root,
                 &format!("projects/:id/pipelines/{p}/jobs?per_page=100"),
             )?,
             None => Value::Null,
         };
-        let discussions = glab(
+        let discussions = api(
+            f,
             root,
             &format!("projects/:id/merge_requests/{iid}/discussions?per_page=100"),
         )?;
@@ -232,12 +254,177 @@ pub fn fetch(root: &Path, branch: &str) -> Fetch {
     run().unwrap_or_else(|e| e)
 }
 
+fn do_github(root: &Path, branch: &str) -> Fetch {
+    let f = Forja::GitHub;
+    // o dono/repo sai do remoto, não do `gh`: num fork ele resolveria para o repositório-mãe
+    let Some(proj) = crate::forja::projeto(root) else {
+        return Fetch::Err("não deu para ler dono/repo do remoto origin".into());
+    };
+    let dono = proj.split('/').next().unwrap_or_default().to_string();
+    let run = || -> Result<Fetch, Fetch> {
+        let list = api(
+            f,
+            root,
+            &format!(
+                "repos/{proj}/pulls?state=all&per_page=1&sort=created&direction=desc&head={dono}:{branch}"
+            ),
+        )?;
+        let Some(n) = list[0]["number"].as_u64() else {
+            return Ok(Fetch::NoMr);
+        };
+        let detail = api(f, root, &format!("repos/{proj}/pulls/{n}"))?;
+        let sha = detail["head"]["sha"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        // no GitHub o que diz se o CI passou são os check runs do commit do topo
+        let checks = api(
+            f,
+            root,
+            &format!("repos/{proj}/commits/{sha}/check-runs?per_page=100"),
+        )
+        .unwrap_or(Value::Null);
+        let revisao = api(
+            f,
+            root,
+            &format!("repos/{proj}/pulls/{n}/comments?per_page=100"),
+        )?;
+        let gerais = api(
+            f,
+            root,
+            &format!("repos/{proj}/issues/{n}/comments?per_page=100"),
+        )?;
+        Ok(Fetch::Mr(Box::new(parse_github(
+            &detail, &checks, &revisao, &gerais,
+        ))))
+    };
+    run().unwrap_or_else(|e| e)
+}
+
+/// O mesmo modelo, vindo do GitHub: check run no lugar de job, review comment no lugar de discussão.
+pub fn parse_github(detail: &Value, checks: &Value, revisao: &Value, gerais: &Value) -> Mr {
+    let runs = &checks["check_runs"];
+    let merged = detail["merged"] == true || detail["merged_at"].is_string();
+    let autor = detail["user"]["login"].as_str().unwrap_or_default();
+    Mr {
+        forja: Forja::GitHub,
+        iid: detail["number"].as_u64().unwrap_or_default(),
+        merged,
+        closed: !merged && detail["state"] == "closed",
+        web_url: detail["html_url"].as_str().unwrap_or_default().into(),
+        title: detail["title"].as_str().unwrap_or_default().into(),
+        target: detail["base"]["ref"].as_str().unwrap_or_default().into(),
+        pipe: checks_status(runs),
+        job: check_falho(runs),
+        sonar: sonar_github(runs),
+        comments: comentarios_github(revisao, gerais, autor),
+    }
+}
+
+/// Um check run: `status` diz se terminou, `conclusion` diz como.
+fn check_status(c: &Value) -> Status {
+    if c["status"] != "completed" {
+        return Status::Running;
+    }
+    match c["conclusion"].as_str().unwrap_or("") {
+        "success" | "skipped" | "neutral" => Status::Ok,
+        "" => Status::None,
+        _ => Status::Fail,
+    }
+}
+
+/// O pior de todos: um falhou, falhou; algum rodando, rodando.
+fn checks_status(runs: &Value) -> Status {
+    let todos: Vec<Status> = runs
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(check_status)
+        .collect();
+    if todos.contains(&Status::Fail) {
+        Status::Fail
+    } else if todos.contains(&Status::Running) {
+        Status::Running
+    } else if todos.is_empty() {
+        Status::None
+    } else {
+        Status::Ok
+    }
+}
+
+fn sonar_github(runs: &Value) -> Status {
+    runs.as_array()
+        .into_iter()
+        .flatten()
+        .find(|c| {
+            c["name"]
+                .as_str()
+                .is_some_and(|n| n.to_lowercase().contains("sonar"))
+        })
+        .map_or(Status::None, check_status)
+}
+
+fn check_falho(runs: &Value) -> Option<(String, String)> {
+    runs.as_array()?
+        .iter()
+        .find(|c| check_status(c) == Status::Fail)
+        .map(|c| {
+            (
+                c["name"].as_str().unwrap_or_default().into(),
+                c["html_url"].as_str().unwrap_or_default().into(),
+            )
+        })
+}
+
+fn bot_github(u: &Value) -> bool {
+    u["type"] == "Bot"
+        || u["login"]
+            .as_str()
+            .is_some_and(|l| l.ends_with("[bot]") || l == "github-actions")
+}
+
+/// Comentários de revisores: os de linha e os gerais, sem os do autor e sem bot.
+// ponytail: a REST do GitHub não diz se a conversa foi resolvida (só o GraphQL): por ora entra
+// tudo que não é do autor. Se incomodar, a consulta vira GraphQL.
+fn comentarios_github(revisao: &Value, gerais: &Value, autor: &str) -> Vec<Comment> {
+    let de_linha = revisao.as_array().into_iter().flatten().map(|c| {
+        let onde = match (
+            c["path"].as_str(),
+            c["line"].as_u64().or(c["original_line"].as_u64()),
+        ) {
+            (Some(p), Some(l)) => format!("{p}:{l}"),
+            (Some(p), None) => p.to_string(),
+            _ => "geral".into(),
+        };
+        (c, onde)
+    });
+    let gerais = gerais
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| (c, "geral".to_string()));
+    de_linha
+        .chain(gerais)
+        .filter(|(c, _)| {
+            let quem = c["user"]["login"].as_str().unwrap_or_default();
+            quem != autor && !bot_github(&c["user"])
+        })
+        .map(|(c, onde)| Comment {
+            id: c["id"].as_u64().unwrap_or_default(),
+            who: format!("@{}", c["user"]["login"].as_str().unwrap_or_default()),
+            at: onde,
+            body: c["body"].as_str().unwrap_or_default().into(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
 
     #[test]
     fn alvo_do_mr_pelo_link() {
         let m = super::Mr {
+            forja: crate::forja::Forja::GitLab,
             iid: 7,
             merged: false,
             closed: false,
@@ -255,8 +442,78 @@ mod tests {
         );
     }
 
-    use super::{Status, enc, parse};
+    use super::{Status, enc, parse, parse_github};
     use serde_json::json;
+
+    /// De verdade, contra o GitHub deste repo: `cargo test --release -- --ignored pr_de_verdade`.
+    /// Pede `gh auth login`, por isso fica fora da suíte normal.
+    #[test]
+    #[ignore]
+    fn pr_de_verdade() {
+        let f = super::fetch(std::path::Path::new("."), "feat/windows-pwsh");
+        match f {
+            super::Fetch::Mr(m) => {
+                assert_eq!(m.forja, crate::forja::Forja::GitHub);
+                assert_eq!(m.etiqueta(), "#1");
+                assert_eq!(m.target, "main");
+                assert!(m.merged, "o PR 1 foi mergeado");
+                println!("{} · {} · {:?}", m.titulo_curto(), m.title, m.pipe);
+            }
+            outro => panic!("esperava o PR, veio {outro:?}"),
+        }
+    }
+
+    #[test]
+    fn le_o_pr_do_github() {
+        let detail = json!({
+            "number": 38, "state": "open", "merged": false,
+            "title": "bump rust-cache", "html_url": "https://github.com/o/r/pull/38",
+            "base": {"ref": "main"}, "head": {"sha": "cda74a24"},
+            "user": {"login": "dependabot[bot]", "type": "Bot"}
+        });
+        let checks = json!({"check_runs": [
+            {"name": "check", "status": "completed", "conclusion": "success", "html_url": "u1"},
+            {"name": "sonarcloud", "status": "completed", "conclusion": "failure", "html_url": "u2"},
+            {"name": "deploy", "status": "in_progress", "conclusion": null, "html_url": "u3"}
+        ]});
+        let revisao = json!([
+            {"id": 1, "path": "src/a.ts", "line": 12, "body": "isso aqui estoura",
+             "user": {"login": "revisor", "type": "User"}},
+            {"id": 2, "path": "src/a.ts", "line": 3, "body": "do autor",
+             "user": {"login": "dependabot[bot]", "type": "Bot"}}
+        ]);
+        let gerais = json!([
+            {"id": 9, "body": "subi o patch", "user": {"login": "colega", "type": "User"}},
+            {"id": 10, "body": "pipeline rodando", "user": {"login": "github-actions[bot]", "type": "Bot"}}
+        ]);
+        let m = parse_github(&detail, &checks, &revisao, &gerais);
+        assert_eq!(m.etiqueta(), "#38");
+        assert_eq!(m.titulo_curto(), "PR #38");
+        assert_eq!(m.target, "main");
+        assert!(!m.merged && !m.closed);
+        // um falhou: o pior manda, mesmo com outro ainda rodando
+        assert_eq!(m.pipe, Status::Fail);
+        assert_eq!(m.sonar, Status::Fail);
+        assert_eq!(m.job, Some(("sonarcloud".into(), "u2".into())));
+        assert_eq!(
+            m.comments
+                .iter()
+                .map(|c| (c.who.as_str(), c.at.as_str()))
+                .collect::<Vec<_>>(),
+            [("@revisor", "src/a.ts:12"), ("@colega", "geral")],
+            "sem bot e sem o autor"
+        );
+
+        let merged = parse_github(
+            &json!({"number": 2, "state": "closed", "merged_at": "2026-10-28T19:51:22Z",
+                    "base": {"ref": "main"}, "user": {"login": "eu"}}),
+            &json!({}),
+            &json!([]),
+            &json!([]),
+        );
+        assert!(merged.merged && !merged.closed);
+        assert_eq!(merged.pipe, Status::None, "repo sem CI não é falha");
+    }
 
     #[test]
     fn mr_com_ci_vermelho() {
