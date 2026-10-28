@@ -36,6 +36,7 @@ mod perms;
 mod preflight;
 mod review;
 mod session;
+mod sh;
 mod shell;
 mod sidebar;
 mod tasks;
@@ -57,6 +58,11 @@ use sidebar::Sidebar;
 use terminal::TerminalView;
 use theme::Theme;
 
+/// O Git do Windows vem com `core.autocrlf=true` e trocaria o fim de linha de todo arquivo que escreve:
+/// a foto do turno e o aceitar/desfazer do diff são byte a byte. Vai nas chamadas do Maestro, não no
+/// terminal, que segue com a config de quem usa.
+pub const RAW_EOL: [&str; 2] = ["-c", "core.autocrlf=false"];
+
 /// `spawn` sem `wait` deixa zumbi até o app fechar: a espera fica numa thread.
 pub fn spawn_reaped(c: &mut std::process::Command) {
     if let Ok(mut child) = c.spawn() {
@@ -67,6 +73,15 @@ pub fn spawn_reaped(c: &mut std::process::Command) {
 }
 
 fn main() {
+    // o app lê `HOME` em tudo (config, cache, repos); no Windows quem tem isso é o `USERPROFILE`
+    #[cfg(windows)]
+    if std::env::var_os("HOME").is_none()
+        && let Some(p) = std::env::var_os("USERPROFILE")
+    {
+        // antes de qualquer thread: só aqui, no primeiro comando do main
+        unsafe { std::env::set_var("HOME", p) };
+    }
+
     // `maestro checkpoint <id>`: o hook UserPromptSubmit da worktree, sem abrir janela
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("checkpoint") {
@@ -116,14 +131,26 @@ fn main() {
                 Some("MaestroEditor > Input"),
             ),
         ]);
-        // a sans do chrome do protótipo vai embutida: não depende de a máquina ter a fonte
+        // a sans do chrome e a mono do terminal vão embutidas: não dependem de a máquina ter a fonte
         let _ = cx.text_system().add_fonts(vec![
             include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").into(),
             include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf").into(),
             include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf").into(),
             include_bytes!("../assets/fonts/IBMPlexSans-Bold.ttf").into(),
+            include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf").into(),
+            include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf").into(),
+            include_bytes!("../assets/fonts/JetBrainsMono-Italic.ttf").into(),
+            include_bytes!("../assets/fonts/JetBrainsMono-BoldItalic.ttf").into(),
         ]);
-        let config = GhosttyConfig::load();
+        let mut config = GhosttyConfig::load();
+        // a fonte do Ghostty pode não estar instalada aqui (é o caso no Windows): cai na embutida
+        if !cx
+            .text_system()
+            .all_font_names()
+            .contains(&config.font_family)
+        {
+            config.font_family = "JetBrains Mono".into();
+        }
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Some("Maestro".into()),
@@ -160,6 +187,9 @@ fn main() {
             };
             let font = format!("{theme_name}{} {}", config.font_family, config.font_size_pt);
             let launch = herdr.as_ref().map(|h| h.launch());
+            // sem herdr (é o caso no Windows) o terminal abre o shell do sistema
+            #[cfg(windows)]
+            let launch = launch.or_else(|| Some(sh::launch()));
             let binds = if herdr.is_some() {
                 binds::Binds::load()
             } else {

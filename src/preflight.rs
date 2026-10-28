@@ -42,40 +42,46 @@ fn check(state: State, detail: impl Into<String>) -> Check {
     }
 }
 
-/// O PATH do zsh do usuário (nvm, asdf…): o app aberto pelo atalho do sistema não tem o node.
+/// O PATH do shell do usuário (nvm, asdf…): o app aberto pelo atalho do sistema não tem o node.
+/// No Windows quem tem o fnm/nvm-windows é o perfil do pwsh.
 fn user_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".into());
-        path_from(&shell).unwrap_or_else(|| std::env::var("PATH").unwrap_or_default())
+        let line = if cfg!(windows) {
+            "$env:PATH"
+        } else {
+            "printf '\\n%s' \"$PATH\""
+        };
+        path_of(&mut crate::sh::login(line))
+            .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default())
     })
 }
 
-fn path_from(shell: &str) -> Option<String> {
-    let o = Command::new("timeout")
-        .args(["10", shell, "-lic", "printf '\\n%s' \"$PATH\""])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
+/// A última linha da saída do shell: antes dela vem o lixo do rc (o p10k e cia.).
+fn path_of(cmd: &mut Command) -> Option<String> {
+    let o = crate::sh::capped(cmd, 10).ok()??;
     let out = String::from_utf8_lossy(&o.stdout);
     let last = out.lines().last()?.trim();
-    (o.status.success() && last.contains('/')).then(|| last.to_string())
+    let sep = if cfg!(windows) { '\\' } else { '/' };
+    (o.status.success() && last.contains(sep)).then(|| last.to_string())
 }
 
 /// Com teto de tempo: o que travar vira "não deu para checar" em vez de prender o pré-voo.
 fn sh(root: &Path, cmd: &str) -> Check {
     let secs = 600;
-    let out = Command::new("timeout")
-        .args([&secs.to_string(), "sh", "-c", cmd])
-        .env("PATH", user_path())
-        .current_dir(root)
-        .output();
+    if let Some(aviso) = crate::sh::missing() {
+        return check(State::Skip, aviso);
+    }
+    let out = crate::sh::capped(
+        crate::sh::cmd(cmd)
+            .env("PATH", user_path())
+            .current_dir(root),
+        secs,
+    );
     match out {
-        Ok(o) if o.status.code() == Some(124) => {
-            check(State::Skip, format!("{cmd}: passou de {secs} s"))
-        }
-        Ok(o) if o.status.success() => check(State::Pass, cmd),
-        Ok(o) => {
+        Ok(None) => check(State::Skip, format!("{cmd}: passou de {secs} s")),
+        Ok(Some(o)) if o.status.success() => check(State::Pass, cmd),
+        Ok(Some(o)) => {
             let out = String::from_utf8_lossy(if o.stderr.is_empty() {
                 &o.stdout
             } else {
@@ -122,11 +128,13 @@ fn behind(root: &Path, base: &str) -> Check {
     if !has_remote {
         return check(State::Skip, "sem remoto origin");
     }
-    let fetched = Command::new("timeout")
-        .args(["30", "git", "fetch", "-q", "origin", base])
-        .current_dir(root)
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let fetched = crate::sh::capped(
+        Command::new("git")
+            .args(["fetch", "-q", "origin", base])
+            .current_dir(root),
+        30,
+    )
+    .is_ok_and(|o| o.is_some_and(|o| o.status.success()));
     if !fetched {
         return check(State::Skip, format!("git fetch origin {base} falhou"));
     }
@@ -184,10 +192,7 @@ fn lint(root: &Path) -> Check {
 // ponytail: haiku, até 10 arquivos (~US$ 0,02); a análise completa continua no job `sonar` do pipeline
 fn sonar(root: &Path, files: &[String]) -> Check {
     let pkg = std::fs::read_to_string(root.join("package.json")).unwrap_or_default();
-    let ctbz = Command::new("sh")
-        .args(["-c", "command -v ctbz-check"])
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let ctbz = crate::sh::in_path("ctbz-check");
     if pkg.contains("\"vitest\"") && ctbz {
         let c = sh(root, "ctbz-check sonar-vitest");
         if c.state == State::Fail {
@@ -218,15 +223,17 @@ fn sonar(root: &Path, files: &[String]) -> Check {
     );
     // na worktree (o container do MCP monta o diretório atual), mas sem os hooks dela
     // (`--setting-sources user`) e sem JSONL (senão vira um turno e entra no custo do card)
-    let out = Command::new("timeout")
-        .args(["180", "claude", "-p", &prompt])
-        .args(["--model", "haiku", "--output-format", "json"])
-        .arg("--allowedTools=Read,mcp__sonarqube__analyze_code_snippet")
-        .args(["--setting-sources", "user", "--no-session-persistence"])
-        .env("PATH", user_path())
-        .current_dir(root)
-        .output();
-    let Ok(out) = out else {
+    let out = crate::sh::capped(
+        Command::new("claude")
+            .args(["-p", &prompt])
+            .args(["--model", "haiku", "--output-format", "json"])
+            .arg("--allowedTools=Read,mcp__sonarqube__analyze_code_snippet")
+            .args(["--setting-sources", "user", "--no-session-persistence"])
+            .env("PATH", user_path())
+            .current_dir(root),
+        180,
+    );
+    let Ok(Some(out)) = out else {
         return check(State::Skip, "claude não encontrado");
     };
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
@@ -481,13 +488,17 @@ pub fn gate(id: &str, root: &Path, snapshot: &str, prompt: &str) -> Option<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        forbidden, is_mr, is_secret, path_from, restamp, secrets, sonar_reply, stamped_for,
-    };
+    use super::{forbidden, is_mr, is_secret, restamp, secrets, sonar_reply, stamped_for};
     use crate::diff::parse;
     use std::path::Path;
+    // só o teste do `path_of`, que é do Unix, chama o `Command` e o próprio `path_of`
+    #[cfg(unix)]
+    use super::path_of;
+    #[cfg(unix)]
     use std::process::Command;
 
+    // o shell falso é um script `sh`, que o Windows não executa
+    #[cfg(unix)]
     #[test]
     fn path_do_shell_do_usuario() {
         let dir = std::env::temp_dir().join(format!("maestro-sh-{}", std::process::id()));
@@ -500,11 +511,16 @@ mod tests {
         )
         .unwrap();
         Command::new("chmod").arg("+x").arg(&fake).status().unwrap();
+        let shell = |p: &str| {
+            let mut c = Command::new(p);
+            c.args(["-lic", "printf '\\n%s' \"$PATH\""]);
+            c
+        };
         assert_eq!(
-            path_from(fake.to_str().unwrap()).as_deref(),
+            path_of(&mut shell(fake.to_str().unwrap())).as_deref(),
             Some("/opt/nvm/bin:/usr/bin")
         );
-        assert_eq!(path_from("/nao/existe"), None);
+        assert_eq!(path_of(&mut shell("/nao/existe")), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

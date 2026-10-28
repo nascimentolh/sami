@@ -1,0 +1,6 @@
+# o repo é LF em qualquer plataforma: o Git do Windows vem com core.autocrlf=true e
+# deixaria a worktree em CRLF (diff e foto do turno são byte a byte)
+* text=auto eol=lf
+*.ttf binary
+*.png binary
+*.gif binary

@@ -1,7 +1,12 @@
 use std::{
-    io::{self, BufRead, BufReader, Write},
-    os::unix::net::UnixStream,
+    io,
     path::{Path, PathBuf},
+};
+
+#[cfg(unix)]
+use std::{
+    io::{BufRead, BufReader, Write},
+    os::unix::net::UnixStream,
     time::Duration,
 };
 
@@ -15,6 +20,8 @@ use serde_json::{Value, json};
 /// `MAESTRO_HERDR_SESSION=nome` troca a sessão (testes: `maestro-test`); `none` roda só o `$SHELL`.
 pub struct Herdr {
     session: String,
+    /// só o cliente Unix abre o socket
+    #[cfg_attr(not(unix), allow(dead_code))]
     socket: PathBuf,
 }
 
@@ -95,7 +102,7 @@ pub struct Workspace {
 impl Herdr {
     pub fn from_env() -> Option<Self> {
         let session = std::env::var("MAESTRO_HERDR_SESSION").unwrap_or_else(|_| "maestro".into());
-        if session == "none" || !in_path("herdr") {
+        if session == "none" || !crate::sh::in_path("herdr") {
             return None;
         }
         let dir = PathBuf::from(std::env::var_os("HOME")?).join(".config/herdr");
@@ -148,6 +155,13 @@ impl Herdr {
     }
 
     /// Uma conexão por request: o servidor fecha o socket depois de responder.
+    /// O socket é Unix: no Windows não há herdr, e quem chama segue sem ele.
+    #[cfg(not(unix))]
+    pub fn call(&self, _method: &str, _params: Value) -> io::Result<Value> {
+        Err(io::Error::other("o herdr só roda no Linux"))
+    }
+
+    #[cfg(unix)]
     pub fn call(&self, method: &str, params: Value) -> io::Result<Value> {
         let mut stream = UnixStream::connect(&self.socket)?;
         stream.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -232,11 +246,6 @@ fn parse_agents(mut result: Value) -> io::Result<Vec<Agent>> {
     Ok(serde_json::from_value(result["agents"].take())?)
 }
 
-fn in_path(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
-}
-
 /// Raiz do repositório git que contém `cwd`, se houver.
 pub fn repo_root(cwd: &Path) -> Option<&Path> {
     cwd.ancestors().find(|d| d.join(".git").exists())
@@ -248,6 +257,9 @@ pub fn main_repo(root: &Path) -> PathBuf {
         .ok()
         .and_then(|f| {
             let dir = f.strip_prefix("gitdir:")?.trim().to_string();
+            // no Windows o `gitdir` pode vir com `\`
+            #[cfg(windows)]
+            let dir = dir.replace('\\', "/");
             let i = dir.find("/.git/worktrees/")?;
             Some(PathBuf::from(&dir[..i]))
         })

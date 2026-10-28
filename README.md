@@ -11,6 +11,7 @@
   <a href="https://github.com/rafaelmaestro/maestro/actions/workflows/ci.yml"><img src="https://github.com/rafaelmaestro/maestro/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/Rust-GPUI-orange" alt="Rust + GPUI">
   <img src="https://img.shields.io/badge/Linux-x86__64-blue" alt="Linux">
+  <img src="https://img.shields.io/badge/Windows-PowerShell%207%2B-blue" alt="Windows">
 </p>
 
 <p align="center">

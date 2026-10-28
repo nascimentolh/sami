@@ -188,10 +188,29 @@ pub fn copy(root: &Path, from: &str, dir: &str) -> Result<String, String> {
         .map_err(|_| format!("{from} não existe mais"))?;
     let name = from.rsplit('/').next().unwrap_or(from);
     let to = free_name(dir, name, |p| root.join(p).symlink_metadata().is_ok());
+    #[cfg(unix)]
+    fn symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    /// No Windows o link pede privilégio (Modo de Desenvolvedor): sem ele, copia o alvo.
+    #[cfg(windows)]
+    fn symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        let dir = link.parent().unwrap_or(Path::new("")).join(target).is_dir();
+        let r = match dir {
+            true => std::os::windows::fs::symlink_dir(target, link),
+            false => std::os::windows::fs::symlink_file(target, link),
+        };
+        r.or_else(|e| match dir {
+            true => Err(e),
+            false => fs::copy(target, link).map(drop),
+        })
+    }
+
     fn walk(a: &Path, b: &Path) -> std::io::Result<()> {
         let t = a.symlink_metadata()?.file_type();
         if t.is_symlink() {
-            std::os::unix::fs::symlink(fs::read_link(a)?, b)
+            symlink(&fs::read_link(a)?, b)
         } else if t.is_dir() {
             fs::create_dir(b)?;
             for e in fs::read_dir(a)? {
@@ -374,11 +393,16 @@ mod tests {
         assert!(copy(&root, "p", "p/q").unwrap_err().contains("dentro"));
         assert_eq!(copy(&root, "p/q/a.ts", "p/q").unwrap(), "p/q/a cópia.ts");
         assert_eq!(copy(&root, "p/q/a.ts", "p/q").unwrap(), "p/q/a cópia 2.ts");
+        // criar link simbólico no Windows pede privilégio: a cópia de link só se confere no Unix
+        #[cfg(unix)]
         std::os::unix::fs::symlink("/etc", root.join("p/link")).unwrap();
         assert_eq!(copy(&root, "p", "").unwrap(), "p cópia");
         assert!(root.join("p cópia/q/a cópia 2.ts").is_file());
-        let link = root.join("p cópia/link").symlink_metadata().unwrap();
-        assert!(link.file_type().is_symlink());
+        #[cfg(unix)]
+        {
+            let link = root.join("p cópia/link").symlink_metadata().unwrap();
+            assert!(link.file_type().is_symlink());
+        }
         assert!(copy(&root, "sumiu.ts", "vazia").is_err());
         fs::remove_dir_all(&root).unwrap();
     }
